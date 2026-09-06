@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "mode": "aggressive",
+  "repoRoot": "__REPO_ROOT__",
+  "categoryEngine": true,
+  "roundRobinConductor": true,
+  "activeCategories": [
+    "frontend",
+    "architecture",
+    "quality",
+    "performance",
+    "release"
+  ],
+  "activeLanes": [
+    "frontend-shell",
+    "frontend-workflows",
+    "api-contracts",
+    "backend-services",
+    "backend-reliability",
+    "release-ops"
+  ],
+  "maxConcurrentCodingSessions": 3,
+  "oneSessionPerLane": true,
+  "autoMerge": false,
+  "reviewerRequired": true,
+  "executionHold": {
+    "active": false,
+    "class": null,
+    "detectedAt": null,
+    "evidencePath": null,
+    "reason": null
+  },
+  "laneModelPreferences": {
+    "frontend-shell": "gemini-cli",
+    "frontend-workflows": "gemini-cli",
+    "api-contracts": "codex",
+    "backend-services": "codex",
+    "backend-reliability": "codex",
+    "release-ops": "codex"
+  },
+  "categoryRotation": {
+    "strategy": "round-robin",
+    "respectCriticalOverrides": true,
+    "maxNewItemsPerSweep": 3,
+    "lastReviewedAt": null
+  },
+  "items": [
+    {
+      "id": "starter-reviewer-signal-bundle",
+      "category": "quality",
+      "lane": "release-ops",
+      "priority": 95,
+      "kind": "reviewer-signal-bundle",
+      "title": "Create a reviewer-facing verification bundle that keeps autonomous promotion evidence concise and machine-readable",
+      "status": "queued",
+      "preferredModel": "codex"
+    },
+    {
+      "id": "starter-boundary-facade-audit",
+      "category": "architecture",
+      "lane": "api-contracts",
+      "priority": 94,
+      "kind": "contract-boundary-audit",
+      "title": "Audit public facades and lane ownership so planners can produce narrower autonomous task packages",
+      "status": "queued",
+      "preferredModel": "codex"
+    }
+  ],
+  "generatedAt": null
+}

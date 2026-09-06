@@ -1,0 +1,39 @@
+{
+  "id": "autocode",
+  "name": "Autocode",
+  "description": "Persona discovery, independent verification, and deployment gates on native Workboard.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "projects": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": []
+      },
+      "openclawCommand": {
+        "type": "string",
+        "description": "Absolute path to the active OpenClaw CLI; required when projects are configured."
+      }
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "autocode_propose",
+      "autocode_proposals",
+      "autocode_admit",
+      "autocode_submit",
+      "autocode_review",
+      "autocode_inspect",
+      "autocode_investigation_finish",
+      "autocode_defer",
+      "autocode_design_review",
+      "autocode_context"
+    ]
+  }
+}

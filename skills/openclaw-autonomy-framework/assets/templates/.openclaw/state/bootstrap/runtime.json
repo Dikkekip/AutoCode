@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "project": "__PROJECT_NAME__",
+  "control_plane": "openclaw",
+  "entry_agent": "main",
+  "roles": [
+    "main",
+    "planner",
+    "reviewer",
+    "promoter"
+  ],
+  "coding_executor": "lane-routed-cli",
+  "autonomy_goal": "continuous improvement to ready PR with low-noise notifications",
+  "publication_policy": {
+    "mode": "ready_pr",
+    "max_open_prs_per_lane": 1,
+    "allow_parallel_lanes": true
+  },
+  "notification_transport": {
+    "channel": "telegram",
+    "target": "SET_ME",
+    "target_env": "OPENCLAW_FEEDBACK_TARGET"
+  },
+  "required_job_ids": [
+    "queue-refresh",
+    "execution-sweep",
+    "review-sweep",
+    "promotion-sweep",
+    "github-pr-sweep",
+    "daily-telegram-digest"
+  ],
+  "category_rotation": {
+    "cursor_index": -1,
+    "selected_category": null,
+    "last_rotated_at": null
+  },
+  "execution_hold": {
+    "active": false,
+    "class": null,
+    "detectedAt": null,
+    "evidencePath": null,
+    "reason": null
+  },
+  "job_health": {},
+  "last_runs": {},
+  "notification_history": {}
+}

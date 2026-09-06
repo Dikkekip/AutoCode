@@ -1,0 +1,1412 @@
+{
+  "profileId": "lawyerrag",
+  "version": "1.0.0",
+  "displayName": "LawyerRAG",
+  "description": "OpenClaw profile extracted from LawyerRAG's director/orchestra runtime.",
+  "responsePolicy": {
+    "compressionMode": "lite"
+  },
+  "extraInstructions": [
+    "Strictly adhere to the established project coding standards in AGENTS.md.",
+    "Ensure all new features are covered by E2E tests in the relevant lane."
+  ],
+  "adoptionPolicy": {
+    "operatorDirective": [
+      "Keep LawyerRAG-specific behavior in the installed profile and repo-local control-plane artifacts, not in the shared runtime.",
+      "Use `.openclaw/program.md` to steer adoption, lane ownership, and migration sequencing before touching framework internals.",
+      "Treat `.openclaw/recipes/README.md` as the editable surface for repo-specific prompts, sweeps, and reviewer handoff rules."
+    ],
+    "recipeSeeds": [
+      {
+        "recipeId": "lane-safe-backend-change",
+        "title": "Lane-Safe Backend Change",
+        "whenToUse": "Use when a backend change affects contracts, verification commands, or reviewer handoff expectations.",
+        "steps": [
+          "Read the installed profile plus the relevant backend reading rules before editing.",
+          "Update canonical contracts and dependent tests together.",
+          "Preserve audit and orchestration artifacts when changing queue or sweep behavior."
+        ]
+      },
+      {
+        "recipeId": "ui-route-change",
+        "title": "UI Route Change",
+        "whenToUse": "Use when route-level UI work touches the reports frontend, audits, or frontend lane docs.",
+        "steps": [
+          "Read the active frontend lane docs and UI design principles first.",
+          "Keep route verification commands aligned with the selected lane.",
+          "Document new repo-specific workflow rules here instead of patching installer internals."
+        ]
+      }
+    ],
+    "extensionPoints": [
+      {
+        "extensionId": "external-profile-import",
+        "kind": "profile",
+        "summary": "Import another repo shape by adding a new profile package and detection signals.",
+        "delivery": "Add `profiles/<profile-id>/profile.json` plus fixture-backed installer coverage instead of branching on LawyerRAG."
+      },
+      {
+        "extensionId": "adapter-runtime-capability",
+        "kind": "adapter",
+        "summary": "Extend session, tracing, or provider capabilities without changing lane policy code.",
+        "delivery": "Add or update a thin adapter package and keep capability routing in profile data."
+      },
+      {
+        "extensionId": "runtime-idea-harvest",
+        "kind": "runtime-idea",
+        "summary": "Adopt orchestration or audit ideas from sibling repos through explicit proposals and tests.",
+        "delivery": "Capture the source repo and adopted idea in the framework map, then add targeted runtime or installer tests."
+      }
+    ],
+    "manualSteps": [
+      "Connect the required local model providers and repo secrets before running dispatcher cycles.",
+      "Review repo-owned control-plane files under `.openclaw/` and keep them authoritative where they already exist.",
+      "Create a short proposal under `.openclaw/proposals/` before changing sweeps, promotion rules, or lane ownership semantics."
+    ]
+  },
+  "framework": {
+    "version": 1,
+    "coreRuntime": {
+      "summary": "Extract the LawyerRAG director loop into a generic runtime that seeds work, enforces lane ownership, and runs sweeps via profile data.",
+      "targetPackages": [
+        "packages/core-runtime",
+        "packages/domain",
+        "packages/executor"
+      ],
+      "inheritedFromLawyerRag": [
+        "Queue refresh, stale run recovery, and promotion sweep behavior from scripts/openclaw_director.py.",
+        "Lane-bounded task packaging, required reading, and verification command selection from scripts/openclaw_director.py.",
+        "Manager persona defaults and seeded project continuity from scripts/openclaw_director.py."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "devclaw",
+          "sourcePaths": [
+            "devclaw/lib/audit.ts",
+            "devclaw/docs/MANAGEMENT.md",
+            "devclaw/docs/WORKFLOW.md"
+          ],
+          "adoptedIdeas": [
+            "Append-only audit/event discipline should back director state transitions.",
+            "Heartbeat-oriented background processing should replace ad hoc sweep timing assumptions.",
+            "Deterministic workflow/operator trust patterns should inform queue state transitions."
+          ]
+        },
+        {
+          "repoId": "paperclip",
+          "sourcePaths": [
+            "paperclip/packages/adapter-utils/src/session-compaction.ts"
+          ],
+          "adoptedIdeas": [
+            "Adapter session resume and compaction policy should be explicit runtime capability data."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "LawyerRAG-specific file paths, lane names, and categories as framework defaults.",
+        "Hardcoded runtime table names beyond thin migration compatibility shims."
+      ]
+    },
+    "orchestraRuntimePlanning": {
+      "summary": "Retain LawyerRAG's artifact-producing Codex orchestra flow, but make planner policy and fan-out strategy generic.",
+      "targetPackages": [
+        "packages/orchestra-codex",
+        "packages/domain",
+        "apps/dispatcher-cli"
+      ],
+      "inheritedFromLawyerRag": [
+        "Prompt intake, promptify, plan, subtask, manifest, and reviewer handoff flow from scripts/codex_orchestra.py.",
+        "Machine-readable JSON artifacts for downstream review and promotion sweeps from scripts/codex_orchestra.py."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "squad",
+          "sourcePaths": [
+            "squad/packages/squad-sdk/src/platform/planner.ts",
+            "squad/templates/orchestration-log.md",
+            "squad/CONTRIBUTING.md"
+          ],
+          "adoptedIdeas": [
+            "Dependency-aware fan-out should be a first-class planner concern rather than a fixed chain of subtasks.",
+            "Orchestration logging should be preserved as a reusable artifact format.",
+            "Multi-agent planning should normalize work items before adapter execution."
+          ]
+        },
+        {
+          "repoId": "autoagent",
+          "sourcePaths": [
+            "autoagent/program.md"
+          ],
+          "adoptedIdeas": [
+            "A program.md-style human directive should constrain the runtime and explain keep/discard iteration rules."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Fixed subagent counts as a universal default.",
+        "Repo-specific prompt templates embedded into orchestra package code."
+      ]
+    },
+    "projectProfileSchema": {
+      "summary": "Profiles carry the repo-specific policy surface so the framework does not branch on LawyerRAG assumptions.",
+      "targetPackages": [
+        "packages/project-profiles",
+        "profiles/lawyerrag"
+      ],
+      "inheritedFromLawyerRag": [
+        "Lane definitions, required-reading rules, verification rules, routing hints, manager state defaults, promotion policy, and artifact policy from scripts/openclaw_director.py."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "devclaw",
+          "sourcePaths": [
+            "devclaw/openclaw.plugin.json",
+            "devclaw/docs/WORKFLOW.md"
+          ],
+          "adoptedIdeas": [
+            "Operator-facing workflow defaults should be explicit profile data.",
+            "Transition discipline belongs in schema-visible policy, not in hidden runtime branches."
+          ]
+        },
+        {
+          "repoId": "goose",
+          "sourcePaths": [
+            "goose/GOVERNANCE.md"
+          ],
+          "adoptedIdeas": [
+            "Major framework changes should be discussed openly and reflected in editable profile or docs artifacts."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Repo-local file naming conventions as package constants.",
+        "Implicit maintainer knowledge not represented in profile data."
+      ]
+    },
+    "memoryEval": {
+      "summary": "Memory and evaluation should be a reusable substrate for review, promotion, and harness improvement rather than a LawyerRAG-only embedding cache.",
+      "targetPackages": [
+        "packages/memory-runtime",
+        "packages/domain"
+      ],
+      "inheritedFromLawyerRag": [
+        "Embeddings lifecycle, review artifacts, and queue refresh memory inputs from scripts/openclaw_director.py."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "agentscope",
+          "sourcePaths": [
+            "agentscope/README.md",
+            "agentscope/tests/memory_compression_test.py",
+            "agentscope/tests/evaluation_test.py"
+          ],
+          "adoptedIdeas": [
+            "Memory compression should be explicit policy, not only truncation.",
+            "Evaluation should be part of the runtime contract, not a separate afterthought.",
+            "Agent-to-agent and runtime abstractions should tolerate production deployment."
+          ]
+        },
+        {
+          "repoId": "autoagent",
+          "sourcePaths": [
+            "autoagent/README.md",
+            "autoagent/program.md",
+            "autoagent/agent.py"
+          ],
+          "adoptedIdeas": [
+            "Verifier-first harness evolution and keep/discard experiment logic should inform runtime eval hooks."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Binding the framework to a single embedding provider or benchmark suite."
+      ]
+    },
+    "auditOps": {
+      "summary": "Operational trust should come from append-only logs, explicit state transitions, and public change process.",
+      "targetPackages": [
+        "packages/audit-runtime",
+        "packages/core-runtime",
+        "apps/dispatcher-cli"
+      ],
+      "inheritedFromLawyerRag": [
+        "Run events, task events, job runs, promotion artifacts, and stale-session cleanup expectations from scripts/openclaw_director.py."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "devclaw",
+          "sourcePaths": [
+            "devclaw/lib/audit.ts",
+            "devclaw/docs/MANAGEMENT.md"
+          ],
+          "adoptedIdeas": [
+            "Append-only NDJSON audit logs with bounded retention.",
+            "Atomic transition/event discipline for operator trust."
+          ]
+        },
+        {
+          "repoId": "goose",
+          "sourcePaths": [
+            "goose/GOVERNANCE.md"
+          ],
+          "adoptedIdeas": [
+            "Major architectural changes should follow an open review path rather than private runtime drift."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Repo-specific notification channels as mandatory framework behavior."
+      ]
+    },
+    "adapters": {
+      "summary": "Adapters stay thin, capability-declared, and replaceable so lane routing remains profile-driven.",
+      "targetPackages": [
+        "packages/executor",
+        "packages/domain",
+        "packages/orchestra-codex"
+      ],
+      "inheritedFromLawyerRag": [
+        "Codex/Gemini lane preference and thin executor boundaries currently encoded in the director/orchestra pair."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "paperclip",
+          "sourcePaths": [
+            "paperclip/packages/adapter-utils/src/server-utils.ts",
+            "paperclip/packages/adapter-utils/src/session-compaction.ts"
+          ],
+          "adoptedIdeas": [
+            "Host-managed runtime identity and tracing should live at the adapter boundary.",
+            "Session management and compaction policy should be adapter-declared."
+          ]
+        },
+        {
+          "repoId": "agentscope",
+          "sourcePaths": [
+            "agentscope/README.md"
+          ],
+          "adoptedIdeas": [
+            "Tool/runtime abstractions should stay flexible enough for MCP and agent-to-agent use."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Adapter-specific queue, planning, or profile logic branches inside the core runtime."
+      ]
+    },
+    "installerAdoption": {
+      "summary": "Adoption should install a reusable framework with editable profile and directive files, not a frozen LawyerRAG transplant.",
+      "targetPackages": [
+        "apps/dispatcher-cli",
+        "packages/project-profiles",
+        "skills/openclaw-workspace-bootstrap"
+      ],
+      "inheritedFromLawyerRag": [
+        "Bootstrap runtime state, scheduled jobs, and manager seeds derived from the existing director runtime."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "autoagent",
+          "sourcePaths": [
+            "autoagent/program.md"
+          ],
+          "adoptedIdeas": [
+            "Installer output should leave behind a human-readable program/directive document for operators."
+          ]
+        },
+        {
+          "repoId": "goose",
+          "sourcePaths": [
+            "goose/GOVERNANCE.md"
+          ],
+          "adoptedIdeas": [
+            "Prompts, recipes, and extensions should remain openly editable after installation."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Permanent one-off migration code for LawyerRAG-specific runtime artifacts."
+      ]
+    }
+  },
+  "requiredReadingRules": [
+    {
+      "ruleId": "ui-base",
+      "displayName": "LawyerRAG UI base reading",
+      "paths": [
+        "AGENTS.md",
+        "apps/reports-ui/APPLICATION_DESIGN_PRINCIPLES.md",
+        "apps/reports-ui/STYLE_RECIPE.md",
+        "apps/reports-ui/src/features/pdf/PdfWorkspace.tsx",
+        "apps/reports-ui/src/features/pdf/PdfWorkspaceSections.tsx",
+        "apps/reports-ui/src/features/pdf/vedlegg/VedleggViewer.tsx",
+        "apps/reports-ui/src/features/pdf/vedlegg/VedleggViewer.test.tsx"
+      ]
+    },
+    {
+      "ruleId": "ui-contracts",
+      "displayName": "LawyerRAG contracts reading",
+      "paths": [
+        "AGENTS.md",
+        "specs/037-reports-ui-implementation-index/spec.md",
+        "specs/043-backend-implementation-index/spec.md",
+        "specs/_domains/reports-ui-contracts.md",
+        "apps/reports-ui/src/__contracts__/apiTypes.contract.ts",
+        "apps/reports-ui/src/__contracts__/apiContract.test.ts",
+        "contracts/openapi.yaml"
+      ]
+    },
+    {
+      "ruleId": "backend-base",
+      "displayName": "LawyerRAG backend reading",
+      "paths": [
+        "AGENTS.md",
+        "agent/rules/development-workflow.md",
+        "agent/rules/architecture.md",
+        "specs/043-backend-implementation-index/spec.md"
+      ]
+    }
+  ],
+  "verificationRules": [
+    {
+      "ruleId": "ui-shell-verify",
+      "displayName": "Shell/UI verification",
+      "commands": [
+        "cd apps/reports-ui && npm run build",
+        "cd apps/reports-ui && node scripts/check-component-size.mjs",
+        "cd apps/reports-ui && node scripts/check-feature-boundaries.mjs",
+        "cd apps/reports-ui && npm run test:critical",
+        "cd apps/reports-ui && npm run ui:audit",
+        "cd apps/reports-ui && npx playwright test --project=chromium e2e/navigation.spec.ts e2e/shell-visual.spec.ts"
+      ]
+    },
+    {
+      "ruleId": "ui-route-verify",
+      "displayName": "Primary routes verification",
+      "commands": [
+        "cd apps/reports-ui && npm run build",
+        "cd apps/reports-ui && node scripts/check-component-size.mjs",
+        "cd apps/reports-ui && node scripts/check-feature-boundaries.mjs",
+        "cd apps/reports-ui && npm run test:critical",
+        "cd apps/reports-ui && npx playwright test --project=chromium e2e/navigation.spec.ts e2e/timeline-visual.spec.ts"
+      ]
+    },
+    {
+      "ruleId": "ui-workspace-verify",
+      "displayName": "Workspace/viewer verification",
+      "commands": [
+        "cd apps/reports-ui && npm run build",
+        "cd apps/reports-ui && node scripts/check-component-size.mjs",
+        "cd apps/reports-ui && node scripts/check-feature-boundaries.mjs",
+        "cd apps/reports-ui && npm run test:critical",
+        "cd apps/reports-ui && npx playwright test --project=chromium e2e/vedlegg-mobile-workspace.spec.ts e2e/vedlegg-pdf-render.spec.ts"
+      ]
+    },
+    {
+      "ruleId": "ui-contracts-verify",
+      "displayName": "Contracts/API verification",
+      "commands": [
+        "cd apps/reports-ui && npm run build",
+        "cd apps/reports-ui && node scripts/check-feature-boundaries.mjs",
+        "cd apps/reports-ui && npm test -- __contracts__/"
+      ]
+    },
+    {
+      "ruleId": "backend-incidents-verify",
+      "displayName": "Backend incidents verification",
+      "commands": [
+        "cd apps/backend && uv run pytest --no-cov tests/contracts/ -v -m \"contract or openapi or backward_compat\"",
+        "make test-openapi"
+      ]
+    },
+    {
+      "ruleId": "backend-ingestion-verify",
+      "displayName": "Backend ingestion verification",
+      "commands": [
+        "make test-openapi",
+        "make reviewer-backend-contracts-targeted",
+        "make test-contracts-backend"
+      ]
+    }
+  ],
+  "laneDefinitions": [
+    {
+      "laneId": "ui-shell-system",
+      "displayName": "UI shell system",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "apps/reports-ui/src/index.css",
+        "apps/reports-ui/src/components/ui/**",
+        "apps/reports-ui/src/features/shell/**",
+        "apps/reports-ui/src/utils/uiAuditScanner.ts",
+        "apps/reports-ui/e2e/ui-audit*"
+      ],
+      "requiredReadingRuleId": "ui-base",
+      "verificationRuleId": "ui-shell-verify",
+      "categoryHints": [
+        "ui",
+        "ui-tooling-readiness"
+      ],
+      "extraInstructions": [
+        "Focus on visual regression and glassmorphism consistency.",
+        "Verify component size limits are not exceeded."
+      ]
+    },
+    {
+      "laneId": "ui-primary-routes",
+      "displayName": "UI primary routes",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "apps/reports-ui/src/features/timeline/**",
+        "apps/reports-ui/src/features/incidents/**",
+        "apps/reports-ui/src/features/bundles/**"
+      ],
+      "requiredReadingRuleId": "ui-base",
+      "verificationRuleId": "ui-route-verify",
+      "categoryHints": [
+        "ui",
+        "ui-regression-repair"
+      ]
+    },
+    {
+      "laneId": "ui-workspaces-and-viewer",
+      "displayName": "UI workspaces and viewer",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "apps/reports-ui/src/features/ingestion/**",
+        "apps/reports-ui/src/features/pdf/**",
+        "apps/reports-ui/src/components/pdf/**",
+        "apps/reports-ui/src/features/whatsapp/**",
+        "apps/reports-ui/src/features/tags/**"
+      ],
+      "requiredReadingRuleId": "ui-base",
+      "verificationRuleId": "ui-workspace-verify",
+      "categoryHints": [
+        "smart-vedlegg",
+        "ui-regression-repair"
+      ]
+    },
+    {
+      "laneId": "ui-contracts-and-api",
+      "displayName": "UI contracts and API",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "apps/reports-ui/src/lib/api.ts",
+        "apps/reports-ui/src/lib/api/**",
+        "apps/reports-ui/src/lib/reportsQueryOptions.ts",
+        "apps/reports-ui/src/__contracts__/**"
+      ],
+      "requiredReadingRuleId": "ui-contracts",
+      "verificationRuleId": "ui-contracts-verify",
+      "categoryHints": [
+        "contracts",
+        "architecture"
+      ]
+    },
+    {
+      "laneId": "backend-incidents-and-timeline",
+      "displayName": "Backend incidents and timeline",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "apps/backend/lawyer_rag/routes/incidents/**",
+        "apps/backend/lawyer_rag/incidents/**"
+      ],
+      "requiredReadingRuleId": "backend-base",
+      "verificationRuleId": "backend-incidents-verify",
+      "categoryHints": [
+        "backend-testability",
+        "architecture"
+      ]
+    },
+    {
+      "laneId": "backend-ingestion-and-aiops",
+      "displayName": "Backend ingestion and aiops",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "apps/backend/lawyer_rag/routes/ingestion/**",
+        "apps/backend/lawyer_rag/routes/smart_scan.py",
+        "apps/backend/lawyer_rag/services/smart_scan_orchestrator.py",
+        "apps/backend/lawyer_rag/services/batch_analysis_service.py"
+      ],
+      "requiredReadingRuleId": "backend-base",
+      "verificationRuleId": "backend-ingestion-verify",
+      "categoryHints": [
+        "backend-testability",
+        "backend-megamodule-decomposition"
+      ]
+    }
+  ],
+  "categoryDefinitions": [
+    {
+      "categoryId": "ui",
+      "displayName": "UI",
+      "laneIds": [
+        "ui-shell-system",
+        "ui-primary-routes"
+      ],
+      "priority": 80
+    },
+    {
+      "categoryId": "contracts",
+      "displayName": "Contracts",
+      "laneIds": [
+        "ui-contracts-and-api"
+      ],
+      "priority": 90
+    },
+    {
+      "categoryId": "backend-testability",
+      "displayName": "Backend testability",
+      "laneIds": [
+        "backend-incidents-and-timeline",
+        "backend-ingestion-and-aiops"
+      ],
+      "priority": 95
+    },
+    {
+      "categoryId": "smart-vedlegg",
+      "displayName": "Smart vedlegg",
+      "laneIds": [
+        "ui-workspaces-and-viewer"
+      ],
+      "priority": 75
+    },
+    {
+      "categoryId": "backend-megamodule-decomposition",
+      "displayName": "Megamodule decomposition",
+      "laneIds": [
+        "backend-ingestion-and-aiops"
+      ],
+      "priority": 70
+    }
+  ],
+  "routingRules": [
+    {
+      "name": "lawyerrag-ui-default",
+      "targetAdapterType": "codex_local",
+      "priority": 80,
+      "patterns": [
+        "ui",
+        "frontend",
+        "reports-ui",
+        "contracts",
+        "timeline"
+      ],
+      "isFallback": false
+    },
+    {
+      "name": "lawyerrag-backend-default",
+      "targetAdapterType": "codex_local",
+      "priority": 10,
+      "patterns": [
+        "backend",
+        "ingestion",
+        "aiops",
+        "python",
+        "openapi"
+      ],
+      "isFallback": true
+    }
+  ],
+  "managerStateDefaults": {
+    "version": 1,
+    "promptPatterns": {
+      "query_lane": "Analyze the codebase for drift in the {{laneId}} lane and propose repairs.",
+      "codebase_analysis": "Perform a deep analysis of the current state of {{branch}} against the target goal."
+    },
+    "managerPersonas": [
+      {
+        "id": "frontend-shell-owner",
+        "focus": "shell chrome, shared UI primitives, scanner expectations, and route-shell continuity",
+        "ownedLaneIds": [
+          "ui-shell-system"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "vedlegg-workspace-owner",
+        "focus": "PDF viewer, workspaces, attachments, ingestion workspace continuity, and mobile viewer behavior",
+        "ownedLaneIds": [
+          "ui-workspaces-and-viewer"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "timeline-incidents-owner",
+        "focus": "timeline, incidents, bundles, chronology, and incident evidence flow",
+        "ownedLaneIds": [
+          "ui-primary-routes",
+          "backend-incidents-and-timeline"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "ingestion-aiops-owner",
+        "focus": "ingestion routes, smart scan orchestration, async job lifecycle, and AI ops boundaries",
+        "ownedLaneIds": [
+          "backend-ingestion-and-aiops"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "contracts-api-owner",
+        "focus": "OpenAPI, frontend client contracts, reports query options, and contract-safe facade evolution",
+        "ownedLaneIds": [
+          "ui-contracts-and-api"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "release-quality-reviewer",
+        "focus": "reviewer trust, pass-fail evidence quality, scope discipline, and promotion readiness",
+        "ownedLaneIds": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer",
+          "ui-contracts-and-api",
+          "backend-incidents-and-timeline",
+          "backend-ingestion-and-aiops"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "promoter-lawyerrag",
+        "focus": "PR publication, promotion hygiene, branch cleanup, and one-PR-per-lane continuity",
+        "ownedLaneIds": [],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "lawyer-legal-strategy",
+        "focus": "legal reasoning, evidence relevance, court-preparation guardrails, citations, and risk-aware legal workflow framing without giving uncited legal advice",
+        "roleClass": "legal_domain",
+        "taskQuotaWeight": 12,
+        "ideationPrompt": "Run a repo-search pass across legal workflow, timeline, bundle, citation, contract, and court-prep surfaces. Propose vertical feature-slice coding tasks that ship source-grounded legal user outcomes with implementation, tests, and legal-domain acceptance criteria.",
+        "successSignals": [
+          "Tasks improve court-preparation or evidence-review workflows.",
+          "Acceptance criteria mention citations, provenance, or legal operator review evidence."
+        ],
+        "blockedEscalation": "Route blocked legal-domain tasks to system-architect for scoping or release-quality-reviewer for evidence gates.",
+        "ownedLaneIds": [
+          "backend-incidents-and-timeline",
+          "ui-primary-routes",
+          "ui-contracts-and-api"
+        ],
+        "preferredAdapterType": "azure_foundry"
+      },
+      {
+        "id": "barnevern-domain-specialist",
+        "focus": "Norwegian child-welfare documentation, vedlegg semantics, professional-source attribution, sensitive-category handling, and Barnevern review workflows",
+        "roleClass": "legal_domain",
+        "taskQuotaWeight": 10,
+        "ideationPrompt": "Run a repo-search pass across ingestion, timeline, Vedlegg, workspace, and backend evidence surfaces for Barnevern-specific documentation gaps. Propose vertical feature slices that improve sensitive-context handling, attachment semantics, chronology quality, and provenance-safe UX.",
+        "successSignals": [
+          "Tasks preserve sensitive child-welfare context and professional-source attribution.",
+          "Tasks improve attachment, chronology, or Barnevern review workflows."
+        ],
+        "blockedEscalation": "Route blocked Barnevern tasks to lawyer-legal-strategy or release-quality-reviewer instead of retrying the same failed prompt.",
+        "ownedLaneIds": [
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline",
+          "ui-workspaces-and-viewer"
+        ],
+        "preferredAdapterType": "azure_foundry"
+      },
+      {
+        "id": "saksinnsyn-casefile-specialist",
+        "focus": "case-file access, document chronology, provenance, metadata completeness, disclosure/readability workflows, and source-of-record consistency",
+        "roleClass": "legal_domain",
+        "taskQuotaWeight": 10,
+        "ideationPrompt": "Run a repo-search pass across case-file, metadata, disclosure, evidence navigation, and source-of-record code paths. Propose vertical feature slices that make missing metadata, chronology, document access, and provenance states clearer.",
+        "successSignals": [
+          "Tasks improve case-file transparency, metadata completeness, or source-of-record clarity.",
+          "Tasks include user-facing acceptance criteria for document chronology and provenance states."
+        ],
+        "blockedEscalation": "Route blocked case-file tasks to backend-engineer for API/data repair or frontend-engineer for UX implementation.",
+        "ownedLaneIds": [
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline",
+          "ui-workspaces-and-viewer"
+        ],
+        "preferredAdapterType": "azure_foundry"
+      },
+      {
+        "id": "defendant-end-user-advocate",
+        "focus": "defendant end-user experience, self-representation needs, trust, plain-language review, evidence navigation, and actionability under stress",
+        "roleClass": "end_user",
+        "taskQuotaWeight": 8,
+        "ideationPrompt": "Run a repo-search pass across LawyerRAG user journeys, route states, mobile flows, and evidence-navigation screens. Propose vertical UI/workflow feature slices that improve plain language, trust, accessibility, and stressed-user actionability.",
+        "successSignals": [
+          "Tasks improve user confidence and actionability without requiring legal expertise.",
+          "Tasks include acceptance criteria for empty, error, responsive, or accessibility states."
+        ],
+        "blockedEscalation": "Route blocked end-user UX tasks to ux-designer or frontend-engineer.",
+        "ownedLaneIds": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "system-architect",
+        "focus": "cross-service architecture, module boundaries, contracts, deployment topology, data ownership, and long-term maintainability",
+        "roleClass": "architecture",
+        "taskQuotaWeight": 7,
+        "ideationPrompt": "Run a repo-search pass across backend, frontend, contracts, runtime, and dispatcher integration points. Propose vertical architecture feature slices that reduce coupling, clarify ownership, or improve release safety with runnable verification.",
+        "successSignals": [
+          "Tasks reduce cross-service ambiguity or clarify module boundaries.",
+          "Tasks include migration, contract, or rollout safety criteria when needed."
+        ],
+        "blockedEscalation": "Route blocked architecture tasks to backend-engineer, frontend-engineer, or dapr-message-queue-specialist based on ownership evidence.",
+        "ownedLaneIds": [
+          "ui-contracts-and-api",
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline"
+        ],
+        "preferredAdapterType": "azure_foundry"
+      },
+      {
+        "id": "dapr-message-queue-specialist",
+        "focus": "Dapr runtime, pub/sub, workflow dispatch, queue semantics, idempotency, retries, dead-letter behavior, and observable async delivery",
+        "roleClass": "runtime_async",
+        "taskQuotaWeight": 7,
+        "ideationPrompt": "Run a repo-search pass across async ingestion, dispatcher, Dapr, queue, retry, dead-letter, and observability paths. Propose vertical runtime feature slices that make long-running workflows reliable and inspectable.",
+        "successSignals": [
+          "Tasks improve idempotency, retry safety, dead-letter handling, or async observability.",
+          "Tasks include verification for duplicate delivery and recovery paths."
+        ],
+        "blockedEscalation": "Route blocked runtime tasks to backend-engineer for implementation or system-architect for boundary decisions.",
+        "ownedLaneIds": [
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "backend-engineer",
+        "focus": "Python backend implementation, APIs, persistence, tests, reliability, migrations, and performance-safe service changes",
+        "roleClass": "backend",
+        "taskQuotaWeight": 8,
+        "ideationPrompt": "Run a repo-search pass across backend APIs, migrations, tests, ingestion workers, models, and contracts. Propose vertical backend feature slices that improve reliability, domain behavior, and contract-visible outcomes.",
+        "successSignals": [
+          "Tasks include backend verification commands.",
+          "Tasks preserve or update API contracts when behavior changes."
+        ],
+        "blockedEscalation": "Route blocked backend tasks to system-architect for scope or dapr-message-queue-specialist for async concerns.",
+        "ownedLaneIds": [
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline",
+          "ui-contracts-and-api"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "frontend-engineer",
+        "focus": "React/TypeScript implementation, routing, state management, accessibility, frontend contracts, and regression-safe UI behavior",
+        "roleClass": "frontend",
+        "taskQuotaWeight": 8,
+        "ideationPrompt": "Run a repo-search pass across reports-ui routes, API clients, contract tests, accessibility, navigation, and state handling. Propose vertical frontend feature slices tied to real user outcomes.",
+        "successSignals": [
+          "Tasks include route, contract, or component-level verification.",
+          "Tasks improve observable workflow behavior, not only snapshots."
+        ],
+        "blockedEscalation": "Route blocked frontend tasks to ux-designer, ui-designer, or backend-engineer based on the failing evidence.",
+        "ownedLaneIds": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer",
+          "ui-contracts-and-api"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "ux-designer",
+        "focus": "workflow ergonomics, user journeys, review confidence, information architecture, accessibility, empty/error states, and task completion under legal pressure",
+        "roleClass": "ux",
+        "taskQuotaWeight": 5,
+        "ideationPrompt": "Run a repo-search pass across user flows for navigation friction, unclear confidence states, legal-review friction, information architecture gaps, and accessibility problems. Propose vertical UX feature slices that can be implemented and verified.",
+        "successSignals": [
+          "Tasks improve completion of a real LawyerRAG workflow.",
+          "Tasks include acceptance criteria for accessibility and error/empty/loading states."
+        ],
+        "blockedEscalation": "Route blocked UX tasks to defendant-end-user-advocate or frontend-engineer.",
+        "ownedLaneIds": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer"
+        ],
+        "preferredAdapterType": "codex_local"
+      },
+      {
+        "id": "ui-designer",
+        "focus": "visual hierarchy, component polish, density, spacing, responsive layout, interaction states, and design-system consistency",
+        "roleClass": "ui",
+        "taskQuotaWeight": 5,
+        "ideationPrompt": "Run a repo-search pass across screens and shared components for visual hierarchy, density, responsive layout, interaction state, and design-system consistency. Propose vertical UI feature slices tied to real workflows, not decorative-only polish.",
+        "successSignals": [
+          "Tasks improve scanability, component states, or responsive behavior.",
+          "Tasks include UI verification and avoid decorative-only churn."
+        ],
+        "blockedEscalation": "Route blocked UI tasks to ux-designer or frontend-engineer.",
+        "ownedLaneIds": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer"
+        ],
+        "preferredAdapterType": "codex_local"
+      }
+    ],
+    "goals": [
+      {
+        "id": "continuous-autonomous-execution",
+        "title": "Keep the OpenClaw loop continuously producing reviewer-ready work and promotable PRs.",
+        "status": "active",
+        "projectIds": [
+          "dispatch-continuity",
+          "query-lane-and-analysis-patterns"
+        ]
+      }
+    ],
+    "projects": [
+      {
+        "id": "dispatch-continuity",
+        "title": "Repair stale lane handling, queue reseeding, and repeatable dispatchability",
+        "status": "active",
+        "laneId": "backend-ingestion-and-aiops",
+        "categoryId": "backend-testability",
+        "managerPersonaId": "ingestion-aiops-owner",
+        "seedTask": {
+          "id": "manager-dispatch-continuity",
+          "title": "Keep OpenClaw dispatch continuity healthy across queue reseeding and stale-lane recovery",
+          "kind": "manager-seeded-project",
+          "priority": 97,
+          "verificationHint": "Run queue-refresh plus execution-sweep and confirm at least one eligible lane remains dispatchable.",
+          "description": "Stabilize queue reseeding, stale-lane recovery, and repeatable dispatch health."
+        }
+      },
+      {
+        "id": "query-lane-and-analysis-patterns",
+        "title": "Stabilize query-lane and codebase-analysis prompt generation",
+        "status": "active",
+        "laneId": "ui-contracts-and-api",
+        "categoryId": "contracts",
+        "managerPersonaId": "contracts-api-owner",
+        "seedTask": {
+          "id": "manager-query-lane-patterns",
+          "title": "Make query-lane and analysis prompts generate narrowly reviewable tasks",
+          "kind": "manager-seeded-project",
+          "priority": 88,
+          "verificationHint": "Produce a reviewer handoff and machine-readable run manifest for a profile-backed lane task.",
+          "description": "Convert lane analysis and query scaffolds into stable, reviewable task packaging patterns."
+        }
+      }
+    ]
+  },
+  "promotionPolicy": {
+    "mode": "ready_pr",
+    "maxOpenPrsPerLane": 1,
+    "allowParallelLanes": true,
+    "autoMerge": true,
+    "autoRelease": true,
+    "mergeMethod": "squash",
+    "requireCi": true,
+    "requireReviewDecision": "none",
+    "importPersonaNames": [
+      "promoter-lawyerrag",
+      "promoter"
+    ]
+  },
+  "notificationPolicy": {
+    "channel": "telegram",
+    "targetEnv": "OPENCLAW_FEEDBACK_TARGET"
+  },
+  "artifactPolicy": {
+    "runtimeStateDir": ".openclaw/state/current",
+    "artifactRootDir": ".codex/orchestra-runs",
+    "worktreeRootDir": ".openclaw/state/current/worktrees",
+    "auditLogPath": ".openclaw/logs/director.audit.ndjson"
+  },
+  "planner": {
+    "enabled": true,
+    "schedule": "*/5 * * * *",
+    "maxTasksPerRun": 6,
+    "maxMajorTasksPerRun": 1,
+    "dedupeWindowHours": 72,
+    "allowedLanes": [
+      "ui-shell-system",
+      "ui-primary-routes",
+      "ui-workspaces-and-viewer",
+      "ui-contracts-and-api",
+      "backend-incidents-and-timeline",
+      "backend-ingestion-and-aiops"
+    ],
+    "defaultPersonaByLane": {
+      "ui-shell-system": "frontend-shell-owner",
+      "ui-primary-routes": "timeline-incidents-owner",
+      "ui-workspaces-and-viewer": "vedlegg-workspace-owner",
+      "ui-contracts-and-api": "contracts-api-owner",
+      "backend-incidents-and-timeline": "timeline-incidents-owner",
+      "backend-ingestion-and-aiops": "ingestion-aiops-owner"
+    },
+    "defaultAdapterByLane": {
+      "ui-shell-system": "codex_local",
+      "ui-primary-routes": "codex_local",
+      "ui-workspaces-and-viewer": "codex_local",
+      "ui-contracts-and-api": "codex_local",
+      "backend-incidents-and-timeline": "codex_local",
+      "backend-ingestion-and-aiops": "codex_local"
+    },
+    "portfolioMix": [
+      {
+        "bucket": "legal_domain",
+        "weight": 30,
+        "minPerRun": 1,
+        "personas": [
+          "lawyer-legal-strategy",
+          "barnevern-domain-specialist",
+          "saksinnsyn-casefile-specialist",
+          "defendant-end-user-advocate"
+        ],
+        "lanes": [
+          "backend-incidents-and-timeline",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer",
+          "ui-contracts-and-api"
+        ]
+      },
+      {
+        "bucket": "frontend_product_ux",
+        "weight": 20,
+        "minPerRun": 1,
+        "personas": [
+          "frontend-engineer",
+          "ux-designer",
+          "ui-designer",
+          "frontend-shell-owner",
+          "vedlegg-workspace-owner"
+        ],
+        "lanes": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer",
+          "ui-contracts-and-api"
+        ]
+      },
+      {
+        "bucket": "backend_api",
+        "weight": 20,
+        "personas": [
+          "backend-engineer",
+          "contracts-api-owner",
+          "timeline-incidents-owner"
+        ],
+        "lanes": [
+          "backend-incidents-and-timeline",
+          "backend-ingestion-and-aiops",
+          "ui-contracts-and-api"
+        ]
+      },
+      {
+        "bucket": "dapr_async_runtime",
+        "weight": 15,
+        "personas": [
+          "dapr-message-queue-specialist",
+          "ingestion-aiops-owner"
+        ],
+        "lanes": [
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline"
+        ]
+      },
+      {
+        "bucket": "architecture_maintainability",
+        "weight": 10,
+        "personas": [
+          "system-architect"
+        ],
+        "lanes": [
+          "ui-contracts-and-api",
+          "backend-ingestion-and-aiops",
+          "backend-incidents-and-timeline"
+        ]
+      },
+      {
+        "bucket": "validation_repair",
+        "weight": 5,
+        "personas": [
+          "release-quality-reviewer",
+          "promoter-lawyerrag"
+        ],
+        "lanes": [
+          "ui-shell-system",
+          "ui-primary-routes",
+          "ui-workspaces-and-viewer",
+          "ui-contracts-and-api",
+          "backend-incidents-and-timeline",
+          "backend-ingestion-and-aiops"
+        ]
+      }
+    ],
+    "signalCollectors": [
+      "repo_paths_churn",
+      "queue_state",
+      "review_promotion_state",
+      "repo_memory",
+      "verification_rules",
+      "repo_directives",
+      "todo_fixme"
+    ],
+    "governance": {
+      "allowAutonomousMajorChanges": false,
+      "manualOnlyLanes": [],
+      "maxTasksPerRun": 6,
+      "maxMajorTasksPerDay": 1,
+      "allowCrossLaneDependencies": false
+    },
+    "costPolicy": {
+      "plannerDailyBudgetLimit": 1200,
+      "plannerConcurrencyCap": 1,
+      "reduceMaxTasksWhenCodexWarm": true,
+      "fallbackPlannerAdapterType": "gemini_local",
+      "preferredPlannerModel": "auto",
+      "plannerReasoningEffort": "high"
+    },
+    "artifactPolicy": {
+      "plannerRunsDir": ".openclaw/state/current/planner-runs",
+      "retentionDays": 14
+    }
+  },
+  "personas": [
+    {
+      "id": "lawyer-legal-strategy",
+      "extends": "planner",
+      "name": "Lawyer Legal Strategy",
+      "role": "Lawyer persona",
+      "responsibilities": [
+        "Ideate and review legal workflow improvements that improve evidence reasoning, court preparation, citations, and matter chronology.",
+        "Translate legal operator pain into repo-evidenced vertical feature slices with explicit implementation scope and verification.",
+        "Guard against unsupported legal claims and require provenance for user-facing legal reasoning."
+      ],
+      "decisionAuthority": [
+        "Can prioritize legal workflow tasks inside LawyerRAG lanes.",
+        "Can require citation, provenance, or court-preparation acceptance criteria."
+      ],
+      "allowedLanes": [
+        "backend-incidents-and-timeline",
+        "ui-primary-routes",
+        "ui-contracts-and-api"
+      ],
+      "forbiddenActions": [
+        "Providing uncited legal advice.",
+        "Weakening provenance, citation, or review evidence."
+      ],
+      "defaultAdapterPreference": "azure_foundry",
+      "promptStyle": {
+        "voice": "Precise legal workflow strategist.",
+        "format": [
+          "State the legal user outcome, source evidence, implementation scope, and verification.",
+          "Prefer matter, evidence, citation, and court-preparation language."
+        ],
+        "interactionRules": [
+          "Require source-grounded reasoning.",
+          "Create coherent feature slices that fit one PR."
+        ]
+      },
+      "requiredReading": [
+        "AGENTS.md",
+        ".openclaw/profile.json",
+        "apps/backend",
+        "apps/reports-ui/src"
+      ],
+      "verificationRules": [
+        "Run the lane verification command.",
+        "Check provenance and citation behavior when user-facing legal text changes."
+      ]
+    },
+    {
+      "id": "barnevern-domain-specialist",
+      "extends": "planner",
+      "name": "Barnevern Domain Specialist",
+      "role": "Barnevern persona",
+      "responsibilities": [
+        "Find Barnevern-specific documentation, attachment, chronology, and sensitive-context workflow gaps.",
+        "Turn child-welfare domain needs into safe, repo-evidenced vertical feature slices.",
+        "Preserve professional-source attribution and sensitive-category handling."
+      ],
+      "decisionAuthority": [
+        "Can prioritize Barnevern workflow gaps in ingestion, incidents, and Vedlegg lanes.",
+        "Can block tasks that lose provenance or sensitive-context clarity."
+      ],
+      "allowedLanes": [
+        "backend-ingestion-and-aiops",
+        "backend-incidents-and-timeline",
+        "ui-workspaces-and-viewer"
+      ],
+      "forbiddenActions": [
+        "Inferring facts not grounded in uploaded case material.",
+        "Reducing safeguards around sensitive child-welfare context."
+      ],
+      "defaultAdapterPreference": "azure_foundry",
+      "promptStyle": {
+        "voice": "Careful Norwegian child-welfare domain reviewer.",
+        "format": [
+          "Lead with domain risk, user outcome, task scope, and verification.",
+          "Name attachment, chronology, and provenance implications."
+        ],
+        "interactionRules": [
+          "Keep sensitive context explicit.",
+          "Prefer evidence-handling improvements over generic tests."
+        ]
+      },
+      "requiredReading": [
+        "AGENTS.md",
+        ".openclaw/profile.json",
+        "apps/backend",
+        "apps/reports-ui/src"
+      ],
+      "verificationRules": [
+        "Run lane verification.",
+        "Confirm sensitive-context UI/API behavior remains provenance-safe."
+      ]
+    },
+    {
+      "id": "saksinnsyn-casefile-specialist",
+      "extends": "planner",
+      "name": "Saksinnsyn Casefile Specialist",
+      "role": "Saksinnsyn persona",
+      "responsibilities": [
+        "Improve case-file access, metadata completeness, disclosure readability, and source-of-record consistency.",
+        "Ideate tasks around document chronology, missing metadata, and evidence navigation.",
+        "Ensure generated work improves case-file transparency for legal operators and end users."
+      ],
+      "decisionAuthority": [
+        "Can prioritize case-file and disclosure workflow improvements.",
+        "Can require metadata and source-of-record acceptance criteria."
+      ],
+      "allowedLanes": [
+        "backend-ingestion-and-aiops",
+        "backend-incidents-and-timeline",
+        "ui-workspaces-and-viewer"
+      ],
+      "forbiddenActions": [
+        "Hiding missing metadata.",
+        "Weakening document provenance or source-of-record labels."
+      ],
+      "defaultAdapterPreference": "azure_foundry",
+      "promptStyle": {
+        "voice": "Case-file transparency specialist.",
+        "format": [
+          "State the case-file gap, affected workflow, implementation scope, and verification.",
+          "Prefer document, metadata, chronology, and disclosure language."
+        ],
+        "interactionRules": [
+          "Make missing or uncertain metadata explicit.",
+          "Keep each feature slice focused on one case-file workflow."
+        ]
+      },
+      "requiredReading": [
+        "AGENTS.md",
+        ".openclaw/profile.json",
+        "apps/backend",
+        "apps/reports-ui/src"
+      ],
+      "verificationRules": [
+        "Run lane verification.",
+        "Check case-file metadata and provenance states."
+      ]
+    },
+    {
+      "id": "defendant-end-user-advocate",
+      "extends": "frontend-engineer",
+      "name": "Defendant End User Advocate",
+      "role": "Defendant end-user persona",
+      "responsibilities": [
+        "Find plain-language, trust, navigation, empty-state, and evidence-review gaps for stressed end users.",
+        "Turn end-user pain into vertical UI or workflow feature slices.",
+        "Ensure the product remains usable without assuming legal expertise."
+      ],
+      "decisionAuthority": [
+        "Can prioritize clarity, navigation, and actionability in user-facing lanes.",
+        "Can require acceptance criteria for empty, loading, error, and mobile states."
+      ],
+      "allowedLanes": [
+        "ui-shell-system",
+        "ui-primary-routes",
+        "ui-workspaces-and-viewer"
+      ],
+      "forbiddenActions": [
+        "Adding legal jargon without context.",
+        "Shipping unclear error, empty, or confidence states."
+      ],
+      "defaultAdapterPreference": "codex_local",
+      "promptStyle": {
+        "voice": "Plain-language end-user advocate.",
+        "format": [
+          "State the end-user outcome, user stress point, UI scope, and verification.",
+          "Include accessibility and mobile considerations."
+        ],
+        "interactionRules": [
+          "Prefer actual workflow improvements over decorative polish.",
+          "Keep on-screen copy concise and inspectable."
+        ]
+      },
+      "requiredReading": [
+        "AGENTS.md",
+        ".openclaw/profile.json",
+        "apps/reports-ui/src"
+      ],
+      "verificationRules": [
+        "Run frontend lane verification.",
+        "Check accessibility and responsive states for UI changes."
+      ]
+    },
+    {
+      "id": "system-architect",
+      "extends": "cto-system-architect",
+      "name": "System Architect",
+      "role": "Architect",
+      "allowedLanes": [
+        "ui-contracts-and-api",
+        "backend-ingestion-and-aiops",
+        "backend-incidents-and-timeline"
+      ],
+      "defaultAdapterPreference": "azure_foundry"
+    },
+    {
+      "id": "dapr-message-queue-specialist",
+      "extends": "backend-engineer",
+      "name": "Dapr / Message Queue Specialist",
+      "role": "Dapr and message queue specialist",
+      "responsibilities": [
+        "Improve Dapr pub/sub, workflow dispatch, idempotency, retry, dead-letter, and async observability behavior.",
+        "Create vertical backend/runtime feature slices from queue health and subscriber evidence."
+      ],
+      "allowedLanes": [
+        "backend-ingestion-and-aiops",
+        "backend-incidents-and-timeline"
+      ],
+      "defaultAdapterPreference": "codex_local"
+    },
+    {
+      "id": "backend-engineer",
+      "name": "Backend Engineer",
+      "allowedLanes": [
+        "backend-ingestion-and-aiops",
+        "backend-incidents-and-timeline",
+        "ui-contracts-and-api"
+      ],
+      "defaultAdapterPreference": "codex_local"
+    },
+    {
+      "id": "frontend-engineer",
+      "name": "Frontend Engineer",
+      "allowedLanes": [
+        "ui-shell-system",
+        "ui-primary-routes",
+        "ui-workspaces-and-viewer",
+        "ui-contracts-and-api"
+      ],
+      "defaultAdapterPreference": "codex_local"
+    },
+    {
+      "id": "ux-designer",
+      "extends": "frontend-engineer",
+      "name": "UX Designer",
+      "role": "UX designer",
+      "responsibilities": [
+        "Improve workflow ergonomics, information architecture, user confidence, and task completion.",
+        "Create implementation-ready UX tasks with evidence, acceptance criteria, and verification."
+      ],
+      "defaultAdapterPreference": "codex_local"
+    },
+    {
+      "id": "ui-designer",
+      "extends": "frontend-engineer",
+      "name": "UI Designer",
+      "role": "UI designer",
+      "responsibilities": [
+        "Improve visual hierarchy, density, spacing, component states, and design-system consistency.",
+        "Keep UI tasks implementation-ready and bound to existing surfaces."
+      ],
+      "defaultAdapterPreference": "codex_local"
+    }
+  ],
+  "repoDetectionSignals": [
+    {
+      "kind": "file",
+      "path": ".openclaw/control-plane.json",
+      "weight": 80
+    },
+    {
+      "kind": "directory",
+      "path": "apps/backend/lawyer_rag",
+      "weight": 60
+    },
+    {
+      "kind": "directory",
+      "path": "apps/reports-ui/src/features/pdf",
+      "weight": 40
+    },
+    {
+      "kind": "file",
+      "path": "docs/openclaw/autonomous-improvement-loop.md",
+      "weight": 50
+    }
+  ],
+  "jobDefinitions": [
+    {
+      "jobId": "queue-refresh",
+      "cron": "*/5 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "main"
+    },
+    {
+      "jobId": "execution-sweep",
+      "cron": "*/5 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "main"
+    },
+    {
+      "jobId": "review-sweep",
+      "cron": "*/10 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "reviewer"
+    },
+    {
+      "jobId": "promotion-sweep",
+      "cron": "*/10 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "promoter"
+    },
+    {
+      "jobId": "github-pr-sweep",
+      "cron": "*/10 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "promoter"
+    },
+    {
+      "jobId": "daily-telegram-digest",
+      "cron": "0 7 * * *",
+      "timezone": "UTC",
+      "entryAgent": "main"
+    }
+  ],
+  "executionPolicy": {
+    "nodeTestRoot": "apps/reports-ui",
+    "pythonTestRoot": "apps/backend",
+    "pythonTestFallback": "lawyer_rag",
+    "baselinePathRoots": [
+      "apps/reports-ui"
+    ],
+    "baselineChecks": [
+      {
+        "commandIncludes": "check-component-size.mjs",
+        "kind": "component-size"
+      },
+      {
+        "commandIncludes": "check-feature-boundaries.mjs",
+        "kind": "feature-boundary"
+      }
+    ]
+  }
+}

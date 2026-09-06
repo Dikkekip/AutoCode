@@ -1,0 +1,27 @@
+{
+  "name": "@openclaw/dispatcher-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "dispatcher": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@openclaw/adapter-codex-local": "workspace:*",
+    "@openclaw/adapter-azure-foundry": "workspace:*",
+    "@openclaw/adapter-gemini-local": "workspace:*",
+    "@openclaw/core-runtime": "workspace:*",
+    "@openclaw/db": "workspace:*",
+    "@openclaw/domain": "workspace:*",
+    "@openclaw/evaluation": "workspace:*",
+    "@openclaw/executor": "workspace:*",
+    "@openclaw/memory-runtime": "workspace:*",
+    "@openclaw/orchestra-codex": "workspace:*",
+    "@openclaw/project-profiles": "workspace:*",
+    "commander": "^14.0.2"
+  }
+}

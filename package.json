@@ -1,0 +1,40 @@
+{
+  "name": "autocode",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "check": "pnpm lint && pnpm typecheck && pnpm test",
+    "ci": "pnpm check && pnpm test:node && pnpm build && pnpm runtime:smoke",
+    "dispatcher": "node apps/dispatcher-cli/dist/index.js",
+    "format": "node scripts/run-biome.mjs format --write",
+    "format:check": "node scripts/run-biome.mjs format",
+    "install:framework": "bash scripts/install-dispatcher.sh",
+    "lint": "node scripts/run-biome.mjs check",
+    "lint:fix": "node scripts/run-biome.mjs check --write",
+    "runtime:smoke": "node scripts/runtime-smoke.mjs && node scripts/native-runtime-smoke.mjs",
+    "release:publish": "node scripts/release-witness.mjs --apply",
+    "release:witness": "node scripts/release-witness.mjs",
+    "test": "vitest run --fileParallelism=false",
+    "typecheck": "tsc -b tsconfig.build.json",
+    "test:node": "node --test scripts/secrets/openclaw-dotenv-secret-resolver.test.mjs scripts/export-policy.test.mjs scripts/check-dependency-licenses.test.mjs",
+    "test:native": "vitest run tests/native-*.test.ts --fileParallelism=false",
+    "deps:licenses": "node scripts/check-dependency-licenses.mjs",
+    "deps:audit": "pnpm audit"
+  },
+  "dependencies": {
+    "cron-parser": "^5.4.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.11",
+    "@types/node": "^24.10.1",
+    "typescript": "^7.0.2",
+    "vite-tsconfig-paths": "^5.1.4",
+    "vitest": "^3.2.6"
+  }
+}

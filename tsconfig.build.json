@@ -1,0 +1,25 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/domain" },
+    { "path": "./packages/evaluation" },
+    { "path": "./packages/os-adapters" },
+    { "path": "./packages/acpx" },
+    { "path": "./packages/db" },
+    { "path": "./packages/rag-processors" },
+    { "path": "./packages/project-profiles" },
+    { "path": "./packages/audit-runtime" },
+    { "path": "./packages/telemetry" },
+    { "path": "./packages/orchestra-codex" },
+    { "path": "./packages/team-router" },
+    { "path": "./packages/memory-runtime" },
+    { "path": "./packages/ui-components" },
+    { "path": "./packages/source-citations" },
+    { "path": "./packages/adapters/codex-local" },
+    { "path": "./packages/adapters/gemini-local" },
+    { "path": "./packages/adapters/azure-foundry" },
+    { "path": "./packages/executor" },
+    { "path": "./packages/core-runtime" },
+    { "path": "./apps/dispatcher-cli" }
+  ]
+}

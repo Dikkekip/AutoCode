@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "sourceMap": true,
+    "verbatimModuleSyntax": true,
+    "paths": {
+      "@openclaw/domain": ["./packages/domain/src/index.ts"],
+      "@openclaw/evaluation": ["./packages/evaluation/src/index.ts"],
+      "@openclaw/os-adapters": ["./packages/os-adapters/src/index.ts"],
+      "@openclaw/acpx": ["./packages/acpx/src/index.ts"],
+      "@openclaw/db": ["./packages/db/src/index.ts"],
+      "@openclaw/rag-processors": ["./packages/rag-processors/src/index.ts"],
+      "@openclaw/executor": ["./packages/executor/src/index.ts"],
+      "@openclaw/project-profiles": ["./packages/project-profiles/src/index.ts"],
+      "@openclaw/audit-runtime": ["./packages/audit-runtime/src/index.ts"],
+      "@openclaw/telemetry": ["./packages/telemetry/src/index.ts"],
+      "@openclaw/orchestra-codex": ["./packages/orchestra-codex/src/index.ts"],
+      "@openclaw/team-router": ["./packages/team-router/src/index.ts"],
+      "@openclaw/memory-runtime": ["./packages/memory-runtime/src/index.ts"],
+      "@openclaw/ui-components": ["./packages/ui-components/src/index.ts"],
+      "@openclaw/source-citations": ["./packages/source-citations/src/index.ts"],
+      "@openclaw/core-runtime": ["./packages/core-runtime/src/index.ts"],
+      "@openclaw/adapter-codex-local": ["./packages/adapters/codex-local/src/index.ts"],
+      "@openclaw/adapter-gemini-local": ["./packages/adapters/gemini-local/src/index.ts"],
+      "@openclaw/adapter-azure-foundry": ["./packages/adapters/azure-foundry/src/index.ts"]
+    }
+  }
+}

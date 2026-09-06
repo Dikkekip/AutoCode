@@ -1,0 +1,50 @@
+# Personal memory / private notes
+MEMORY.md
+memory/
+
+# Local OpenClaw runtime state
+.openclaw/
+!skills/openclaw-autonomy-framework/assets/templates/.openclaw/
+!skills/openclaw-autonomy-framework/assets/templates/.openclaw/**
+
+# Local learning/cache folders
+.learnings/
+.clawhub/
+
+# Temp files
+*.cleanup
+.DS_Store
+.env
+.env.local
+node_modules/
+dist/
+*.tsbuildinfo
+
+# OpenClaw dispatcher runtime
+.openclaw/dispatcher.db
+.openclaw/logs/
+openclaw-workspace-state.json
+
+# Machine-specific workspace files (bootstrap templates remain versioned)
+/USER.md
+/TOOLS.md
+/IDENTITY.md
+/SOUL.md
+/HEARTBEAT.md
+/reviewer/
+/backups/
+/.local-cleanup/
+/install_tailscale_root.sh
+/ip-static-*.sh
+/secure-webhost-hostspecific.sh
+
+# Local credentials, test output, and Python caches
+.env.*
+!.env.example
+coverage/
+.vitest/
+__pycache__/
+*.py[cod]
+
+# Local package-manager cache
+.pnpm-store/

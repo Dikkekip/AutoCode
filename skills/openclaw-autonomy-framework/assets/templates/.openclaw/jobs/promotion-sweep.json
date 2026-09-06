@@ -1,0 +1,20 @@
+{
+  "id": "promotion-sweep",
+  "schedule": {
+    "cron": "6-59/15 * * * *",
+    "timezone": "UTC"
+  },
+  "entry_agent": "main",
+  "mode": "agent",
+  "command": "python3 scripts/openclaw_director.py promotion-sweep",
+  "dry_run_supported": true,
+  "writes_state": [
+    ".openclaw/state/current/open_prs.json",
+    ".openclaw/state/current/promotion_queue.json",
+    ".openclaw/state/current/runtime.json"
+  ],
+  "notifications": {
+    "on_success": "event",
+    "on_failure": "alert"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "policy": {
+    "mode": "ready_pr",
+    "max_open_prs_per_lane": 1,
+    "allow_parallel_lanes": true
+  },
+  "lanes": {}
+}

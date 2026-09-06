@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../../packages/db" },
+    { "path": "../../packages/evaluation" },
+    { "path": "../../packages/executor" },
+    { "path": "../../packages/project-profiles" },
+    { "path": "../../packages/orchestra-codex" },
+    { "path": "../../packages/core-runtime" },
+    { "path": "../../packages/adapters/codex-local" },
+    { "path": "../../packages/adapters/gemini-local" },
+    { "path": "../../packages/adapters/azure-foundry" }
+  ]
+}

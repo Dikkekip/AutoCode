@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "categories": [
+    {
+      "id": "frontend",
+      "label": "Frontend / UX / Accessibility",
+      "preferredModel": "codex",
+      "lanes": [
+        "frontend-shell",
+        "frontend-workflows",
+        "api-contracts"
+      ],
+      "priorities": [
+        "workflow clarity",
+        "accessibility",
+        "responsive behavior",
+        "state clarity"
+      ]
+    },
+    {
+      "id": "architecture",
+      "label": "Architecture / Boundaries / Ownership",
+      "preferredModel": "codex",
+      "lanes": [
+        "api-contracts",
+        "backend-services",
+        "backend-reliability"
+      ],
+      "priorities": [
+        "boundary repairs",
+        "module decomposition",
+        "ownership clarity",
+        "contract-safe refactors"
+      ]
+    },
+    {
+      "id": "quality",
+      "label": "Quality / Testability / Reviewer Trust",
+      "preferredModel": "codex",
+      "lanes": [
+        "frontend-workflows",
+        "backend-services",
+        "backend-reliability",
+        "release-ops"
+      ],
+      "priorities": [
+        "high-risk targeted tests",
+        "coverage improvement",
+        "verification clarity",
+        "reviewer confidence"
+      ]
+    },
+    {
+      "id": "performance",
+      "label": "Performance / Reliability / Efficiency",
+      "preferredModel": "codex",
+      "lanes": [
+        "frontend-shell",
+        "backend-services",
+        "backend-reliability"
+      ],
+      "priorities": [
+        "interaction performance",
+        "API efficiency",
+        "workflow resilience",
+        "verification speed"
+      ]
+    },
+    {
+      "id": "release",
+      "label": "Promotion / Release / Delivery",
+      "preferredModel": "codex",
+      "lanes": [
+        "release-ops"
+      ],
+      "priorities": [
+        "PR readiness",
+        "promotion continuity",
+        "release hygiene",
+        "notification signal"
+      ]
+    }
+  ]
+}

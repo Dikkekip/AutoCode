@@ -1,0 +1,18 @@
+{
+  "name": "reports-ui",
+  "scripts": {
+    "check": "vite build",
+    "test": "vitest run",
+    "test:critical": "vitest run src/features/shell/RootLayout.test.tsx",
+    "ui:audit": "playwright test e2e/ui-audit-crawl.spec.ts"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "vite": "^8.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.0"
+  }
+}

@@ -1,0 +1,459 @@
+{
+  "profileId": "split-services-fixture",
+  "version": "1.0.0",
+  "displayName": "Split services fixture",
+  "description": "Fixture with a nested console and separately packaged catalog service.",
+  "responsePolicy": {
+    "compressionMode": "full"
+  },
+  "adoptionPolicy": {
+    "operatorDirective": [
+      "Keep the runtime generic and move repository-specific policy into this installed profile or repo-local recipes.",
+      "Use `.openclaw/program.md` as the human steering surface before changing framework internals.",
+      "Treat `.openclaw/recipes/README.md` as the editable place for one-off repo guidance."
+    ],
+    "recipeSeeds": [
+      {
+        "recipeId": "minimal-health-check",
+        "title": "Minimal Health Check",
+        "whenToUse": "Use before changing runtime wiring, agent prompts, or queue behavior in a synthetic repo.",
+        "steps": [
+          "Inspect `.openclaw/profile.json` and the installed manager seed state first.",
+          "Run the project verify command after every runtime or prompt change.",
+          "Prefer adding a focused fixture or runtime test instead of branching on this repo."
+        ]
+      }
+    ],
+    "extensionPoints": [
+      {
+        "extensionId": "new-profile",
+        "kind": "profile",
+        "summary": "Add another repo profile without changing installer internals.",
+        "delivery": "Create `profiles/<profile-id>/profile.json` and add focused detection and installer tests."
+      },
+      {
+        "extensionId": "adapter-capability",
+        "kind": "adapter",
+        "summary": "Add a new adapter by extending executor capabilities rather than embedding repo logic.",
+        "delivery": "Add a thin adapter package and route to it through profile lane preferences."
+      }
+    ],
+    "manualSteps": [
+      "Connect any local model or provider credentials required by your installed adapters.",
+      "Adjust repo-owned files such as `README.md` or `AGENTS.md` if your team needs extra local rules.",
+      "Record major framework changes in `.openclaw/proposals/` before broad runtime edits."
+    ]
+  },
+  "framework": {
+    "version": 1,
+    "coreRuntime": {
+      "summary": "Minimal baseline for queue refresh, persona seeding, and job installation without repo-specific branching.",
+      "targetPackages": [
+        "packages/core-runtime",
+        "packages/domain"
+      ],
+      "inheritedFromLawyerRag": [
+        "Queue refresh and manager-seeded task creation from scripts/openclaw_director.py reduced to the smallest generic contract."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "devclaw",
+          "sourcePaths": [
+            "devclaw/lib/audit.ts"
+          ],
+          "adoptedIdeas": [
+            "Append-only audit thinking should be the default even in the minimal profile."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Repo-specific lane ownership, category taxonomies, and background sweep customizations."
+      ]
+    },
+    "orchestraRuntimePlanning": {
+      "summary": "Keep the orchestra contract machine-readable without encoding repo-specific plan templates.",
+      "targetPackages": [
+        "packages/orchestra-codex"
+      ],
+      "inheritedFromLawyerRag": [
+        "Promptify, plan, manifest, and reviewer handoff artifacts from scripts/codex_orchestra.py."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "autoagent",
+          "sourcePaths": [
+            "autoagent/program.md"
+          ],
+          "adoptedIdeas": [
+            "A human-readable directive file should constrain harness behavior during adoption."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Dependency-aware fan-out and multi-agent specializations beyond baseline artifact generation."
+      ]
+    },
+    "projectProfileSchema": {
+      "summary": "Profiles must carry the framework map, lane schema, and installable policy data.",
+      "targetPackages": [
+        "packages/project-profiles",
+        "profiles/minimal-repo"
+      ],
+      "inheritedFromLawyerRag": [
+        "Lane, verification, routing, manager state, and artifact policy extraction from the director runtime."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "goose",
+          "sourcePaths": [
+            "goose/GOVERNANCE.md"
+          ],
+          "adoptedIdeas": [
+            "Profile-visible change policy is preferred over hidden maintainer knowledge."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Embedding any one repository layout as a schema default."
+      ]
+    },
+    "memoryEval": {
+      "summary": "Minimal profile keeps memory and evaluation hooks declarative only.",
+      "targetPackages": [
+        "packages/memory-runtime"
+      ],
+      "inheritedFromLawyerRag": [
+        "Verification hints and seed-task evidence are eligible memory inputs."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "agentscope",
+          "sourcePaths": [
+            "agentscope/README.md"
+          ],
+          "adoptedIdeas": [
+            "Memory compression and evaluation should be first-class framework concerns."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Provider-specific embeddings, benchmark suites, and long-term memory infrastructure."
+      ]
+    },
+    "auditOps": {
+      "summary": "Minimal profile uses append-only audit logs and explicit runtime bootstrap files.",
+      "targetPackages": [
+        "packages/audit-runtime",
+        "apps/dispatcher-cli"
+      ],
+      "inheritedFromLawyerRag": [
+        "Run and job lifecycle events are preserved as explicit artifacts."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "devclaw",
+          "sourcePaths": [
+            "devclaw/lib/audit.ts"
+          ],
+          "adoptedIdeas": [
+            "Append-only log discipline with bounded truncation."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Channel-specific alerting and promotion automation."
+      ]
+    },
+    "adapters": {
+      "summary": "Adapters stay thin and policy-free in the minimal profile.",
+      "targetPackages": [
+        "packages/executor"
+      ],
+      "inheritedFromLawyerRag": [
+        "Lane-preferred adapter selection remains data-driven."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "paperclip",
+          "sourcePaths": [
+            "paperclip/packages/adapter-utils/src/session-compaction.ts"
+          ],
+          "adoptedIdeas": [
+            "Adapter session capabilities and compaction should be declared rather than inferred ad hoc."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "Adapter-specific planner logic inside profile defaults."
+      ]
+    },
+    "installerAdoption": {
+      "summary": "The profile can be installed into any repo with bootstrap artifacts that explain the framework contract.",
+      "targetPackages": [
+        "apps/dispatcher-cli",
+        "packages/project-profiles"
+      ],
+      "inheritedFromLawyerRag": [
+        "Bootstrap runtime, manager state, and scheduled jobs are installed as repo-local artifacts."
+      ],
+      "borrowedFromSiblingRepos": [
+        {
+          "repoId": "autoagent",
+          "sourcePaths": [
+            "autoagent/program.md"
+          ],
+          "adoptedIdeas": [
+            "Installer output should leave behind editable human directives, not just binaries."
+          ]
+        }
+      ],
+      "outOfScope": [
+        "One-off migration code for any specific source repository."
+      ]
+    }
+  },
+  "requiredReadingRules": [
+    {
+      "ruleId": "shared-base",
+      "displayName": "Shared base docs",
+      "paths": [
+        "README.md",
+        "ui/console/package.json"
+      ]
+    }
+  ],
+  "verificationRules": [
+    {
+      "ruleId": "basic-verify",
+      "displayName": "Basic verification",
+      "commands": [
+        "cd ui/console && npm test"
+      ]
+    }
+  ],
+  "laneDefinitions": [
+    {
+      "laneId": "app-core",
+      "displayName": "App core",
+      "preferredAdapterType": "codex_local",
+      "allowedPaths": [
+        "ui/console/**",
+        "services/catalog/**"
+      ],
+      "requiredReadingRuleId": "shared-base",
+      "verificationRuleId": "basic-verify",
+      "categoryHints": [
+        "general"
+      ]
+    }
+  ],
+  "categoryDefinitions": [
+    {
+      "categoryId": "general",
+      "displayName": "General",
+      "laneIds": [
+        "app-core"
+      ],
+      "priority": 50
+    }
+  ],
+  "routingRules": [
+    {
+      "name": "minimal-default",
+      "targetAdapterType": "codex_local",
+      "priority": 1,
+      "patterns": [
+        "app",
+        "core",
+        "general"
+      ],
+      "isFallback": true
+    }
+  ],
+  "managerStateDefaults": {
+    "version": 1,
+    "managerPersonas": [
+      {
+        "id": "pm-general",
+        "focus": "Keep a minimal repo dispatchable.",
+        "ownedLaneIds": [
+          "app-core"
+        ],
+        "preferredAdapterType": "codex_local"
+      }
+    ],
+    "goals": [
+      {
+        "id": "minimal-continuity",
+        "title": "Keep the minimal profile dispatchable.",
+        "status": "active",
+        "projectIds": [
+          "minimal-seed"
+        ]
+      }
+    ],
+    "projects": [
+      {
+        "id": "minimal-seed",
+        "title": "Keep the minimal synthetic repo healthy",
+        "status": "active",
+        "laneId": "app-core",
+        "categoryId": "general",
+        "managerPersonaId": "pm-general",
+        "seedTask": {
+          "id": "minimal-seed-task",
+          "title": "Verify the minimal synthetic repo remains dispatchable",
+          "kind": "manager-seeded-project",
+          "priority": 50,
+          "verificationHint": "Run the basic verification command and confirm task packaging still works."
+        }
+      }
+    ]
+  },
+  "promotionPolicy": {
+    "mode": "manual",
+    "maxOpenPrsPerLane": 1,
+    "allowParallelLanes": false,
+    "mergeMethod": "squash",
+    "requireCi": false,
+    "requireReviewDecision": "manual"
+  },
+  "notificationPolicy": {
+    "channel": "stdout"
+  },
+  "artifactPolicy": {
+    "runtimeStateDir": ".openclaw/state/current",
+    "artifactRootDir": ".codex/orchestra-runs",
+    "worktreeRootDir": ".openclaw/state/current/worktrees",
+    "auditLogPath": ".openclaw/logs/director.audit.ndjson"
+  },
+  "planner": {
+    "enabled": true,
+    "schedule": "0 */2 * * *",
+    "maxTasksPerRun": 5,
+    "maxMajorTasksPerRun": 1,
+    "dedupeWindowHours": 72,
+    "allowedLanes": [
+      "app-core"
+    ],
+    "defaultPersonaByLane": {
+      "app-core": "pm-general"
+    },
+    "defaultAdapterByLane": {
+      "app-core": "codex_local"
+    },
+    "signalCollectors": [
+      "repo_paths_churn",
+      "queue_state",
+      "review_promotion_state",
+      "repo_memory",
+      "verification_rules",
+      "repo_directives",
+      "todo_fixme"
+    ],
+    "governance": {
+      "allowAutonomousMajorChanges": false,
+      "manualOnlyLanes": [],
+      "maxTasksPerRun": 5,
+      "maxMajorTasksPerDay": 1,
+      "allowCrossLaneDependencies": false
+    },
+    "costPolicy": {
+      "plannerDailyBudgetLimit": 1200,
+      "plannerConcurrencyCap": 1,
+      "reduceMaxTasksWhenCodexWarm": true,
+      "fallbackPlannerAdapterType": "gemini_local"
+    },
+    "artifactPolicy": {
+      "plannerRunsDir": ".openclaw/state/current/planner-runs",
+      "retentionDays": 14
+    }
+  },
+  "personas": [
+    {
+      "id": "planner",
+      "allowedLanes": [
+        "app-core",
+        "planning"
+      ],
+      "requiredReading": [
+        ".openclaw/planner/planner.prompt.md",
+        ".openclaw/profile.json",
+        "README.md"
+      ],
+      "verificationRules": [
+        "Validate plan shape and lane membership before queueing.",
+        "Use the minimal profile verification command for generated work."
+      ]
+    },
+    {
+      "id": "minimal-runtime-engineer",
+      "extends": "backend-engineer",
+      "name": "Minimal Runtime Engineer",
+      "role": "Backend Engineer",
+      "allowedLanes": [
+        "app-core"
+      ],
+      "requiredReading": [
+        "README.md",
+        ".openclaw/profile.json"
+      ],
+      "verificationRules": [
+        "Run the minimal repo verification command."
+      ]
+    }
+  ],
+  "repoDetectionSignals": [
+    {
+      "kind": "file",
+      "path": "ui/console/package.json",
+      "weight": 10
+    }
+  ],
+  "jobDefinitions": [
+    {
+      "jobId": "queue-refresh",
+      "cron": "0 */2 * * *",
+      "timezone": "UTC",
+      "entryAgent": "main"
+    },
+    {
+      "jobId": "execution-sweep",
+      "cron": "*/45 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "main"
+    },
+    {
+      "jobId": "review-sweep",
+      "cron": "*/30 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "reviewer"
+    },
+    {
+      "jobId": "promotion-sweep",
+      "cron": "*/30 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "promoter"
+    },
+    {
+      "jobId": "github-pr-sweep",
+      "cron": "*/30 * * * *",
+      "timezone": "UTC",
+      "entryAgent": "promoter"
+    },
+    {
+      "jobId": "daily-telegram-digest",
+      "cron": "0 7 * * *",
+      "timezone": "UTC",
+      "entryAgent": "main"
+    }
+  ],
+  "executionPolicy": {
+    "nodeTestRoot": "ui/console",
+    "pythonTestRoot": "services/catalog",
+    "pythonTestFallback": "catalog",
+    "baselinePathRoots": [
+      "ui/console"
+    ]
+  }
+}

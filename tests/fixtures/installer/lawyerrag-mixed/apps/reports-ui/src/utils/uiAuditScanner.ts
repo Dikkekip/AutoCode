@@ -1,0 +1,1 @@
+export const scanner = true;

@@ -1,0 +1,18 @@
+# Operator state must never ship in source/release exports (including already tracked files).
+/USER.md export-ignore
+/SOUL.md export-ignore
+/MEMORY.md export-ignore
+/IDENTITY.md export-ignore
+/TOOLS.md export-ignore
+/HEARTBEAT.md export-ignore
+/memory export-ignore
+/backups export-ignore
+/.openclaw export-ignore
+/.learnings export-ignore
+/.clawhub export-ignore
+/.env* export-ignore
+/reviewer export-ignore
+/.local-cleanup export-ignore
+/install_tailscale_root.sh export-ignore
+/ip-static-*.sh export-ignore
+/secure-webhost-hostspecific.sh export-ignore

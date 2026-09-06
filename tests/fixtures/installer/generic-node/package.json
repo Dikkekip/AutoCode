@@ -1,0 +1,7 @@
+{
+  "name": "demo-app",
+  "packageManager": "pnpm@10.30.3",
+  "scripts": {
+    "test": "vitest run"
+  }
+}

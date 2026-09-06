@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.16.0", "24", "26"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "pnpm"
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate dependency licenses and advisories
+        run: pnpm deps:licenses && pnpm deps:audit
+
+      - name: Provision isolated verification test root
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap busybox-static
+          sudo mkdir -p /opt/native-test-root/bin /opt/native-test-root/work /opt/native-test-root/proc /opt/native-test-root/dev /opt/native-test-root/tmp
+          sudo cp /bin/busybox /opt/native-test-root/bin/busybox
+          for app in sh cat sleep yes; do sudo ln -s busybox /opt/native-test-root/bin/$app; done
+          sudo chmod -R go-w /opt/native-test-root
+
+      - name: Test kernel verification isolation
+        env:
+          NATIVE_TEST_ROOTFS: /opt/native-test-root
+        run: pnpm exec vitest run tests/native-verification-isolation.test.ts
+
+      - name: Run CI suite
+        run: pnpm run ci

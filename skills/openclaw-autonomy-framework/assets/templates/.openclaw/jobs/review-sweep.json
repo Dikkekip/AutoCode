@@ -1,0 +1,19 @@
+{
+  "id": "review-sweep",
+  "schedule": {
+    "cron": "4-59/10 * * * *",
+    "timezone": "UTC"
+  },
+  "entry_agent": "main",
+  "mode": "agent",
+  "command": "python3 scripts/openclaw_director.py review-sweep",
+  "dry_run_supported": true,
+  "writes_state": [
+    ".openclaw/state/current/runtime.json",
+    ".openclaw/state/current/reviews/"
+  ],
+  "notifications": {
+    "on_success": "silent",
+    "on_failure": "alert"
+  }
+}

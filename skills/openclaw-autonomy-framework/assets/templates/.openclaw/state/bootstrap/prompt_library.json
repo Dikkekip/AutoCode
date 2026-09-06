@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "templates": {
+    "frontend": {
+      "preferredModel": "codex",
+      "sections": [
+        "goal",
+        "ownership_lane",
+        "allowed_paths",
+        "required_reading",
+        "constraints",
+        "verification",
+        "reviewer_watch_outs",
+        "non_goals"
+      ]
+    },
+    "backend": {
+      "preferredModel": "codex",
+      "sections": [
+        "goal",
+        "ownership_lane",
+        "allowed_paths",
+        "required_reading",
+        "contracts",
+        "operational_constraints",
+        "verification",
+        "non_goals"
+      ]
+    },
+    "reviewer": {
+      "preferredModel": "codex",
+      "sections": [
+        "review_target",
+        "lane_scope",
+        "risk_checks",
+        "verification",
+        "block_or_allow",
+        "follow_up_candidates"
+      ]
+    }
+  }
+}

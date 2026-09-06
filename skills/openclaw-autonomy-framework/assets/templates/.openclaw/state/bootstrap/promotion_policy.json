@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "enabled": true,
+  "promotionCandidateRequires": {
+    "laneLocalTargetedChecksGreen": true,
+    "reviewEvidencePresent": true,
+    "onlyGlobalBlockersRemain": true
+  },
+  "globalBlockerClasses": [
+    "host-dependency",
+    "reviewer-command-drift",
+    "coverage-coupling",
+    "warning-debt",
+    "artifact-noise"
+  ],
+  "github": {
+    "repo": "__REPO_SLUG__",
+    "autoCreatePrForPromotionCandidates": false,
+    "autoCreateReleaseAfterMerge": false,
+    "liveUpgradeTriggeredByRelease": false
+  }
+}

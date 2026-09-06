@@ -1,0 +1,26 @@
+# Version control & OS
+.git/
+.DS_Store
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Runtime artifacts
+*.log
+*.db
+*.sqlite
+
+# Secrets & credentials (never publish)
+.env
+secrets/
+tokens-*.json
+auth.json
+config.json
+*.pem
+
+# GitHub-only docs (SKILL.md serves as ClawHub readme)
+README.md

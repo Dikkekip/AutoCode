@@ -1,0 +1,2 @@
+test-openapi:
+	@echo "validate"

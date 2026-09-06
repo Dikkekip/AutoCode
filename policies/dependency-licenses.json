@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "allowedExpressions": ["MIT", "MIT OR Apache-2.0", "Apache-2.0", "ISC", "BSD-3-Clause"],
+  "exceptions": []
+}

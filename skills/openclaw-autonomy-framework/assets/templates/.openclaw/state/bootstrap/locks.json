@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "executionHold": {
+    "active": false,
+    "class": null,
+    "detectedAt": null,
+    "evidencePath": null,
+    "reason": null
+  },
+  "lanes": {},
+  "sessions": {},
+  "generatedAt": null
+}

@@ -1,0 +1,14 @@
+# Personal memory / private notes
+MEMORY.md
+memory/
+
+# Local OpenClaw runtime state
+.openclaw/
+
+# Local learning/cache folders
+.learnings/
+.clawhub/
+
+# Temp files
+*.cleanup
+.DS_Store

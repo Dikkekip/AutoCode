@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "manager_personas": [
+    {
+      "id": "manager-frontend",
+      "focus": "frontend workflow quality, UX-safe planning, and interaction reliability",
+      "owned_lanes": [
+        "frontend-shell",
+        "frontend-workflows",
+        "api-contracts"
+      ],
+      "preferredModel": "codex"
+    },
+    {
+      "id": "manager-backend",
+      "focus": "backend reliability, contracts, testability, and orchestration hardening",
+      "owned_lanes": [
+        "backend-services",
+        "backend-reliability"
+      ],
+      "preferredModel": "codex"
+    },
+    {
+      "id": "manager-release",
+      "focus": "reviewer trust, promotion continuity, and release hygiene",
+      "owned_lanes": [
+        "release-ops"
+      ],
+      "preferredModel": "codex"
+    }
+  ],
+  "goals": [
+    {
+      "id": "continuous-autonomous-execution",
+      "title": "Keep the OpenClaw loop continuously producing reviewer-ready work and promotable PRs for __PROJECT_NAME__",
+      "status": "active",
+      "projects": [
+        "dispatch-continuity",
+        "reviewer-signal-hardening"
+      ]
+    },
+    {
+      "id": "architecture-and-boundary-health",
+      "title": "Continuously tighten architecture boundaries and keep high-risk lanes narrow and reviewable",
+      "status": "active",
+      "projects": [
+        "lane-ownership-clarity"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "id": "dispatch-continuity",
+      "title": "Keep queue reseeding, stale-lane recovery, and repeatable dispatchability healthy",
+      "status": "active",
+      "lane": "backend-reliability",
+      "category": "quality",
+      "managerPersona": "manager-backend",
+      "seedTask": {
+        "id": "manager-dispatch-continuity",
+        "title": "Keep autonomous dispatch continuity healthy across queue reseeding and stale-lane recovery",
+        "kind": "manager-seeded-project",
+        "priority": 97,
+        "verificationHint": "Run queue-refresh plus execution-sweep and confirm at least one eligible lane remains dispatchable."
+      }
+    },
+    {
+      "id": "reviewer-signal-hardening",
+      "title": "Improve reviewer trust, verification quality, and promotion readiness without widening coding scope",
+      "status": "active",
+      "lane": "release-ops",
+      "category": "quality",
+      "managerPersona": "manager-release",
+      "seedTask": {
+        "id": "manager-reviewer-signal-hardening",
+        "title": "Harden reviewer evidence, promotion handoffs, and blocker classification for autonomous work",
+        "kind": "manager-seeded-project",
+        "priority": 96,
+        "verificationHint": "Inspect generated task and promotion packages and confirm machine-readable evidence remains present."
+      }
+    },
+    {
+      "id": "lane-ownership-clarity",
+      "title": "Keep lane ownership and boundary-safe task shaping explicit as the codebase grows",
+      "status": "active",
+      "lane": "api-contracts",
+      "category": "architecture",
+      "managerPersona": "manager-frontend",
+      "seedTask": {
+        "id": "manager-lane-ownership-clarity",
+        "title": "Refine lane ownership and pre-edit analysis prompts so planners generate narrow reviewable work",
+        "kind": "manager-seeded-project",
+        "priority": 95,
+        "verificationHint": "Inspect generated task packages and confirm ownership reasoning plus pre-edit analysis guidance are present."
+      }
+    }
+  ],
+  "prompt_patterns": {
+    "query_lane": "Start by identifying the package-local query, contract, or interaction surface that owns the bug or drift. Map the narrowest lane-safe file set, keep public facades stable, and explain why this lane owns the fix.",
+    "codebase_analysis": "Before editing, inspect the lane-owned code paths, verifier commands, and adjacent architecture docs. Summarize the likely failure mode, the narrowest safe change, and the verification signal that will prove the fix without widening scope."
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    {
+      "path": "../audit-runtime"
+    },
+    {
+      "path": "../db"
+    },
+    {
+      "path": "../domain"
+    },
+    {
+      "path": "../executor"
+    },
+    {
+      "path": "../project-profiles"
+    },
+    {
+      "path": "../os-adapters"
+    },
+    {
+      "path": "../telemetry"
+    },
+    {
+      "path": "../evaluation"
+    },
+    {
+      "path": "../memory-runtime"
+    }
+  ]
+}

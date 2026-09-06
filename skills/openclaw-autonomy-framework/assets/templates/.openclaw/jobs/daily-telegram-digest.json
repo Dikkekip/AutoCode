@@ -1,0 +1,18 @@
+{
+  "id": "daily-telegram-digest",
+  "schedule": {
+    "cron": "30 7 * * *",
+    "timezone": "UTC"
+  },
+  "entry_agent": "main",
+  "mode": "agent",
+  "command": "python3 scripts/openclaw_director.py daily-summary",
+  "dry_run_supported": true,
+  "writes_state": [
+    ".openclaw/state/current/runtime.json"
+  ],
+  "notifications": {
+    "on_success": "digest",
+    "on_failure": "alert"
+  }
+}

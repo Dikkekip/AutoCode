@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "mode": "low-noise",
+  "channel": "telegram",
+  "target": "SET_ME",
+  "target_env": "OPENCLAW_FEEDBACK_TARGET",
+  "enabled": true,
+  "defaultDelivery": "silent",
+  "digest": {
+    "enabled": true,
+    "cadence": "daily",
+    "maxBullets": 6,
+    "includeCategories": true,
+    "includeReviewerBlocks": true,
+    "includeNextActions": true
+  },
+  "events": {
+    "failureAlertAfterConsecutiveErrors": 2,
+    "sendRecoveryAfterAlertedFailure": true,
+    "alertOnCriticalRegression": true,
+    "alertOnMajorMilestone": true,
+    "alertOnLaneDeadlock": true,
+    "alertOnEverySweep": false,
+    "alertOnEverySpawn": false,
+    "alertOnRoutineSuccess": false
+  },
+  "coalescing": {
+    "enabled": true,
+    "windowMinutes": 180,
+    "maxEventNotificationsPerCategoryBurst": 1
+  },
+  "messageShape": {
+    "headline": true,
+    "maxBullets": 6,
+    "compact": true,
+    "includeRiskOrNextStep": true
+  }
+}

@@ -1,0 +1,54 @@
+name: Release Readiness
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag, or SHA to verify"
+        required: false
+        type: string
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.ref || github.sha }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 10.30.3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.16.0"
+          cache: "pnpm"
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate dependency licenses and advisories
+        run: pnpm deps:licenses && pnpm deps:audit
+
+      - name: Verify release candidate
+        run: pnpm run ci
+
+      - name: Publish summary
+        run: |
+          echo "## Release readiness passed" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Ref:** \`${{ github.event.release.tag_name || inputs.ref || github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Workspace:** \`autocode\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "**Checks:** \`pnpm lint\`, \`pnpm typecheck\`, \`pnpm test\`, \`pnpm build\`" >> "$GITHUB_STEP_SUMMARY"

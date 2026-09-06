@@ -1,0 +1,19 @@
+{
+  "id": "queue-refresh",
+  "schedule": {
+    "cron": "*/10 * * * *",
+    "timezone": "UTC"
+  },
+  "entry_agent": "main",
+  "mode": "agent",
+  "command": "python3 scripts/openclaw_director.py queue-refresh",
+  "dry_run_supported": true,
+  "writes_state": [
+    ".openclaw/state/current/runtime.json",
+    ".openclaw/state/current/queue.json"
+  ],
+  "notifications": {
+    "on_success": "silent",
+    "on_failure": "alert"
+  }
+}
