@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"

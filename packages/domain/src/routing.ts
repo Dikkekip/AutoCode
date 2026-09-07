@@ -103,13 +103,6 @@ const RAG_DOMAIN_PATTERN = /(rag|retrieval|citation confidence|rerank|vector|key
 const PROMPT_SAFETY_DOMAIN_PATTERN =
   /(prompt|guardrail|safety|injection|unsafe|medical|diagnos|allegation|unsupported claim|quality)/i
 
-function riskBand(score: number): "low" | "medium" | "high" | "critical" {
-  if (score >= 6) return "critical"
-  if (score >= 4) return "high"
-  if (score >= 2) return "medium"
-  return "low"
-}
-
 function maxRiskBand(
   left: "low" | "medium" | "high" | "critical",
   right: "low" | "medium" | "high" | "critical"

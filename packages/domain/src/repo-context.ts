@@ -230,10 +230,6 @@ function formatLaneDoc(profile: RepoLaneDocProfile): string {
   return `\`${profile.path}\` - ${profile.label}`
 }
 
-function formatSignal(profile: RepoControlPlaneSignal): string {
-  return `\`${profile.path}\` - ${profile.note}`
-}
-
 function formatVerify(command: RepoVerifyCommand): string {
   return command.command
 }

@@ -1,10 +1,8 @@
-# September 2026 native implementation review
+# Native implementation status
 
-This review reassesses the 40 prompts against the integrated source, including the previously completed work and the latest upstream changes. The original ZIP line numbers are historical. The implementation preserves Workboard/Automations execution ownership, protected evidence, independent review, paused defaults and human approval for framework changes. Publishing the framework release does not authorize application deployment or activation of autonomy.
+This is a capability and limitation map for the current native runtime. Workboard and Automations own execution; application activation requires independent verification, reviewed policy, and operator approval. See [verification lanes](verification-lanes.md) for reproducible checks.
 
-## Reassessment and implementation map
-
-All prompts remain relevant as acceptance requirements. Several were substantially implemented in the earlier tasks; those implementations were retained and tested rather than replaced.
+## Capability map
 
 | ID | Implementation and evidence location | Compatibility or practical boundary |
 |---|---|---|
@@ -49,32 +47,8 @@ All prompts remain relevant as acceptance requirements. Several were substantial
 | 39 | Private source export policy, portable doctor diagnostics and clean repository handoff | Source export exclusion alone does not sanitize old Git history; cleanup is coordinated separately. |
 | 40 | Enforced observe/propose/human-review/staging/application modes and scoped canary evidence | Supplied defaults remain paused/observe; production requires live retained evidence and operator sign-off. |
 
-## Validation record
-
-The first integrated full run used `pnpm test`: 824 passed, six failed, two Linux-only isolation tests skipped across 100 files. Failures identified integration work in renewal-aware fake-clock testing, exploration selection and design-context invalidation; this is an intermediate result, not release acceptance.
-
-`pnpm lint` passed with existing warnings. `pnpm test:node` passed all five Node tests, including source export privacy. `pnpm build` and `pnpm runtime:smoke` passed after moving the smoke ownership fixture outside its synthetic candidate repository. The smoke executes compiled runtime discovery, proposal, admission, idempotent replay, pause and SQLite restart with explicit Gateway doubles.
-
-Focused store maintenance tests passed four cases, including atomic migration rollback and verified WAL backup/reopen. Focused capability tests cover unknown cost, missing capability, stale/wrong-model evidence, protected artifact mutation and unmeasured fallback denial. Additional agent-owned focused suites are recorded with the final validation checkpoint.
-
-Dependency maintenance was targeted: Vitest moved to 3.2.6 and fflate to 0.8.3, with compatible transitive lockfile updates. `pnpm audit` reported zero advisories across 195 dependencies after these changes. The license checker accepted 93 package entries across five reviewed expressions. Local sandbox store discovery required an explicit `AUTOCODE_PNPM_STORE_DIR` pointing at the package manager’s actual store; CI uses its normal configured store. Registry outages and malformed inventories fail the check. Frozen installation was performed with install scripts disabled.
-
-The user requested a checkpoint push before completing the entire backlog. This is READY FOR HUMAN REVIEW after final local validation, not a claim that all 40 acceptance criteria or a live rollout have been completed. Automatic stale-base recovery (14), execution-owner rollback CLI (16), automatic artifact GC (19), notification transport (24), live benchmark/canary evidence (26/40), dynamic model escalation (35), and complete provider usage settlement (36) remain deferred. Safety gates continue to deny unsupported authority. Clean-source validation and repository identity are recorded at handoff; a successful push is not a release witness.
-
-## Checkpoint handoff
-
-At the source cutoff, `pnpm lint`, `pnpm typecheck`, `pnpm build`, `pnpm runtime:smoke`, and `pnpm test:node` passed. Lint retains existing warnings. The affected explicit-mode fixture suites passed: native autonomy 17, native quality 32, and native pause 4. Final release/benchmark/mode/process-lease checks passed 47 tests with all release budget hooks integrated. Runtime ownership/recovery/concurrency/mode/plugin checks passed 35 focused tests; root store/capability/budget/dashboard checks passed 14. The final complete suite is run again against the stable source, with its actual result reported in the repository handoff. These counts overlap and must not be summed into a unique test total.
-
-A second intermediate full run caught 42 outdated mode-fixture failures; all were in the three native autonomy/quality/release suites being updated to explicit implementation authority. Default policies remain observe-only. The legacy fake-clock planner test was also corrected to advance renewal intervals together with its two-minute clock change, preserving the lease-expiry rule.
-
 ## Operator actions and remaining environment evidence
 
-Keep native execution paused while migrating policy, ownership and evidence. Register independent verification authority, exact CI requirements, skill snapshots and measured capabilities through authenticated operator code. Configure explicit conservative budgets and deployment target/known-good identity before any staged application canary. Observe retained outcomes for the reviewed window before considering scope promotion. No production deployment, provider benchmark or unattended autonomy activation was performed to satisfy these prompts.
+Keep native execution paused while migrating policy, ownership and evidence. Register independent verification authority, exact CI requirements, skill snapshots and measured capabilities through authenticated operator code. Configure explicit conservative budgets and deployment target/known-good identity before any staged application canary. Observe retained outcomes for the reviewed window before considering scope promotion. No production deployment, provider benchmark or unattended autonomy activation was performed as part of this implementation.
 
-See `native-evidence-maintenance.md`, `native-capability-routing.md`, `native-evidence-view.md`, `native-pause-control.md` and the native canary runbook for operational boundaries. Retain private backups outside release exports. The fresh repository is prepared by the separately authorized cleanup task and must contain all completed source changes in its clean initial commit.
-
-Final local full-suite attempt: `pnpm test` completed 835 passing, four failing and two Linux-only skips across 102 files. The four failures were the native-risk fixture retaining the new default observe mode while exercising review. That fixture now explicitly requests implement-human-review; `pnpm exec vitest run tests/native-risk.test.ts --maxWorkers=1` passed all 19 tests afterward. No production defaults were changed. A complete rerun after that last fixture-only correction was not claimed at checkpoint.
-
-## Fresh repository validation
-
-The source-only AutoCode checkout includes the completed implementation checkpoint and the exclusions documented above. Its independent full suite passed 838 tests, skipped two Linux-only tests, and hit one five-second migration-test timeout. The entire affected native-autonomy suite then passed all 17 tests without changes. Lint, typecheck, five Node tests (including source-archive privacy), build, both compiled runtime smoke checks, and dependency license/audit checks passed. This records the observed results; it does not claim an uninterrupted green full-suite run or live deployment certification.
+See `native-evidence-maintenance.md`, `native-capability-routing.md`, `native-evidence-view.md`, `native-pause-control.md` and the native canary runbook for operational boundaries. Retain private backups outside release exports. 

@@ -117,10 +117,6 @@ const RECOVERY_LABELS: Record<string, string> = {
   "duplicate-workflow-recovered": "duplicate workflows pruned"
 }
 
-function nowIso(): string {
-  return new Date().toISOString()
-}
-
 function safeJsonParse<T>(value: unknown): T | null {
   if (typeof value !== "string" || value.trim() === "") return null
   try {

@@ -112,10 +112,6 @@ function normalizedBaseUrl(value: string): string {
   return url.toString()
 }
 
-function projectUrlToOpenAiBase(value: string): string {
-  return normalizedBaseUrl(value)
-}
-
 function endpointNameFromUrl(value: string): string {
   try {
     const url = new URL(value)

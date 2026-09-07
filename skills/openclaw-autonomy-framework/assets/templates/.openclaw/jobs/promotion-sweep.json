@@ -6,8 +6,6 @@
   },
   "entry_agent": "main",
   "mode": "agent",
-  "command": "python3 scripts/openclaw_director.py promotion-sweep",
-  "dry_run_supported": true,
   "writes_state": [
     ".openclaw/state/current/open_prs.json",
     ".openclaw/state/current/promotion_queue.json",

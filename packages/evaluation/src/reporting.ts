@@ -4,7 +4,6 @@ import type { EvaluationStorage } from "./storage.js"
 import type {
   EvaluationBenchmark,
   EvaluationMetric,
-  EvaluationMetricKind,
   EvaluationMetricResult,
   EvaluationRepeatMetricSummary,
   EvaluationRepeatSummary,

@@ -5,7 +5,6 @@ import { AuditWriter } from "@openclaw/audit-runtime"
 import type { DispatcherStore } from "@openclaw/db"
 import {
   type Agent,
-  deriveMemoryLifecycleStatus,
   detectRepoContext,
   type MemoryAudience,
   type MemoryChunk,

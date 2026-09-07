@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { DispatcherStore } from "@openclaw/db"
 
@@ -312,6 +312,6 @@ export function renderAuditSummary(report: AuditReport): string[] {
     }
   }
 
-  lines.push("", "Docs: docs/loop-ideas-import.md")
+  lines.push("", "Docs: docs/framework-map.md")
   return lines
 }

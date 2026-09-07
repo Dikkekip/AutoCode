@@ -96,7 +96,7 @@ Provider authentication and account selection belong to OpenClaw. Configure your
 - [Role capability requirements](docs/native-capability-routing.md): measured eligibility for configured native roles.
 - [Evidence maintenance](docs/native-evidence-maintenance.md): storage, backup, and retention.
 - [Evidence view](docs/native-evidence-view.md): the embeddable, read-only operator view.
-- [Implementation status and remaining work](docs/native-backlog-implementation-review.md): implemented boundaries, validation results, and deferred work.
+- [Implementation status and remaining work](docs/native-implementation-status.md): implemented boundaries, validation results, and deferred work.
 - [Framework map](docs/framework-map.md): package responsibilities and project-profile boundaries.
 
 ## Development

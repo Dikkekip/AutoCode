@@ -6,8 +6,6 @@
   },
   "entry_agent": "main",
   "mode": "agent",
-  "command": "python3 scripts/openclaw_director.py daily-summary",
-  "dry_run_supported": true,
   "writes_state": [
     ".openclaw/state/current/runtime.json"
   ],

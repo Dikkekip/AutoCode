@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import type { Agent, Company, Project, RuntimeIdentityPayload, Task } from "@openclaw/domain"
 import { afterAll, beforeAll, describe, expect, it } from "vitest"

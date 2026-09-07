@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs"
 import { basename, dirname, join } from "node:path"
 import type { SQLInputValue } from "node:sqlite"
 import { DatabaseSync } from "node:sqlite"

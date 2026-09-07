@@ -211,7 +211,7 @@ function renderPlannerPrompt(profile: ProjectProfile): string {
     '      "preferredAdapterType": "codex_local",',
     '      "priority": 60,',
     '      "requiredReading": ["README.md"],',
-    '      "verificationChecklist": ["python3 -m pytest tests/test_openclaw_director.py -q"],',
+    '      "verificationChecklist": [],',
     '      "contractUpdateReminders": [],',
     '      "repoNotes": [],',
     '      "dependencies": [],',

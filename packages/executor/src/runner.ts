@@ -17,23 +17,12 @@ export {
 } from "./verification-commands.js"
 
 import { createHash } from "node:crypto"
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  statfsSync,
-  statSync,
-  writeFileSync
-} from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statfsSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, join, resolve } from "node:path"
 import type { AuditWriter } from "@openclaw/audit-runtime"
 import type { DispatcherStore } from "@openclaw/db"
 import {
-  type AdapterCapabilityProfile,
   type AdapterDefinition,
   type AdapterExecutionResult,
   type AdapterFailureCategory,

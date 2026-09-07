@@ -1,4 +1,4 @@
-import { LOOP_PATTERNS, type LoopPattern, type LoopPatternCost } from "@openclaw/domain"
+import { type LoopPattern } from "@openclaw/domain"
 
 export type ReadinessLevel = "L1" | "L2" | "L3"
 
@@ -169,6 +169,6 @@ export function renderCostReport(r: EstimateResult): string[] {
     lines.push("")
   }
 
-  lines.push("Docs: docs/loop-ideas-import.md")
+  lines.push("Docs: docs/framework-map.md")
   return lines
 }

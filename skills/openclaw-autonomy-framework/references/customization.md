@@ -21,9 +21,10 @@ After installing the control plane into a project repo:
 5. Update `.openclaw/state/bootstrap/promotion_policy.json`
    - Set the real GitHub repo slug and release behavior.
 
-6. Wire the runtime scripts
-   - The templates assume a repo-local `scripts/openclaw_director.py` (or equivalent entrypoint).
-   - If your repo uses another path, change every job spec command.
+6. Use the installed dispatcher runtime
+   - Job specs declare schedules and entry agents; the dispatcher selects behavior by job ID.
+   - Run a job with `./scripts/openclaw-dispatcher.sh director job <job-id> --project <project>`.
+   - These compatibility templates do not configure native Workboard automations. Use `dispatcher native install-automations` for native projects.
 
 7. Keep runtime state out of git
    - `.openclaw/state/current/` should stay mutable and ignored.

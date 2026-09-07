@@ -107,18 +107,6 @@ export interface SessionRotationDecision {
 }
 
 const OPENCLAW_SESSION_STATE_KEY = "__openclaw_session_v1"
-const DEFAULT_SESSION_COMPACTION_POLICY: SessionCompactionPolicy = {
-  enabled: true,
-  maxSessionRuns: 200,
-  maxRawInputTokens: 2_000_000,
-  maxSessionAgeHours: 72
-}
-const ADAPTER_MANAGED_SESSION_POLICY: SessionCompactionPolicy = {
-  enabled: true,
-  maxSessionRuns: 0,
-  maxRawInputTokens: 0,
-  maxSessionAgeHours: 0
-}
 
 export type CommandCacheResult = {
   ok: boolean
