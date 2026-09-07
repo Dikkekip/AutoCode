@@ -51,6 +51,20 @@ jobs:
           for app in sh cat sleep yes; do sudo ln -s busybox /opt/native-test-root/bin/$app; done
           sudo chmod -R go-w /opt/native-test-root
 
+      # Ubuntu restricts unprivileged user namespaces through AppArmor. Allow
+      # Bubblewrap to create them; the sandbox still drops capabilities and
+      # isolates the command's network, filesystem, processes, and environment.
+      - name: Allow Bubblewrap namespace setup on the runner
+        run: |
+          sudo tee /etc/apparmor.d/bwrap > /dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+
       - name: Check Bubblewrap namespace support
         run: |
           /usr/bin/bwrap --version
