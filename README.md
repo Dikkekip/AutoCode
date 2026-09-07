@@ -20,7 +20,7 @@ Workboard remains the execution owner. AutoCode’s `native-evidence.db` records
 
 ## Get started
 
-You need Git, pnpm 10.30.3, and Node.js 22.16 or newer. Native operation also requires a compatible OpenClaw installation with Workboard, Automations, and configured agent roles. The documented contract baseline is OpenClaw 2026.9.1; check compatibility with your installed version. Candidate execution requires the supported Linux isolation setup described in the [native reference](docs/native-autonomy.md).
+You need Git, pnpm 10.30.3, and Node.js 22.20+ on the 22.x line, or 24.12+. Native operation also requires a compatible OpenClaw installation with Workboard, Automations, and configured agent roles. The documented contract baseline is OpenClaw 2026.9.1; check compatibility with your installed version. Candidate execution requires the supported Linux isolation setup described in the [native reference](docs/native-autonomy.md).
 
 ### 1. Build AutoCode
 

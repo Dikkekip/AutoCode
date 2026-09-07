@@ -6,7 +6,7 @@ This guide covers the native quality workflow. Start with a paused project polic
 
 ## 1. Build without activating agents
 
-You need Git, pnpm 10.30.3, and a Node version supported by both the framework and your OpenClaw installation. The framework requires Node 22.16.0 or newer (native migration uses SQLite backup); OpenClaw can impose stricter requirements. Native contracts were checked against OpenClaw 2026.9.1.
+You need Git, pnpm 10.30.3, and a Node version supported by both the framework and your OpenClaw installation. The framework requires Node 22.20+ on 22.x, or 24.12+ (matching the locked Linux build dependencies); OpenClaw can impose stricter requirements. Native contracts were checked against OpenClaw 2026.9.1.
 
 ~~~bash
 git clone https://github.com/Dikkekip/AutoCode.git

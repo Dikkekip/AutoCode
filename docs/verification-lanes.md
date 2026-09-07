@@ -1,6 +1,6 @@
 # Verification lanes
 
-Run `pnpm install --frozen-lockfile` with pnpm 10.30.3. Node 22.16.0 is the minimum: native migration imports `backup` from `node:sqlite`, introduced in that patch. CI exercises 22.16.0, 24 and 26. A local pass on another Node version is not evidence that these matrix jobs passed.
+Run `pnpm install --frozen-lockfile` with pnpm 10.30.3. Supported runtimes are Node 22.20+ on 22.x, or 24.12+. The locked Linux Rollup dependency requires this baseline; native migration also uses SQLite backup. CI exercises 22.20.0, 24 and 26. A local pass on another Node version is not evidence that these matrix jobs passed.
 
 | Lane | Command | Scope |
 | --- | --- | --- |

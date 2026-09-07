@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: ["22.16.0", "24", "26"]
+        node: ["22.20.0", "24", "26"]
 
     steps:
       - name: Checkout code
@@ -50,6 +50,11 @@ jobs:
           sudo cp /bin/busybox /opt/native-test-root/bin/busybox
           for app in sh cat sleep yes; do sudo ln -s busybox /opt/native-test-root/bin/$app; done
           sudo chmod -R go-w /opt/native-test-root
+
+      - name: Check Bubblewrap namespace support
+        run: |
+          /usr/bin/bwrap --version
+          /usr/bin/bwrap --unshare-all --unshare-user --disable-userns --ro-bind /opt/native-test-root / /bin/sh -c 'echo "Kernel namespace startup passed"'
 
       - name: Test kernel verification isolation
         env:
