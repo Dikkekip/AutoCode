@@ -165,9 +165,9 @@ integration("Kernel verification isolation", () => {
     await expect(running).rejects.toMatchObject({ outcome: "cancelled" })
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(existsSync(join(options.workspace, "survived"))).toBe(false)
-    await expect(
-      executeIsolated(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })
-    ).rejects.toMatchObject({ outcome: "timeout" })
+    await expect(executeIsolated(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })).rejects.toMatchObject({
+      outcome: "timeout"
+    })
     await expect(
       executeIsolated(["/bin/sh", "-c", "yes flood"], { ...options, maxBufferBytes: 1024 })
     ).rejects.toMatchObject({ outcome: "output_limit" })
