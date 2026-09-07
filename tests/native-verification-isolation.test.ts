@@ -136,7 +136,7 @@ integration("Bubblewrap kernel isolation", () => {
           inputFiles: ["source.txt"]
         }
       )
-      expect(result.exitCode).toBe(0)
+      expect(result.exitCode, result.stderr).toBe(0)
       expect(result.stdout).toContain("source")
       expect(readFileSync(receipt, "utf8")).toBe("original")
       expect(existsSync(outside)).toBe(false)

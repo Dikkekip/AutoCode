@@ -50,6 +50,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     timeout: 120000,
     maxBuffer: 8 * 1024 * 1024
   })
-  if (result.status !== 0) throw new Error("License inventory failed; no clean result is available")
+  if (result.status !== 0) {
+    const detail = result.error?.message || result.stderr?.trim() || result.stdout?.trim() || "No diagnostic output"
+    throw new Error(`License inventory failed (exit ${result.status}); no clean result is available: ${detail}`)
+  }
   console.log(JSON.stringify(validateLicenseInventory(JSON.parse(result.stdout), policy), null, 2))
 }
