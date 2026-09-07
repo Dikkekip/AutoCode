@@ -157,14 +157,14 @@ integration("Bubblewrap kernel isolation", () => {
       signal: controller.signal
     })
     setTimeout(() => controller.abort(), 100)
-    await expect(running).rejects.toThrow(/abort/i)
+    await expect(running).rejects.toMatchObject({ outcome: "cancelled" })
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(existsSync(join(options.workspace, "survived"))).toBe(false)
     await expect(
       executeSandboxedCommand(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })
-    ).rejects.toThrow()
+    ).rejects.toMatchObject({ outcome: "timeout" })
     await expect(
       executeSandboxedCommand(["/bin/sh", "-c", "yes flood"], { ...options, maxBufferBytes: 1024 })
-    ).rejects.toThrow(/maxBuffer/)
+    ).rejects.toMatchObject({ outcome: "output_limit" })
   })
 })
