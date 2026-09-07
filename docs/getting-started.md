@@ -1,6 +1,6 @@
-# Getting started with Autocode
+# Getting started with AutoCode
 
-Autocode is an autonomous coding framework built on OpenClaw. Personas investigate improvements, a planner selects useful work, and separate implementation and review stages produce evidence before release.
+AutoCode is an autonomous coding framework built on OpenClaw. Personas investigate improvements, a planner selects useful work, and separate implementation and review stages produce evidence before release.
 
 This guide covers the native quality workflow. Start with a paused project policy and validate the workflow before enabling autonomous execution.
 
@@ -23,7 +23,7 @@ These commands do not start a coding loop. Keep the checkout at a stable path be
 pnpm run ci
 ~~~
 
-The [legacy quickstart](../README.md#legacy-dispatcher-quickstart) uses dispatcher ticks and dispatcher.db. Native execution uses Workboard and native-evidence.db. Do not enable both execution owners for one project.
+Native execution uses Workboard and native-evidence.db. Existing dispatcher projects must transfer ownership before activation; do not enable both execution owners for one project.
 
 ## 2. Prepare a paused project policy
 
