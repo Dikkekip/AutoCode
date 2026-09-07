@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { NativeReviewEvidence } from "@openclaw/domain"
 import { authorizeNativeTool, resolveNativeToolRuntime } from "./broker.js"
@@ -5,19 +6,28 @@ import { loadNativePolicy, nativeDoctor } from "./doctor.js"
 import { NativeCliGateway } from "./gateway.js"
 import { assertNativeMode } from "./promotion-mode.js"
 import { NativeAutonomyRuntime } from "./runtime.js"
+import { bootstrapNativeSkill, nativeSkillPolicyDigest, registerNativeSkill } from "./skills.js"
 import { NativeEvidenceStore } from "./store.js"
+import { NativeWorkspaceGateway } from "./workspaces.js"
+
+// Tool catalogs can register the plugin again without starting another service.
+// Share only live, in-process service instances; this is never an RPC identity bridge.
+const runtimeKey = Symbol.for("autocode.native.service-runtimes.v1")
+const processRegistry = globalThis as typeof globalThis & { [runtimeKey]?: Map<string, NativeAutonomyRuntime> }
+processRegistry[runtimeKey] ??= new Map<string, NativeAutonomyRuntime>()
+const activeInstances = processRegistry[runtimeKey]
 
 /** Structural public plugin API; no imports from OpenClaw's generated internal bundles. */
 export function registerNativeAutonomyPlugin(api: any): void {
   const instances = new Map<string, NativeAutonomyRuntime>()
-  const ready = new Set<string>()
+  const ready = new Set<NativeAutonomyRuntime>()
   const checking = new Map<string, Promise<void>>()
   let stopped = false
   let budgetTimer: ReturnType<typeof setInterval> | undefined
   let budgetCheck: Promise<void> | undefined
   const policyFiles = api.pluginConfig?.projects ?? []
   const runtime = (boardId: string): NativeAutonomyRuntime => {
-    const item = instances.get(boardId)
+    const item = instances.get(boardId) ?? activeInstances.get(boardId)
     if (!item) throw new Error(`Unknown native board: ${boardId}`)
     return item
   }
@@ -33,16 +43,16 @@ export function registerNativeAutonomyPlugin(api: any): void {
   // Service startup precedes the Gateway accepting authenticated RPCs. Validate
   // before execution instead of waiting on the same Gateway during its startup.
   const ensureReady = async (r: NativeAutonomyRuntime): Promise<void> => {
-    if (!r.policy.enabled || ready.has(r.policy.boardId)) return
+    if (!r.policy.enabled || ready.has(r)) return
     const pending = checking.get(r.policy.boardId)
     if (pending) return pending
     const check: Promise<void> = nativeDoctor(r.policy, gateway)
       .then((report) => {
-        if (stopped || instances.get(r.policy.boardId) !== r)
+        if (stopped || activeInstances.get(r.policy.boardId) !== r)
           throw new Error("Native service stopped during readiness check")
         if (!report.ok)
           throw new Error(`Native activation blocked: ${JSON.stringify(report.checks.filter((c) => !c.ok))}`)
-        ready.add(r.policy.boardId)
+        ready.add(r)
       })
       .finally(() => {
         if (checking.get(r.policy.boardId) === check) checking.delete(r.policy.boardId)
@@ -56,9 +66,28 @@ export function registerNativeAutonomyPlugin(api: any): void {
       stopped = false
       for (const file of policyFiles) {
         const policy = loadNativePolicy(file)
-        if (instances.has(policy.boardId)) throw new Error(`Duplicate native board ${policy.boardId}`)
+        if (instances.has(policy.boardId) || activeInstances.has(policy.boardId))
+          throw new Error(`Duplicate native board ${policy.boardId}`)
         const store = new NativeEvidenceStore(resolve(policy.repository, ".openclaw/native-evidence.db"))
-        instances.set(policy.boardId, new NativeAutonomyRuntime(policy, gateway, store))
+        instances.set(
+          policy.boardId,
+          new NativeAutonomyRuntime(
+            policy,
+            new NativeWorkspaceGateway(
+              gateway,
+              policy,
+              () => {
+                const owner = instances.get(policy.boardId)
+                if (!owner?.hasOwnership) throw new Error("Native workspace dispatch ownership unavailable")
+                owner.control.assert()
+                store.authorizeEffect()
+              },
+              api.runtime?.worktrees
+            ),
+            store
+          )
+        )
+        activeInstances.set(policy.boardId, instances.get(policy.boardId)!)
       }
       budgetTimer = setInterval(() => {
         if (budgetCheck) return
@@ -82,7 +111,10 @@ export function registerNativeAutonomyPlugin(api: any): void {
       checking.clear()
       if (budgetTimer) clearInterval(budgetTimer)
       await budgetCheck
-      for (const value of instances.values()) value.store.close()
+      for (const value of instances.values()) {
+        if (activeInstances.get(value.policy.boardId) === value) activeInstances.delete(value.policy.boardId)
+        value.store.close()
+      }
       instances.clear()
     }
   })
@@ -171,6 +203,40 @@ export function registerNativeAutonomyPlugin(api: any): void {
     { scope: "operator.admin" }
   )
   api.registerGatewayMethod(
+    "autocode.skill.bootstrap",
+    async ({ params, respond, client }: any) => {
+      try {
+        const r = runtime(params.boardId)
+        if (!r.control.state.paused) throw new Error("Pause execution before skill bootstrap")
+        const operatorId = client?.connect?.device?.id ?? client?.connect?.client?.id
+        if (!operatorId || !client?.connect?.scopes?.includes("operator.admin"))
+          throw new Error("Authenticated administrator context required")
+        if (!r.policy.quality) throw new Error("No investigation skill configured")
+        const snapshot = registerNativeSkill(r.store, readFileSync(r.policy.quality.skillPath, "utf8"))
+        const policyDigest = nativeSkillPolicyDigest(r.policy)
+        if (params.digest !== snapshot.digest || params.policyDigest !== policyDigest)
+          throw new Error("Review the current exact skill and policy digests before bootstrap")
+        bootstrapNativeSkill(
+          r.store,
+          r.policy.boardId,
+          snapshot.digest,
+          policyDigest,
+          { operatorId, rationale: params.reason },
+          [
+            r.policy.plannerAgentId,
+            r.policy.coderAgentId,
+            r.policy.reviewerAgentId,
+            ...r.policy.personas.map((p) => p.investigationAgentId ?? p.personaId)
+          ]
+        )
+        respond(true, { digest: snapshot.digest, policyDigest })
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.admin" }
+  )
+  api.registerGatewayMethod(
     "autocode.pause",
     async ({ params, respond }: any) => {
       try {
@@ -193,7 +259,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
         const readiness = await nativeDoctor(r.policy, gateway)
         if (!readiness.ok) throw new Error(`Resume blocked: ${JSON.stringify(readiness.checks.filter((c) => !c.ok))}`)
         const control = r.control.change(false, revision)
-        ready.add(r.policy.boardId)
+        ready.add(r)
         respond(true, control)
       } catch (error) {
         respond(false, undefined, { code: "autocode_error", message: String(error) })
@@ -443,7 +509,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_submit",
-      "Submit the current card's committed worktree for independent verification.",
+      "Submit scoped edits from the assigned managed worktree. The host broker records a commit without exposing Git metadata to the sandbox, then independently verifies it. Never include agent notes or credentials.",
       { workflowId: field, worktreePath: field },
       (p, ctx) => runtime(p.boardId).submit(ctx.agentId, ctx.sessionKey, p.workflowId, p.worktreePath)
     ),
@@ -491,10 +557,10 @@ export function registerNativeAutonomyPlugin(api: any): void {
         execute: async (_id: string, params: any) => {
           // Sandboxed sessions can call the narrow broker: identity comes from
           // the host factory closure, while board/card ownership is resolved server-side.
-          if (!instances.has(params.boardId))
+          if (!activeInstances.has(params.boardId))
             throw new Error("Native remote tool broker unavailable: trusted local plugin factory context required")
           await ensureReady(runtime(params.boardId))
-          const assigned = await resolveNativeToolRuntime(instances.values(), ctx)
+          const assigned = await resolveNativeToolRuntime(activeInstances.values(), ctx)
           if (assigned.policy.boardId !== params.boardId) {
             assigned.store.event("tool.denied", assigned.policy.boardId, {
               reason: "board selector differs from live assignment"

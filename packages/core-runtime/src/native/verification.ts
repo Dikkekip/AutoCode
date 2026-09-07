@@ -1,6 +1,20 @@
 import { execFile } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs"
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path"
 import { promisify } from "node:util"
@@ -24,6 +38,7 @@ import {
   allowlistedEnvironment,
   BUILD_ENVIRONMENT_ALLOWLIST,
   executeCommandAsync,
+  executeDockerSandboxedCommand,
   executeSandboxedCommand
 } from "@openclaw/os-adapters"
 
@@ -50,7 +65,70 @@ export function containedDirectory(root: string, child: string): string {
   if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) throw new Error("Command directory escapes worktree")
   return actual
 }
-export async function inspectNativeCandidate(policy: NativeAutonomyPolicy, worktree: string, allowedPaths: string[]) {
+const runtimeNotes = new Set([
+  "IDENTITY.md",
+  "SOUL.md",
+  "USER.md",
+  "MEMORY.md",
+  "BOOTSTRAP.md",
+  "HEARTBEAT.md",
+  "TOOLS.md"
+])
+async function candidateChanges(cwd: string): Promise<string[]> {
+  let filters = ""
+  try {
+    filters = await nativeGit(
+      cwd,
+      "config",
+      "--name-only",
+      "--get-regexp",
+      "^filter\\..*\\.(clean|process|smudge|required)$"
+    )
+  } catch (error) {
+    if ((error as { code?: number }).code !== 1) throw error
+  }
+  const options = [
+    "-c",
+    "core.fsmonitor=false",
+    ...filters
+      .split("\n")
+      .filter(Boolean)
+      .flatMap((key) => ["-c", `${key}=${key.endsWith(".required") ? "false" : ""}`])
+  ]
+  const tracked = await nativeGit(
+    cwd,
+    ...options,
+    "diff",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--name-only",
+    "--no-renames",
+    "-z",
+    "HEAD"
+  )
+  const staged = await nativeGit(
+    cwd,
+    ...options,
+    "diff",
+    "--cached",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--name-only",
+    "--no-renames",
+    "-z"
+  )
+  const untracked = await nativeGit(cwd, ...options, "ls-files", "--others", "--exclude-standard", "-z")
+  return [
+    ...new Set(
+      [
+        ...tracked.split("\0"),
+        ...staged.split("\0"),
+        ...untracked.split("\0").filter((path) => !runtimeNotes.has(path))
+      ].filter(Boolean)
+    )
+  ]
+}
+async function assertCandidateRepository(policy: NativeAutonomyPolicy, worktree: string): Promise<string> {
   const cwd = realpathSync(worktree)
   if (cwd === realpathSync(policy.repository)) throw new Error("Candidate must use an isolated worktree")
   const common = realpathSync(await nativeGit(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"))
@@ -58,7 +136,113 @@ export async function inspectNativeCandidate(policy: NativeAutonomyPolicy, workt
     await nativeGit(policy.repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
   )
   if (common !== source) throw new Error("Candidate does not belong to configured repository")
-  if (await nativeGit(cwd, "status", "--porcelain")) throw new Error("Commit candidate changes before verification")
+  return cwd
+}
+/** Trusted submission broker: snapshot only admitted regular code files without running Git hooks or filters. */
+export async function commitNativeCandidate(
+  policy: NativeAutonomyPolicy,
+  worktree: string,
+  allowedPaths: string[],
+  title: string,
+  authorize: () => void
+): Promise<string | undefined> {
+  const cwd = await assertCandidateRepository(policy, worktree)
+  const files = await candidateChanges(cwd)
+  if (!files.length) return undefined
+  for (const file of files) {
+    if (
+      !allowedPaths.some((root) => nativePathAllowed(file, root)) ||
+      runtimeNotes.has(file) ||
+      file
+        .split("/")
+        .some((part) =>
+          /^(\.git.*|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*(?:credentials|secrets).*|.*\.pem)$/i.test(part)
+        )
+    )
+      throw new Error("Candidate contains uncommitted files outside admitted code scope")
+    const path = resolve(cwd, file)
+    const stat = lstatSync(path, { throwIfNoEntry: false })
+    if (stat) {
+      if (!stat.isFile() || relative(cwd, realpathSync(path)).startsWith(".."))
+        throw new Error("Candidate commit requires contained regular files")
+    }
+  }
+  const oldHead = await nativeGit(cwd, "rev-parse", "HEAD")
+  await nativeGit(cwd, "merge-base", "--is-ancestor", `origin/${policy.baseBranch}`, oldHead)
+  const temporary = mkdtempSync(resolve(tmpdir(), "native-commit-"))
+  const gitInput = async (args: string[], input?: Buffer) => {
+    authorize()
+    const pending = exec(
+      "git",
+      ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "commit.gpgSign=false", ...args],
+      {
+        cwd,
+        timeout: 30_000,
+        maxBuffer: 8 * 1024 * 1024,
+        env: {
+          PATH: "/usr/bin:/bin",
+          GIT_CONFIG_NOSYSTEM: "1",
+          GIT_CONFIG_GLOBAL: "/dev/null",
+          GIT_INDEX_FILE: resolve(temporary, "index"),
+          GIT_AUTHOR_NAME: "AutoCode",
+          GIT_AUTHOR_EMAIL: "autocode@localhost",
+          GIT_COMMITTER_NAME: "AutoCode",
+          GIT_COMMITTER_EMAIL: "autocode@localhost"
+        }
+      }
+    )
+    pending.child.stdin?.end(input)
+    return (await pending).stdout.trim()
+  }
+  const git = (...args: string[]) => gitInput(args)
+  try {
+    await git("read-tree", oldHead)
+    for (const file of files) {
+      const path = resolve(cwd, file)
+      if (!lstatSync(path, { throwIfNoEntry: false })) await git("update-index", "--force-remove", "--", file)
+      else {
+        const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW)
+        let bytes: Buffer, mode: string
+        try {
+          const stat = fstatSync(fd)
+          // Check the opened descriptor, not a pathname that a running worker can swap.
+          if (
+            !stat.isFile() ||
+            stat.size > 32 * 1024 * 1024 ||
+            relative(cwd, realpathSync(`/proc/self/fd/${fd}`)).startsWith("..")
+          )
+            throw new Error("Candidate snapshot escaped its bounded regular file")
+          bytes = Buffer.alloc(stat.size + 1)
+          let length = 0
+          while (length < bytes.length) {
+            const count = readSync(fd, bytes, length, bytes.length - length, length)
+            if (!count) break
+            length += count
+          }
+          if (length !== stat.size) throw new Error("Candidate file size changed during snapshot")
+          bytes = bytes.subarray(0, length)
+          mode = stat.mode & 0o111 ? "100755" : "100644"
+        } finally {
+          closeSync(fd)
+        }
+        const oid = await gitInput(["hash-object", "-w", "--stdin"], bytes)
+        await git("update-index", "--add", "--cacheinfo", mode, oid, file)
+      }
+    }
+    const tree = await git("write-tree")
+    const sha = await git("commit-tree", tree, "-p", oldHead, "-m", title.slice(0, 200))
+    await git("update-ref", "HEAD", sha, oldHead)
+    // Synchronize only this worktree's index; never checkout or overwrite worker edits.
+    authorize()
+    await nativeGit(cwd, "-c", "core.hooksPath=/dev/null", "read-tree", sha)
+    return sha
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
+}
+export async function inspectNativeCandidate(policy: NativeAutonomyPolicy, worktree: string, allowedPaths: string[]) {
+  const cwd = await assertCandidateRepository(policy, worktree)
+  if ((await candidateChanges(cwd)).length) throw new Error("Commit candidate changes before verification")
   const headSha = await nativeGit(cwd, "rev-parse", "HEAD")
   const baseSha = await nativeGit(cwd, "rev-parse", `origin/${policy.baseBranch}`)
   await nativeGit(cwd, "merge-base", "--is-ancestor", baseSha, headSha)
@@ -194,10 +378,12 @@ export async function runNativeCommand(
   authority?.authorize()
   if (!sandbox) throw new Error("Required verification sandbox is not configured")
   const config = validateNativeVerificationSandbox(sandbox)
-  const rootFilesystem = realpathSync(config.rootFilesystem)
-  const rootStat = statSync(rootFilesystem)
-  if (rootFilesystem === "/" || rootStat.uid !== 0 || (rootStat.mode & 0o022) !== 0)
-    throw new Error("Sandbox root filesystem must be administrator-owned and immutable to workers")
+  const rootFilesystem = config.backend === "bubblewrap" ? realpathSync(config.rootFilesystem) : ""
+  if (config.backend === "bubblewrap") {
+    const rootStat = statSync(rootFilesystem)
+    if (rootFilesystem === "/" || rootStat.uid !== 0 || (rootStat.mode & 0o022) !== 0)
+      throw new Error("Sandbox root filesystem must be administrator-owned and immutable to workers")
+  }
   const cwd = containedDirectory(root, command.cwd)
   const workspace = mkdtempSync(resolve(tmpdir(), "native-verification-"))
   try {
@@ -224,16 +410,19 @@ export async function runNativeCommand(
       command,
       cwd,
       artifact,
-      () =>
-        executeSandboxedCommand(command.argv, {
-          rootFilesystem,
+      () => {
+        const options = {
           workspace,
           cwd: sandboxCwd,
           timeoutMs: command.timeoutSeconds * 1000,
           ...(command.idleTimeoutSeconds === undefined ? {} : { idleTimeoutMs: command.idleTimeoutSeconds * 1000 }),
           ...(command.outputLimitBytes === undefined ? {} : { maxBufferBytes: command.outputLimitBytes }),
           ...(signal ? { signal } : {})
-        }),
+        }
+        return config.backend === "docker"
+          ? executeDockerSandboxedCommand(command.argv, { ...options, image: config.image })
+          : executeSandboxedCommand(command.argv, { ...options, rootFilesystem })
+      },
       authority
     )
   } finally {
