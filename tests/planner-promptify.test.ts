@@ -39,7 +39,16 @@ describe("planner promptification", () => {
     const snapshot = {
       verificationCommands: ["pnpm test"],
       directives: [],
-      laneHotspots: []
+      laneHotspots: [],
+      laneInventory: [
+        {
+          laneId: "ui-primary-routes",
+          fileCount: 1,
+          testFileCount: 1,
+          sampleFiles: ["apps/reports-ui/src/features/bundles/BundleDetail.tsx"],
+          publicFacades: ["apps/reports-ui/src/App.tsx"]
+        }
+      ]
     } as unknown as RepoPlanningSnapshot
 
     const result = ideatePlannerCandidatePrompts({
@@ -58,6 +67,8 @@ describe("planner promptification", () => {
     expect(result.implementationPrompt).not.toContain("## Acceptance contract")
     expect(result.implementationPrompt).not.toContain("## Read before editing")
     expect(result.description).toBe(candidate.description)
+    expect(result.requiredReading).toContain("apps/reports-ui/src/App.tsx")
+    expect(result.repoNotes).toContain("Lane public facades: apps/reports-ui/src/App.tsx")
   })
 
   it("keeps focused API evidence out of unrelated full contract sweeps", () => {

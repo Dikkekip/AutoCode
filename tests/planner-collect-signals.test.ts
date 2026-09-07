@@ -131,6 +131,10 @@ describe("planner signal collection", () => {
     expect(timelineInventory?.sampleFiles).toEqual(
       expect.arrayContaining(["apps/reports-ui/src/features/timeline/TimelineView.tsx"])
     )
+    const contractInventory = snapshot.laneInventory.find((entry) => entry.laneId === "ui-contracts-and-api")
+    expect(contractInventory?.publicFacades).toEqual(
+      expect.arrayContaining(["contracts/openapi.yaml", "apps/reports-ui/src/lib/api.ts"])
+    )
     expect(snapshot.todoFixmeHits).toContainEqual({
       path: "apps/backend/lawyer_rag/incidents/todo_service.py",
       line: 1,
@@ -141,5 +145,54 @@ describe("planner signal collection", () => {
       "apps/backend/lawyer_rag/incidents/eval_samples.jsonl"
     )
     expect(snapshot.staleTasks).toEqual([])
+  })
+
+  it("filters bracketed template placeholders without suppressing actionable TODOs", () => {
+    const workspace = createTempWorkspace("planner-template-todos")
+    cleanups.push(workspace.cleanup)
+
+    mkdirSync(join(workspace.repoPath, "src"), { recursive: true })
+    mkdirSync(join(workspace.repoPath, "tests"), { recursive: true })
+    mkdirSync(join(workspace.repoPath, "skills", "self-improving-agent", "scripts"), { recursive: true })
+
+    writeFileSync(join(workspace.repoPath, "src", "service.ts"), "// TODO: retry transient failures\n", "utf8")
+    writeFileSync(join(workspace.repoPath, "tests", "service.test.ts"), "// FIXME: cover timeout handling\n", "utf8")
+    writeFileSync(
+      join(workspace.repoPath, "skills", "self-improving-agent", "scripts", "extract-skill.sh"),
+      [
+        'description: "[TODO: Add a concise description of what this skill does and when to use it]"',
+        "[TODO: Brief introduction explaining the skill's purpose]",
+        "- Learning ID: [TODO: Add original learning ID]"
+      ].join("\n"),
+      "utf8"
+    )
+
+    writeFileSync(join(workspace.repoPath, "src", "mixed.ts"), "// [TODO: example] FIXME: handle real failure\n")
+    execFileSync("git", ["init"], { cwd: workspace.repoPath })
+    execFileSync("git", ["add", "."], { cwd: workspace.repoPath })
+
+    const snapshot = collectRepoPlanningSnapshot({
+      project: {
+        id: "project-1",
+        companyId: "company-1",
+        name: "Template TODO filtering",
+        repoPath: workspace.repoPath,
+        verifyCommand: "pnpm test",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      profile: loadProjectProfile("lawyerrag"),
+      tasks: [],
+      memoryHighlights: []
+    })
+
+    expect(snapshot.todoFixmeHits).toHaveLength(3)
+    expect(snapshot.todoFixmeHits.map(({ path, text }) => ({ path, text }))).toEqual(
+      expect.arrayContaining([
+        { path: "src/service.ts", text: "// TODO: retry transient failures" },
+        { path: "src/mixed.ts", text: "// [TODO: example] FIXME: handle real failure" },
+        { path: "tests/service.test.ts", text: "// FIXME: cover timeout handling" }
+      ])
+    )
   })
 })

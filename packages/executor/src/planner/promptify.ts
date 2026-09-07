@@ -153,10 +153,12 @@ export function ideatePlannerCandidatePrompts(input: {
   const fallbackVerification = input.snapshot.verificationCommands[0] ?? null
 
   const candidates = input.candidates.map((candidate) => {
+    const laneInventory = input.snapshot.laneInventory?.find((lane) => lane.laneId === candidate.lane)
     const verificationChecklist = verificationPlan(candidate, fallbackVerification)
     const requiredReading = uniqueSorted([
       ...candidate.requiredReading,
       ...input.snapshot.directives.slice(0, 2),
+      ...(laneInventory?.publicFacades ?? []),
       ...(candidate.lane
         ? (input.snapshot.laneHotspots.find((lane) => lane.laneId === candidate.lane)?.files.slice(0, 3) ?? [])
         : [])
@@ -193,6 +195,9 @@ export function ideatePlannerCandidatePrompts(input: {
       repoNotes: uniqueSorted([
         ...candidate.repoNotes,
         "Persona must ground this feature slice in repo-search evidence from required reading, lane hotspots, or source signals.",
+        ...(laneInventory?.publicFacades?.length
+          ? [`Lane public facades: ${laneInventory.publicFacades.join(", ")}`]
+          : []),
         `Prompt ideated by ${promptEngineer}: clarified intent, scope, acceptance criteria, and verification.`
       ]),
       sourceSignals: uniqueSorted([

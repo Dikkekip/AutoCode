@@ -205,6 +205,13 @@ describeDb("task package generation", () => {
       expect(tasks.every((task) => task.labels.some((label) => label.startsWith("task-factory-dedupe:")))).toBe(true)
       expect(firstPackage?.title).toBeTruthy()
       expect(firstPackage?.problemStatement).toBeTruthy()
+      expect(firstPackage?.relevantFiles).toEqual(expect.arrayContaining(["packages/domain/src/index.ts"]))
+      expect(firstPackage?.repoNotes).toEqual(
+        expect.arrayContaining([expect.stringContaining("Lane public facades to keep stable or update deliberately")])
+      )
+      expect(firstPackage?.extraInstructions).toEqual(
+        expect.arrayContaining([expect.stringContaining("Audit the lane public facades before editing internals")])
+      )
       expect(firstPackage?.verificationCommands.length).toBeGreaterThan(0)
       expect(firstPackage?.rollbackGuidance).toContain("Revert")
       const generatedPackages = tasks.map((task) => task.taskPackage as DispatchableTaskPackage)

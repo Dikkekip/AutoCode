@@ -91,3 +91,31 @@ it("exposes emergency freeze as a distinct operator request", async () => {
   await s.run("freeze")
   expect(request).toHaveBeenCalledWith("autocode.freeze", { boardId: "board" })
 })
+
+it("repoints existing automation commands after relocation without changing operator enablement", async () => {
+  const s = fixture()
+  const jobs = ["discover", "reconcile"].map((kind, index) => ({
+    id: kind,
+    declarationKey: `autocode:board:${kind}`,
+    enabled: index === 0,
+    schedule: { kind: "cron", expr: index === 0 ? "0 */2 * * *" : "*/5 * * * *", tz: "UTC" },
+    payload: { kind: "command", argv: ["/old/node", "/old/dispatcher.js"] }
+  }))
+  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method, params) => {
+    if (method === "cron.list") return { jobs, hasMore: false }
+    if (method === "cron.update") {
+      const update = params as { id: string; patch: Record<string, unknown> }
+      expect(Object.keys(update.patch)).toEqual(["payload"])
+      Object.assign(jobs.find((job) => job.id === update.id)!, update.patch)
+      return {}
+    }
+    throw new Error(`Unexpected request ${method}`)
+  })
+  await s.run("install-automations", "--cli", "/new/dispatcher.js", "--node", "/new/node")
+  expect(jobs.map((job) => job.enabled)).toEqual([true, false])
+  for (const job of jobs) expect(job.payload.argv.slice(0, 2)).toEqual(["/new/node", "/new/dispatcher.js"])
+  expect(request.mock.calls.filter(([method]) => method === "cron.update")).toHaveLength(2)
+  request.mockClear()
+  await s.run("install-automations", "--cli", "/new/dispatcher.js", "--node", "/new/node")
+  expect(request.mock.calls.map(([method]) => method)).toEqual(["cron.list"])
+})

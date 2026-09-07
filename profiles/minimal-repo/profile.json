@@ -172,6 +172,12 @@
       "displayName": "App core",
       "preferredAdapterType": "codex_local",
       "allowedPaths": ["src/**", "tests/**"],
+      "publicFacades": [
+        "package.json",
+        "packages/domain/src/index.ts",
+        "packages/project-profiles/src/index.ts",
+        "apps/dispatcher-cli/src/index.ts"
+      ],
       "requiredReadingRuleId": "shared-base",
       "verificationRuleId": "basic-verify",
       "categoryHints": ["general"]

@@ -545,6 +545,7 @@ function renderPromotionCheck(result: PromotionCheckResult): string[] {
     `promotion.target=${result.target}`,
     `promotion.promotable=${result.promotable}`,
     `promotion.artifact=${result.artifactPath}`,
+    `promotion.reviewer_bundle=${JSON.stringify(result.reviewerBundle)}`,
     ...result.gates.map((gate) => {
       const status = gate.passed ? "PASS" : "FAIL"
       return `${status} ${gate.id}: ${gate.explanation}`

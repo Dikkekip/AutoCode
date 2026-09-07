@@ -371,9 +371,27 @@ function repoFiles(project: Project): string[] {
 }
 
 function relevantFiles(lane: LaneDefinition, item: string): string[] {
-  const files = lane.allowedPaths.slice(0, 6)
+  const publicFacades = lane.publicFacades ?? []
+  const files = [...publicFacades, ...lane.allowedPaths].slice(0, 8)
   const literalFiles = item.match(/[A-Za-z0-9_.\-/]+\.(?:ts|tsx|js|json|md|py|yml|yaml)/g) ?? []
   return uniq([...literalFiles, ...files])
+}
+
+function laneRepoNotes(lane: LaneDefinition): string[] {
+  if (!lane.publicFacades?.length) return []
+  return [`Lane public facades to keep stable or update deliberately: ${lane.publicFacades.join(", ")}`]
+}
+
+function laneExtraInstructions(lane: LaneDefinition): string[] | undefined {
+  const instructions = uniq([
+    ...(lane.extraInstructions ?? []),
+    ...(lane.publicFacades?.length
+      ? [
+          "Audit the lane public facades before editing internals, and keep facade exports stable unless the task explicitly changes the contract."
+        ]
+      : [])
+  ])
+  return instructions.length > 0 ? instructions : undefined
 }
 
 function outOfScopeFiles(profile: ProjectProfile, lane: LaneDefinition): string[] {
@@ -521,9 +539,10 @@ export function generateDispatchableTaskPackages(input: {
         : [],
       repoNotes: uniq([
         `Recent completed tasks considered: ${input.recentCompletedTasks.length}`,
-        `Known failures considered: ${input.knownFailures.length}`
+        `Known failures considered: ${input.knownFailures.length}`,
+        ...laneRepoNotes(lane)
       ]),
-      extraInstructions: lane.extraInstructions,
+      extraInstructions: laneExtraInstructions(lane),
       personaProvenance: personaId
         ? {
             personaId,
