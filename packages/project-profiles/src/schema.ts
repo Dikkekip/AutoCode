@@ -177,6 +177,10 @@ function mapLaneDefinition(value: unknown, index: number): LaneDefinition {
       `laneDefinitions[${index}].preferredAdapterType`
     ) as LaneDefinition["preferredAdapterType"],
     allowedPaths: ensureStringArray(record.allowedPaths, `laneDefinitions[${index}].allowedPaths`),
+    publicFacades:
+      record.publicFacades === undefined
+        ? undefined
+        : ensureStringArray(record.publicFacades, `laneDefinitions[${index}].publicFacades`),
     requiredReadingRuleId: ensureString(
       record.requiredReadingRuleId,
       `laneDefinitions[${index}].requiredReadingRuleId`

@@ -40,6 +40,7 @@ export interface RepoPlanningSnapshot {
     laneId: string
     fileCount: number
     testFileCount: number
+    publicFacades: string[]
     sampleFiles: string[]
   }>
   verificationCommands: string[]

@@ -15,7 +15,7 @@ function executableReadingPaths(profile: ProjectProfile, laneId: string): string
   const readingRule = profile.requiredReadingRules.find((entry) => entry.ruleId === lane.requiredReadingRuleId)
   return Array.from(
     new Set(
-      [...(readingRule?.paths ?? []), ...lane.allowedPaths]
+      [...(readingRule?.paths ?? []), ...(lane.publicFacades ?? [])]
         .map(cleanReadingPath)
         .filter((path): path is string => Boolean(path))
     )

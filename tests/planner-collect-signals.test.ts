@@ -72,6 +72,11 @@ describe("planner signal collection", () => {
     writeFileSync(join(workspace.repoPath, "docs", "guide.md"), "# Updated Guide\n", "utf8")
     writeFileSync(join(workspace.repoPath, ".env.example"), "EXAMPLE=true\n", "utf8")
 
+    const profile = loadProjectProfile("lawyerrag")
+    profile.laneDefinitions.find((lane) => lane.laneId === "ui-primary-routes")!.publicFacades = [
+      "apps/reports-ui/src/index.ts",
+      "apps/reports-ui/src/index.ts"
+    ]
     const snapshot = collectRepoPlanningSnapshot({
       project: {
         id: "project-1",
@@ -82,7 +87,7 @@ describe("planner signal collection", () => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
       },
-      profile: loadProjectProfile("lawyerrag"),
+      profile,
       tasks: [
         {
           id: "fallback-task",
@@ -120,6 +125,7 @@ describe("planner signal collection", () => {
       expect.arrayContaining(["pps/backend/service.py", "cripts/collector.py", "ocs/guide.md"])
     )
     const timelineInventory = snapshot.laneInventory.find((entry) => entry.laneId === "ui-primary-routes")
+    expect(timelineInventory?.publicFacades).toEqual(["apps/reports-ui/src/index.ts"])
     expect(timelineInventory?.fileCount).toBeGreaterThan(0)
     expect(timelineInventory?.testFileCount).toBeGreaterThan(0)
     expect(timelineInventory?.sampleFiles).toEqual(

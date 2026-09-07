@@ -103,6 +103,7 @@ function laneInventory(profile: ProjectProfile, files: string[]): RepoPlanningSn
       laneId: lane.laneId,
       fileCount: matched.length,
       testFileCount: testFiles.length,
+      publicFacades: Array.from(new Set(lane.publicFacades ?? [])).slice(0, 8),
       sampleFiles: matched.slice(0, 12)
     }
   })

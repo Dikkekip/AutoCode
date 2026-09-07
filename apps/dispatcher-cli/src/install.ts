@@ -1157,17 +1157,27 @@ function ensureProject(
   companyId: string,
   name: string,
   repoPath: string,
-  verifyCommand: string | null
+  verifyCommand: string | null,
+  profile: ProjectProfile | null
 ): { created: boolean } {
   try {
-    store.resolveProject(name, companyId)
+    const existing = store.resolveProject(name, companyId)
+    store.updateProject(existing.id, {
+      verifyCommand,
+      profileId: profile?.profileId ?? null,
+      profilePath: profile ? join(repoPath, ".openclaw", "profile.json") : null,
+      profile: profile ? (profile as unknown as Record<string, unknown>) : {}
+    })
     return { created: false }
   } catch {
     store.createProject({
       companyRef: companyId,
       name,
       repoPath,
-      verifyCommand
+      verifyCommand,
+      profileId: profile?.profileId ?? null,
+      profilePath: profile ? join(repoPath, ".openclaw", "profile.json") : null,
+      profile: profile ? (profile as unknown as Record<string, unknown>) : {}
     })
     return { created: true }
   }
@@ -1329,7 +1339,7 @@ export function installDispatcherFramework(options: InstallOptions): InstallSumm
 
   try {
     const company = ensureCompany(store, companyName)
-    const project = ensureProject(store, company.id, projectName, targetPath, verifyCommand)
+    const project = ensureProject(store, company.id, projectName, targetPath, verifyCommand, profile)
     const toolAgents: InstallSummary["toolAgents"] = []
     if (tools.includes("codex")) {
       const codex = ensureAgent(store, {

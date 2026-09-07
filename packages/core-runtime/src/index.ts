@@ -716,14 +716,17 @@ export class DirectorRuntime {
     explicitProfileId?: string | null
   ): { projectId: string; companyId: string; profile: ProjectProfile } {
     const project = this.store.resolveProject(projectRef)
-    const profileId = explicitProfileId ?? bestProfileMatch(project.repoPath)?.profileId
+    const profileId = explicitProfileId ?? project.profileId ?? bestProfileMatch(project.repoPath)?.profileId
     if (!profileId) {
       throw new Error(`No profile match found for ${project.repoPath}. Pass --profile explicitly.`)
     }
     return {
       projectId: project.id,
       companyId: project.companyId,
-      profile: loadProjectProfile(profileId)
+      profile:
+        !explicitProfileId && project.profileId === profileId && project.profile.profileId === profileId
+          ? (project.profile as unknown as ProjectProfile)
+          : loadProjectProfile(profileId)
     }
   }
 

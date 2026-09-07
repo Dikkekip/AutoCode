@@ -1240,9 +1240,10 @@ export function aggregateDoctorReport(input: Omit<DoctorReport, "exitCode" | "su
   const passed = input.lanes.filter((lane) => lane.status === "pass").length
   const failed = input.lanes.length - passed
   const syntheticFailures = input.syntheticChecks.filter((check) => check.status === "fail").length
+  const moduleFailures = input.moduleChecks.filter((check) => check.status === "fail").length
   return {
     ...input,
-    exitCode: failed > 0 || syntheticFailures > 0 ? 1 : 0,
+    exitCode: failed > 0 || syntheticFailures > 0 || moduleFailures > 0 ? 1 : 0,
     summary: {
       passed,
       failed,

@@ -601,7 +601,8 @@ function mergeProject(
   companyId: string,
   repoPath: string,
   name: string,
-  verifyCommand: string | null
+  verifyCommand: string | null,
+  installedProfile: Record<string, unknown> | null
 ): SyncEntry & { id: string } {
   const existingByRepo = store.findProjectByRepoPath(repoPath, companyId)
   const existing =
@@ -619,7 +620,10 @@ function mergeProject(
       companyRef: companyId,
       name,
       repoPath,
-      verifyCommand
+      verifyCommand,
+      profileId: installedProfile ? asString(installedProfile.profileId) : null,
+      profilePath: installedProfile ? join(repoPath, ".openclaw", "profile.json") : null,
+      profile: installedProfile ?? {}
     })
     return {
       id: created.id,
@@ -630,9 +634,29 @@ function mergeProject(
   }
 
   const updates: string[] = []
+  const patch: Parameters<typeof store.updateProject>[1] = {}
   if (verifyCommand && existing.verifyCommand !== verifyCommand) {
-    store.updateProject(existing.id, { verifyCommand })
+    patch.verifyCommand = verifyCommand
     updates.push(`${existing.verifyCommand ? "updated" : "set"} verify command to ${verifyCommand}`)
+  }
+
+  if (installedProfile) {
+    const profileId = asString(installedProfile.profileId)
+    const profilePath = join(repoPath, ".openclaw", "profile.json")
+    if (
+      existing.profileId !== profileId ||
+      existing.profilePath !== profilePath ||
+      JSON.stringify(existing.profile) !== JSON.stringify(installedProfile)
+    ) {
+      patch.profileId = profileId
+      patch.profilePath = profilePath
+      patch.profile = installedProfile
+      updates.push(`synced installed profile ${profileId ?? "unknown"}`)
+    }
+  }
+
+  if (Object.keys(patch).length > 0) {
+    store.updateProject(existing.id, patch)
   }
 
   if (existing.name !== name) {
@@ -862,16 +886,22 @@ function mergeAutomation(
   }
 
   const payloadChanged = JSON.stringify(existing.payload ?? {}) !== JSON.stringify(candidate.payload)
-  if (existing.kind !== candidate.kind || existing.cron !== candidate.cron || payloadChanged) {
+  const scheduleStalled = existing.status === "active" && existing.nextRunAt === null
+  if (existing.kind !== candidate.kind || existing.cron !== candidate.cron || payloadChanged || scheduleStalled) {
     store.updateAutomation(existing.id, {
       kind: candidate.kind,
       cron: candidate.cron,
-      payload: candidate.payload
+      payload: candidate.payload,
+      ...(existing.cron !== candidate.cron || scheduleStalled ? { nextRunAt: new Date().toISOString() } : {})
     })
     return {
       name: candidate.name,
       status: "updated",
-      details: [`kind ${candidate.kind}`, `cron ${candidate.cron}`]
+      details: [
+        `kind ${candidate.kind}`,
+        `cron ${candidate.cron}`,
+        ...(scheduleStalled ? ["re-armed stalled active schedule"] : [])
+      ]
     }
   }
 
@@ -1460,7 +1490,8 @@ export function syncRepoOwnedOpenclaw(options: SyncOptions): SyncSummary {
       : null)
 
   const company = mergeCompany(options.store, companyName)
-  const project = mergeProject(options.store, company.id, targetPath, projectName, verifyCommand)
+  const installedProfile = profile && isRecord(profile.value) ? profile.value : null
+  const project = mergeProject(options.store, company.id, targetPath, projectName, verifyCommand, installedProfile)
 
   const agents = Array.from(agentCandidates.values())
     .sort((left, right) => left.name.localeCompare(right.name))
