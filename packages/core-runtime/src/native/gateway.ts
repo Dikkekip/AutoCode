@@ -102,9 +102,19 @@ export function decodeNativeCard(value: unknown, boardId?: string): NativeCard {
   }
   if (
     card.execution?.status != null &&
-    !["pending", "running", "review", "completed", "failed", "cancelled", "timed_out", "timeout", "blocked"].includes(
-      card.execution.status
-    )
+    ![
+      "idle",
+      "pending",
+      "running",
+      "review",
+      "completed",
+      "done",
+      "failed",
+      "cancelled",
+      "timed_out",
+      "timeout",
+      "blocked"
+    ].includes(card.execution.status)
   )
     throw new Error("Workboard execution contract: unsupported status")
   if (card.metadata != null) {

@@ -759,3 +759,98 @@ export async function executeSandboxedCommand(
   }
   return { stdout: result.stdout, stderr: result.stderr }
 }
+
+/** Explicit Docker isolation for hosts without unprivileged user namespaces; never an automatic fallback. */
+export async function executeDockerSandboxedCommand(
+  argv: string[],
+  options: {
+    image: string
+    workspace: string
+    cwd: string
+    timeoutMs: number
+    idleTimeoutMs?: number
+    signal?: AbortSignal
+    maxBufferBytes?: number
+  }
+) {
+  if (!/^sha256:[a-f0-9]{64}$/.test(options.image)) throw new Error("Immutable Docker image ID required")
+  if (!options.workspace.startsWith("/") || options.workspace.includes(",")) throw new Error("Invalid source mount")
+  if (options.cwd !== "/work" && !options.cwd.startsWith("/work/")) throw new Error("Invalid sandbox working directory")
+  const name = `autocode-verification-${randomUUID()}`
+  const environment = {
+    ...allowlistedEnvironment(BUILD_ENVIRONMENT_ALLOWLIST),
+    PATH: "/usr/local/bin:/usr/bin:/bin",
+    HOME: "/tmp/home",
+    TMPDIR: "/tmp"
+  }
+  try {
+    const result = await executeCommandAsync(
+      "/usr/bin/docker",
+      [
+        "run",
+        "--rm",
+        "--pull=never",
+        "--name",
+        name,
+        "--network=none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--pids-limit=256",
+        "--memory=4g",
+        "--cpus=2",
+        "--user",
+        `${process.getuid!()}:${process.getgid!()}`,
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
+        "--mount",
+        `type=bind,source=${options.workspace},target=/work`,
+        "--workdir",
+        options.cwd,
+        "--entrypoint",
+        "/usr/bin/env",
+        options.image,
+        "-i",
+        ...Object.entries(environment).map(([key, value]) => `${key}=${value}`),
+        ...argv
+      ],
+      {
+        env: { PATH: "/usr/bin:/bin" },
+        cwd: "/",
+        timeoutMs: options.timeoutMs,
+        idleTimeoutMs: options.idleTimeoutMs,
+        timeoutKillGraceMs: 250,
+        maxBufferBytes: options.maxBufferBytes ?? 16 * 1024 * 1024,
+        abortSignal: options.signal,
+        terminateProcessGroup: true,
+        terminateOnOutputLimit: true,
+        truncateOutput: false
+      }
+    )
+    if (!result.ok)
+      throw Object.assign(new Error(result.error?.message ?? "Docker sandbox command failed"), {
+        stdout: result.stdout,
+        stderr: result.stderr,
+        code: result.exitCode,
+        outcome:
+          result.error?.name === "AbortError"
+            ? "cancelled"
+            : result.timedOut
+              ? "timeout"
+              : result.outputTruncated
+                ? "output_limit"
+                : result.signal
+                  ? "signal"
+                  : "nonzero"
+      })
+    return { stdout: result.stdout, stderr: result.stderr }
+  } finally {
+    // Killing the Docker client does not stop its container. Always remove the execution by our generated name.
+    await executeCommandAsync("/usr/bin/docker", ["rm", "--force", name], {
+      env: { PATH: "/usr/bin:/bin" },
+      cwd: "/",
+      timeoutMs: 10_000,
+      maxBufferBytes: 4096
+    })
+  }
+}

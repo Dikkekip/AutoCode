@@ -25,3 +25,8 @@ it("rejects malformed execution identity and cross-board cards", async () => {
     nativeCards(gateway({ cards: [{ id: "c", title: "x", status: "running", boardId: "other" }] }), "app")
   ).rejects.toThrow(/board/)
 })
+
+it("accepts the installed Workboard idle execution state without marking it running", async () => {
+  const card = { id: "c", title: "Ended", status: "blocked", execution: { status: "idle" } }
+  expect(await nativeCards(gateway({ cards: [card] }), "app")).toEqual([card])
+})

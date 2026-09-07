@@ -46,6 +46,7 @@ import { NativeReleasePending, releaseNativeWorkflow } from "./release.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
+  commitNativeCandidate,
   containedDirectory,
   inspectNativeCandidate,
   nativeVerificationCommands,
@@ -559,7 +560,7 @@ export class NativeAutonomyRuntime {
                 proposal: workflow.proposal,
                 previousAttemptId: previous.attemptId,
                 instructions:
-                  "Recover the preserved scoped task. Commit a fresh candidate and call autocode_submit before workboard_complete. Fresh verification and independent review are required. Do not push, merge or deploy."
+                  "Recover the preserved scoped task. Edit a fresh candidate and call autocode_submit to record its scoped commit before workboard_complete. Fresh verification and independent review are required. Do not push, merge or deploy."
               })
             })
             workflow.implementationCardId = card.id
@@ -887,7 +888,7 @@ export class NativeAutonomyRuntime {
           workflowId: id,
           ...entry.proposal,
           instructions: [
-            "Implement this admitted scope in the managed worktree. Commit the implementation.",
+            "Implement this admitted scope in the managed worktree. The autocode_submit broker records the scoped commit; sandbox Git metadata is intentionally unavailable.",
             "Call autocode_submit(workflowId, worktreePath) before workboard_complete. Do not push, merge, release, or deploy.",
             "Framework modifications require human review. Preserve unrelated work."
           ]
@@ -980,7 +981,7 @@ export class NativeAutonomyRuntime {
         proposal,
         preservedEvidence: original.evidence,
         instructions:
-          "Recover useful preserved changes and implement the original acceptance criteria. Commit and call autocode_submit(workflowId, worktreePath), then workboard_complete. Do not merge or deploy."
+          "Recover useful preserved changes and implement the original acceptance criteria. Call autocode_submit(workflowId, worktreePath) to record the scoped commit, then workboard_complete. Do not merge or deploy."
       })
     })
     const workflow: NativeWorkflow = {
@@ -1036,6 +1037,17 @@ export class NativeAutonomyRuntime {
       throw new Error("Candidate must be the card's managed worktree")
     if (workflow.candidate)
       throw new Error("Candidate already submitted; reconcile existing evidence before resubmission")
+    const committed = await commitNativeCandidate(
+      this.policy,
+      worktreePath,
+      workflow.proposal.allowedPaths,
+      workflow.proposal.title,
+      () => {
+        this.control.assert()
+        this.store.authorizeEffect()
+      }
+    )
+    if (committed) this.store.event("candidate.committed", workflowId, { headSha: committed, agentId, sessionKey })
     const candidate = await inspectNativeCandidate(this.policy, worktreePath, workflow.proposal.allowedPaths)
     await this.quality.classifyCandidate(workflowId, workflow, candidate, "submission")
     if (!(await this.quality.ensureDesign(workflowId, workflow)))
@@ -1135,7 +1147,7 @@ export class NativeAutonomyRuntime {
         verification: this.verificationForAgent(workflow.verification),
         review: workflow.review,
         instructions:
-          "Repair the preserved implementation within its admitted scope. Commit a real correction; do not weaken required tests. Call autocode_submit with workflowId and worktreePath, then workboard_complete. Independent verification and review will run again."
+          "Repair the preserved implementation within its admitted scope. Make a real correction; do not weaken required tests. The submission broker records the scoped commit. Call autocode_submit with workflowId and worktreePath, then workboard_complete. Independent verification and review will run again."
       })
     })
     workflow.repairCount = attempt
@@ -1451,6 +1463,41 @@ export class NativeAutonomyRuntime {
             })
             this.store.put("admission", admission.id, { ...admission.value, phase: "admitted" })
           })
+        }
+
+        // Ended implementations without a submission must remain visible and recoverable.
+        // Never revive a Workboard execution or discard its historical association here.
+        const waiting = this.store
+          .list<NativeWorkflow>("workflow")
+          .filter(
+            ({ value }) =>
+              !value.candidate && !value.blocker && !value.archivedAt && value.lifecycle?.state !== "cancelled"
+          )
+        if (waiting.length) {
+          const cards = await nativeCards(this.gateway, this.policy.boardId)
+          for (const { id } of waiting) {
+            const workflowLease = this.store.acquire(`workflow:${id}`, 120_000)
+            if (!workflowLease) continue
+            await this.store.withLease(workflowLease, 120_000, async () => {
+              const w = this.requireWorkflow(id)
+              if (w.candidate || w.blocker) return
+              const card = cards.find((c) => c.id === w.implementationCardId)
+              if (!card || ["running", "ready", "scheduled"].includes(card.status)) return
+              if (
+                !card.execution ||
+                !["failed", "cancelled", "review", "completed", "done", "blocked", "timed_out", "timeout"].includes(
+                  card.execution.status ?? ""
+                )
+              )
+                return
+              w.blocker = `Implementation ended (${card.execution.status}) without an authenticated candidate submission; review the attempt and use operator recovery`
+              this.transitionWorkflow(id, w, "blocked")
+              this.store.event("implementation.ended-without-candidate", id, {
+                cardId: card.id,
+                status: card.execution.status
+              })
+            })
+          }
         }
 
         const ids = this.store

@@ -39,7 +39,7 @@ function fixture() {
       stageCards: {},
       candidate: { headSha: id }
     })
-  return { store, other, runtime, second, seed }
+  return { store, other, runtime, second, seed, gateway }
 }
 it("lets an independent workflow progress while the first step remains pending and releases the board lease", async () => {
   const s = fixture()
@@ -103,4 +103,35 @@ it("refuses concurrent submit/review/recovery ownership of a workflow", async ()
     expect(await s.runtime.withWorkflowLease("a", async () => "nested")).toBe("nested")
   })
   expect(await s.second.withWorkflowLease("a", async () => "fresh")).toBe("fresh")
+})
+
+it.each([
+  "review",
+  "failed",
+  "blocked",
+  "done",
+  "running"
+])("observes %s implementation without a submission while paused", async (status) => {
+  const s = fixture()
+  s.seed("ended")
+  const workflow = s.store.get<any>("workflow", "ended")
+  delete workflow.candidate
+  s.store.put("workflow", "ended", workflow)
+  s.runtime.control.change(true)
+  s.gateway.request = async () =>
+    ({
+      cards: [
+        {
+          id: "ended:implementation",
+          title: "Ended implementation",
+          status: status === "running" ? "running" : "blocked",
+          execution: { id: "execution", status }
+        }
+      ]
+    }) as any
+  await s.runtime.reconcile()
+  const observed = s.store.get<any>("workflow", "ended")
+  expect(Boolean(observed.blocker)).toBe(status !== "running")
+  if (status !== "running") expect(observed.lifecycle.state).toBe("blocked")
+  expect(observed.candidate).toBeUndefined()
 })

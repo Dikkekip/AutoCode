@@ -25,13 +25,10 @@ export interface NativeCommand {
   outputLimitBytes?: number
 }
 
-export interface NativeVerificationSandbox {
-  backend: "bubblewrap"
-  /** Administrator-provisioned, credential-free Linux build filesystem. */
-  rootFilesystem: string
+export type NativeVerificationSandbox = {
   /** Exact committed regular files made available to the build. No directories or globs. */
   inputFiles: string[]
-}
+} & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string })
 
 export interface NativeAcceptanceBinding {
   criterion: string
@@ -521,9 +518,12 @@ export function validateEnvironmentNames(value: unknown): string[] {
 
 export function validateNativeVerificationSandbox(value: unknown): NativeVerificationSandbox {
   const r = record(value)
-  if (r.backend !== "bubblewrap") throw new Error("Unsupported verification sandbox")
-  const rootFilesystem = text(r.rootFilesystem, "sandbox rootFilesystem")
-  if (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/")
+  if (r.backend !== "bubblewrap" && r.backend !== "docker") throw new Error("Unsupported verification sandbox")
+  const image = r.backend === "docker" ? text(r.image, "sandbox image") : ""
+  if (r.backend === "docker" && !/^sha256:[a-f0-9]{64}$/.test(image))
+    throw new Error("Docker verification requires an immutable local image ID")
+  const rootFilesystem = r.backend === "bubblewrap" ? text(r.rootFilesystem, "sandbox rootFilesystem") : ""
+  if (r.backend === "bubblewrap" && (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/"))
     throw new Error("Sandbox needs a dedicated root filesystem")
   const inputFiles = strings(r.inputFiles, "sandbox inputFiles").map(nativeRelativePath)
   if (
@@ -541,5 +541,7 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
     )
   )
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
-  return { backend: "bubblewrap", rootFilesystem, inputFiles }
+  return r.backend === "docker"
+    ? { backend: "docker", image, inputFiles }
+    : { backend: "bubblewrap", rootFilesystem, inputFiles }
 }

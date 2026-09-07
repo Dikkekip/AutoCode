@@ -77,5 +77,11 @@ jobs:
           NATIVE_TEST_ROOTFS: /opt/native-test-root
         run: pnpm exec vitest run tests/native-verification-isolation.test.ts
 
+      - name: Test Docker verification isolation
+        run: |
+          docker pull node@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+          image=$(docker image inspect --format '{{.Id}}' node@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e)
+          NATIVE_TEST_DOCKER_IMAGE="$image" pnpm exec vitest run tests/native-verification-isolation.test.ts
+
       - name: Run CI suite
         run: pnpm run ci

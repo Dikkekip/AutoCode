@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
@@ -171,10 +171,14 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
     expect((await tool("research", "assigned-session", true).execute("call", args)).details.notes).toBe(
       "Complete investigation context"
     )
-    const remote = client.factories[0]({ agentId: "research", sessionKey: "assigned-session" }).find(
+    const duplicate = client.factories[0]({ agentId: "research", sessionKey: "assigned-session" }).find(
       (t: any) => t.name === "autocode_context"
     )
-    await expect(remote.execute("call", args)).rejects.toThrow(/remote tool broker unavailable/)
+    expect((await duplicate.execute("call", args)).details.notes).toBe("Complete investigation context")
+    const unassigned = client.factories[0]({ agentId: "research", sessionKey: "unassigned-session" }).find(
+      (t: any) => t.name === "autocode_context"
+    )
+    await expect(unassigned.execute("call", args)).rejects.toThrow(/session/)
     const respond = vi.fn()
     await server.methods.get("autocode.tool")({
       params: {
@@ -186,7 +190,46 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
     })
     expect(respond.mock.calls[0][0]).toBe(false)
     expect(respond.mock.calls[0][2].message).toMatch(/trusted local plugin factory/)
+    await server.service.stop()
+    await expect(duplicate.execute("call", args)).rejects.toThrow(/remote tool broker unavailable/)
   } finally {
     store.close()
   }
+})
+
+it("binds skill bootstrap to an authenticated administrator and exact reviewed digests", async () => {
+  const s = setup()
+  const path = join(s.root, "policy.json"),
+    skillPath = join(s.root, "SKILL.md")
+  writeFileSync(skillPath, "Use bounded source evidence and independent review.")
+  const policy = JSON.parse(readFileSync(path, "utf8"))
+  policy.quality = { skillPath }
+  writeFileSync(path, JSON.stringify(policy))
+  await s.service.start()
+  await s.call("autocode.pause")
+  const { loadNativePolicy } = await import("../packages/core-runtime/src/native/doctor.js")
+  const { nativeSkillPolicyDigest } = await import("../packages/core-runtime/src/native/skills.js")
+  const { nativeGovernanceDigest } = await import("../packages/core-runtime/src/native/governance.js")
+  const params = {
+    boardId: "app",
+    digest: nativeGovernanceDigest(readFileSync(skillPath, "utf8")),
+    policyDigest: nativeSkillPolicyDigest(loadNativePolicy(path)),
+    reason: "Reviewed initial bounded evidence skill"
+  }
+  const invoke = async (client: unknown, overrides = {}) => {
+    let response: any
+    await s.methods.get("autocode.skill.bootstrap")({
+      params: { ...params, ...overrides },
+      client,
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    return response
+  }
+  expect((await invoke(undefined))[0]).toBe(false)
+  const client = { connect: { client: { id: "operator-cli" }, scopes: ["operator.admin"] } }
+  expect((await invoke(client, { digest: "incorrect" }))[0]).toBe(false)
+  expect((await invoke(client))[0]).toBe(true)
+  expect((await invoke(client))[0]).toBe(false)
 })
