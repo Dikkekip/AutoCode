@@ -286,7 +286,7 @@ describeDb("core runtime", () => {
         waitPollMs: 1
       })
 
-      expect(report.stopReason).toBe("queue_drained")
+      expect(report.stopReason, JSON.stringify(report)).toBe("queue_drained")
       expect(store.getTaskById(implementationTask.id).status).toBe("done")
       expect(report.runs.some((run) => run.taskKind === "implement" && run.loopStatus === "ok")).toBe(true)
       expect(report.runs.some((run) => run.taskKind === "review" && run.lifecyclePhase === "end")).toBe(true)
@@ -380,7 +380,7 @@ describeDb("core runtime", () => {
       })
 
       const codingRuns = report.runs.filter((run) => taskIds.includes(run.taskId))
-      expect(report.stopReason).toBe("queue_drained")
+      expect(report.stopReason, JSON.stringify(report)).toBe("queue_drained")
       expect(codingRuns).toHaveLength(5)
       expect(codingRuns.map((run) => run.taskTitle).sort()).toEqual(
         Array.from({ length: 5 }, (_, index) => `Five-session task ${index + 1}`)

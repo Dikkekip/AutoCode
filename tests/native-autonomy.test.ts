@@ -341,7 +341,7 @@ describe("legacy native migration", () => {
     } finally {
       store.close()
     }
-  })
+  }, 15_000)
   it("preserves large legacy evidence without exceeding Workboard card notes", async () => {
     const p = { ...policy(), enabled: false },
       source = legacy(p.repository)

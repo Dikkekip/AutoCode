@@ -430,7 +430,10 @@ describeDb("dispatcher CLI smoke flow", () => {
     }
     expect(report.queueRefresh.profileId).toBe("minimal-repo")
     expect(report.passes).toHaveLength(1)
-    expect(report.runs.some((run) => run.loopStatus === "ok" && run.lifecyclePhase === "end")).toBe(true)
+    expect(
+      report.runs.some((run) => run.loopStatus === "ok" && run.lifecyclePhase === "end"),
+      JSON.stringify(report)
+    ).toBe(true)
     expect(["queue_drained", "pass_limit_reached", "no_progress"]).toContain(report.stopReason)
   }, 15_000)
 

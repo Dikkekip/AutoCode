@@ -6766,6 +6766,7 @@ describeDb("DispatcherExecutor", () => {
           laneId: "ui-shell-system",
           fileCount: 1,
           testFileCount: 0,
+          publicFacades: [],
           sampleFiles: ["apps/reports-ui/src/App.tsx"]
         }
       ],
@@ -6834,6 +6835,7 @@ describeDb("DispatcherExecutor", () => {
           laneId: "ui-shell-system",
           fileCount: 3,
           testFileCount: 0,
+          publicFacades: [],
           sampleFiles: [
             "apps/reports-ui/src/components/ui/ActionGroup.tsx",
             "apps/reports-ui/src/components/ui/Alert.tsx",
