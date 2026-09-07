@@ -8,6 +8,7 @@ import { validateNativeVerificationSandbox } from "../packages/domain/src/native
 import {
   allowlistedEnvironment,
   BUILD_ENVIRONMENT_ALLOWLIST,
+  executeDockerSandboxedCommand,
   executeSandboxedCommand
 } from "../packages/os-adapters/src/shell.js"
 
@@ -103,8 +104,16 @@ it.runIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
 // CI provisions a minimal, root-owned BusyBox root. Explicit configuration makes
 // unavailable namespaces a test FAILURE, not a skip or an unrestricted fallback.
 const rootFilesystem = process.env.NATIVE_TEST_ROOTFS
-const integration = rootFilesystem ? describe : describe.skip
-integration("Bubblewrap kernel isolation", () => {
+const dockerImage = process.env.NATIVE_TEST_DOCKER_IMAGE
+const integration = rootFilesystem || dockerImage ? describe : describe.skip
+const sandbox = dockerImage
+  ? { backend: "docker" as const, image: dockerImage, inputFiles: ["source.txt"] }
+  : { backend: "bubblewrap" as const, rootFilesystem: rootFilesystem!, inputFiles: ["source.txt"] }
+const executeIsolated = (argv: string[], options: Parameters<typeof executeSandboxedCommand>[1]) =>
+  dockerImage
+    ? executeDockerSandboxedCommand(argv, { ...options, image: dockerImage })
+    : executeSandboxedCommand(argv, options)
+integration("Kernel verification isolation", () => {
   it("hides secrets, blocks host writes and receipt tampering, preserves build variables", async () => {
     const repo = temp(),
       evidence = temp(),
@@ -130,11 +139,7 @@ integration("Bubblewrap kernel isolation", () => {
         { ...command, argv: ["/bin/sh", "-c", script] },
         repo,
         join(evidence, "new.json"),
-        {
-          backend: "bubblewrap",
-          rootFilesystem: rootFilesystem!,
-          inputFiles: ["source.txt"]
-        }
+        sandbox
       )
       expect(result.exitCode).toBe(0)
       expect(result.stdout).toContain("source")
@@ -152,19 +157,32 @@ integration("Bubblewrap kernel isolation", () => {
   it("enforces cancellation, timeout and output bounds", async () => {
     const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     const controller = new AbortController()
-    const running = executeSandboxedCommand(["/bin/sh", "-c", "(sleep 1; echo survived > /work/survived) & wait"], {
+    const running = executeIsolated(["/bin/sh", "-c", "(sleep 1; echo survived > /work/survived) & wait"], {
       ...options,
       signal: controller.signal
     })
     setTimeout(() => controller.abort(), 100)
-    await expect(running).rejects.toThrow(/abort/i)
+    await expect(running).rejects.toMatchObject({ outcome: "cancelled" })
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(existsSync(join(options.workspace, "survived"))).toBe(false)
+    await expect(executeIsolated(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })).rejects.toThrow()
     await expect(
-      executeSandboxedCommand(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })
-    ).rejects.toThrow()
-    await expect(
-      executeSandboxedCommand(["/bin/sh", "-c", "yes flood"], { ...options, maxBufferBytes: 1024 })
-    ).rejects.toThrow(/maxBuffer/)
+      executeIsolated(["/bin/sh", "-c", "yes flood"], { ...options, maxBufferBytes: 1024 })
+    ).rejects.toMatchObject({ outcome: "output_limit" })
   })
+})
+
+it("requires explicit immutable Docker image authority and safe inputs", () => {
+  const image = `sha256:${"a".repeat(64)}`
+  expect(validateNativeVerificationSandbox({ backend: "docker", image, inputFiles: ["src/main.ts"] })).toEqual({
+    backend: "docker",
+    image,
+    inputFiles: ["src/main.ts"]
+  })
+  expect(() =>
+    validateNativeVerificationSandbox({ backend: "docker", image: "node:latest", inputFiles: ["src/main.ts"] })
+  ).toThrow(/immutable/)
+  expect(() => validateNativeVerificationSandbox({ backend: "docker", image, inputFiles: [".env"] })).toThrow(
+    /credentials/
+  )
 })

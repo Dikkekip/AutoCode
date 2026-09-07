@@ -14,7 +14,11 @@ Lease loss cannot revoke an external request already sent. Its recorded operatio
 
 An investigation is a real turn by a named persona. Weighted rotation chooses three personas, sequential dependencies preserve the planner concurrency limit, and a separate planner compares their recorded proposals. Each persona can propose at most two alternatives; a round may admit none. Existing persona goals and lane checks can be imported with `native prepare`. Defaults admit at most six tasks per round, cap new quality-enabled discovery at twenty-four rounds daily (legacy policies default to twelve), and apply backlog/scope backpressure. OpenClaw owns provider accounts and cooldowns; the legacy account switcher is not called.
 
-Implementation, verification, review, merge, and deployment are separate cards. The workflow card remains blocked until deployment has an exact-revision receipt. A worker's `workboard_complete` is not a release authorization. Managed implementation worktrees start from `origin/<baseBranch>`, preserving a stale or dirty local branch. The coder must call `autocode_submit` from its assigned card session with a committed managed worktree; the reviewer must call `autocode_review` from the separate assigned review session. Structured host-executed checks, independent review, and GitHub CI must all pass for the submitted head.
+Implementation, verification, review, merge, and deployment are separate cards. The workflow card remains blocked until deployment has an exact-revision receipt. A worker's `workboard_complete` is not a release authorization. Managed implementation worktrees start from `origin/<baseBranch>`, preserving a stale or dirty local branch. The coder must call `autocode_submit` from its assigned card session with its managed worktree; the host broker records any scoped source edits as a commit without exposing shared Git metadata to the sandbox; the reviewer must call `autocode_review` from the separate assigned review session. Structured host-executed checks, independent review, and GitHub CI must all pass for the submitted head.
+
+Sandboxed roles need Autocode and Workboard tools allowed in both the role tool policy and `tools.sandbox.tools`. Before dispatch, the native adapter binds the assigned sandbox workspace through the public configuration API and starts only that prepared Workboard card. It does not rebind a role with an active Workboard card. Scratch research cards retain their native workspace behavior.
+
+The submission broker rejects outside-scope files and symlinks, snapshots bounded regular source files through checked file descriptors, and uses Git plumbing with hooks and filters disabled. It preserves untracked runtime persona notes locally and excludes them from the candidate. An ended implementation without a submission becomes an explicit recovery blocker; retry preserves the prior attempt and requires an operator recovery decision.
 
 Verification and review rejection allow at most two repair handoffs against the preserved worktree. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
 
@@ -383,3 +387,11 @@ required check, unknown external outcome, unhealthy target, exhausted budget or
 ownership conflict. Review actual staging observation and restoration evidence
 before issuing a separate application-release approval. Supplied policies remain
 paused/observe until that review; running this test suite never activates them.
+
+### Docker verification on restricted Linux hosts
+
+An explicit `verificationSandbox: {backend: "docker", image: "sha256:<64 hex digits>", inputFiles: [...]}` selects a locally provisioned immutable Docker image. The image must include the administrator-reviewed `/opt/openclaw/checks/` executables and build dependencies. Candidate commands run without network or inherited credentials, with a read-only image, dropped capabilities, bounded resources, and only committed source copies mounted at `/work`. Cancellation removes the container as well as its client. Bubblewrap remains supported; there is no automatic unrestricted fallback.
+
+OpenClaw 2026.9.1 and 2026.9.2 have reviewed Workboard contracts. In `implement-human-review` mode release remains disabled; named CI identities become mandatory before switching to a release mode.
+
+Before first discovery, pause execution and use the administrator-only `autocode.skill.bootstrap` Gateway method with `boardId`, the reviewed immutable skill `digest`, `policyDigest`, and a `reason`. The method checks the authenticated administrator context and exact configured content; it cannot replace an already active skill. Skill changes still require evaluated promotion.

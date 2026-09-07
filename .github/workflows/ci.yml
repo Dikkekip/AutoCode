@@ -42,18 +42,13 @@ jobs:
       - name: Validate dependency licenses and advisories
         run: pnpm deps:licenses && pnpm deps:audit
 
-      - name: Provision isolated verification test root
+      - name: Provision immutable verification image
         run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap busybox-static
-          sudo mkdir -p /opt/native-test-root/bin /opt/native-test-root/work /opt/native-test-root/proc /opt/native-test-root/dev /opt/native-test-root/tmp
-          sudo cp /bin/busybox /opt/native-test-root/bin/busybox
-          for app in sh cat sleep yes; do sudo ln -s busybox /opt/native-test-root/bin/$app; done
-          sudo chmod -R go-w /opt/native-test-root
+          docker pull node@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+          image=$(docker image inspect --format '{{.Id}}' node@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e)
+          echo "NATIVE_TEST_DOCKER_IMAGE=$image" >> "$GITHUB_ENV"
 
       - name: Test kernel verification isolation
-        env:
-          NATIVE_TEST_ROOTFS: /opt/native-test-root
         run: pnpm exec vitest run tests/native-verification-isolation.test.ts
 
       - name: Run CI suite

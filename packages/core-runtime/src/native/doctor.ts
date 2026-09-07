@@ -4,8 +4,10 @@ import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { promisify } from "node:util"
 import { type NativeAutonomyPolicy, validateNativeAutonomyPolicy } from "@openclaw/domain"
+import { readExecutionOwnership } from "@openclaw/os-adapters"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NATIVE_GATEWAY_CONTRACT_VERSION, type NativeGateway, nativeCards, nativeObject } from "./gateway.js"
+import { nativeModeAllows } from "./promotion-mode.js"
 import type { NativeEvidenceStore } from "./store.js"
 
 export function loadNativePolicy(path: string): NativeAutonomyPolicy {
@@ -30,8 +32,8 @@ export async function nativeDoctor(
     const versioned = gateway as NativeGateway & { version?: () => Promise<string> }
     if (!versioned.version) throw new Error("Native Gateway version unavailable; use the supported CLI transport")
     const version = await versioned.version()
-    if (version !== "2026.9.1")
-      throw new Error(`Unsupported OpenClaw version ${version}; reviewed contract supports 2026.9.1`)
+    if (!["2026.9.1", "2026.9.2"].includes(version))
+      throw new Error(`Unsupported OpenClaw version ${version}; reviewed contract supports 2026.9.1 and 2026.9.2`)
     return `OpenClaw ${version}; runtime contract v${NATIVE_GATEWAY_CONTRACT_VERSION}`
   })
   await check("workboard", async () => {
@@ -153,6 +155,19 @@ export async function nativeDoctor(
       db.close()
     }
   })
+  await check("execution-owner", () => {
+    const owner = readExecutionOwnership(policy.repository)
+    if (
+      (owner && owner.owner !== "native") ||
+      (!owner && existsSync(join(policy.repository, ".openclaw/dispatcher.db")))
+    )
+      throw new Error(
+        "Transfer paused legacy execution ownership through a reviewed migration before native activation"
+      )
+    return owner
+      ? `Native execution owner generation ${owner.generation}`
+      : "Fresh native repository; ownership will be claimed on first execution"
+  })
   await check("legacy-timers", async () => {
     const platform = options.platform ?? process.platform
     if (platform !== "linux")
@@ -195,11 +210,17 @@ export async function nativeDoctor(
     return "Reviewed verification authority declared; exact candidate and artifact bindings verified at submission and release"
   })
   await check("required-ci", () => {
-    if (policy.repositoryKind === "application" && !policy.requiredCi?.checks.length)
+    if (
+      policy.repositoryKind === "application" &&
+      nativeModeAllows(policy, "release") &&
+      !policy.requiredCi?.checks.length
+    )
       throw new Error("Named required CI checks and trusted app identities must be configured before activation")
-    return policy.repositoryKind === "framework"
-      ? "Framework release remains human-gated"
-      : "Required CI policy configured; exact head checks are verified at release"
+    return !nativeModeAllows(policy, "release")
+      ? "Automatic release is disabled by promotion mode; CI remains required before release activation"
+      : policy.repositoryKind === "framework"
+        ? "Framework release remains human-gated"
+        : "Required CI policy configured; exact head checks are verified at release"
   })
   return { ok: checks.every((c) => c.ok), enabled: policy.enabled, boardId: policy.boardId, checks }
 }
@@ -261,5 +282,14 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
       throw new Error(`Role ${role.id} requires exec.host sandbox`)
     for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || tool === "workboard_complete"))
       if (!tools.allow.includes(tool)) throw new Error(`Role ${role.id} is missing ${tool}`)
+    const sandboxTools = tools.sandbox?.tools ?? config.tools?.sandbox?.tools
+    for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || tool === "workboard_complete")) {
+      const plugin = tool.startsWith("autocode_") ? "autocode" : "workboard"
+      if (
+        ![...(sandboxTools?.allow ?? []), ...(sandboxTools?.alsoAllow ?? [])].some((v) => v === tool || v === plugin) ||
+        (sandboxTools?.deny ?? []).some((v: string) => v === "*" || v === tool || v === plugin)
+      )
+        throw new Error(`Role ${role.id} sandbox tool policy hides ${tool}`)
+    }
   }
 }

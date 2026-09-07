@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
@@ -25,7 +25,7 @@ function roles() {
         ].map(([id, allow]) => [
           String(id),
           {
-            tools: { allow, elevated: { enabled: false }, exec: { host: "sandbox" } },
+            tools: { allow, sandbox: { tools: { allow } }, elevated: { enabled: false }, exec: { host: "sandbox" } },
             sandbox: { mode: "all", workspaceAccess: id === "coder" ? "rw" : "ro", docker: { network: "none" } }
           }
         ])
@@ -35,6 +35,11 @@ function roles() {
 }
 it("accepts explicit confined independent role authority", () => {
   expect(() => validateNativeRoleAuthority(policy, roles())).not.toThrow()
+})
+it("rejects broker tools hidden by the additional sandbox tool policy", () => {
+  const config = roles()
+  config.agents.entries.coder!.tools.sandbox.tools.allow = []
+  expect(() => validateNativeRoleAuthority(policy, config)).toThrow(/sandbox tool policy hides/)
 })
 it.each([
   "exec",
@@ -78,4 +83,35 @@ it("reports malformed reads and unsupported supervisor without mutating Gateway 
     expect(report.checks.find((c) => c.name === name)?.ok).toBe(false)
   expect(report.checks.find((c) => c.name === "legacy-timers")?.detail).toContain("systemctl was not invoked")
   expect(calls).toEqual(["workboard.boards.list", "agents.list", "config.get", "cron.list"])
+})
+
+// Both releases pass scripts/native-contract-smoke.mjs against their installed Workboard contract.
+it.each(["2026.9.1", "2026.9.2", "2026.10.0"])("checks the reviewed gateway release %s", async (version) => {
+  const gateway = {
+    version: async () => version,
+    request: async <T = any>() => ({}) as T
+  }
+  const report = await nativeDoctor({ ...policy, repository: "/tmp" }, gateway, { platform: "darwin" })
+  expect(report.checks.find((check) => check.name === "gateway-version")?.ok).toBe(version !== "2026.10.0")
+})
+
+it.each([
+  "implement-human-review",
+  "application-release"
+] as const)("requires CI identities before release in %s", async (mode) => {
+  const gateway = { request: async <T = any>() => ({}) as T }
+  const report = await nativeDoctor({ ...policy, repositoryKind: "application", repository: "/tmp", mode }, gateway, {
+    platform: "darwin"
+  })
+  expect(report.checks.find((check) => check.name === "required-ci")?.ok).toBe(mode === "implement-human-review")
+})
+
+it("does not call a paused legacy repository ready before execution ownership transfer", async () => {
+  const repository = mkdtempSync(join(tmpdir(), "native-owner-readiness-"))
+  roots.push(repository)
+  mkdirSync(join(repository, ".openclaw"))
+  writeFileSync(join(repository, ".openclaw/dispatcher.db"), "")
+  const gateway = { request: async <T = any>() => ({}) as T }
+  const report = await nativeDoctor({ ...policy, repository }, gateway, { platform: "darwin" })
+  expect(report.checks.find((check) => check.name === "execution-owner")?.ok).toBe(false)
 })
