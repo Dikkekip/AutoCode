@@ -1,5 +1,6 @@
 import { writeFileSync } from "node:fs"
 import { join } from "node:path"
+import { loadProjectProfile } from "@openclaw/project-profiles"
 import { afterEach, describe, expect, it } from "vitest"
 import { createLawyerRagControlPlane, createTempWorkspace } from "./helpers.js"
 import { HAS_NODE_SQLITE } from "./node-sqlite.js"
@@ -96,6 +97,11 @@ describeDb("repo-owned .openclaw sync", () => {
     const workspace = createTempWorkspace("dispatcher-sync-merge")
     cleanups.push(workspace.cleanup)
     createLawyerRagControlPlane(workspace.repoPath)
+    writeFileSync(
+      join(workspace.repoPath, ".openclaw", "profile.json"),
+      JSON.stringify({ ...loadProjectProfile("lawyerrag"), version: "test-profile" }),
+      "utf8"
+    )
 
     const store = new DispatcherStore!(join(workspace.repoPath, ".openclaw", "dispatcher.db"))
     store.migrate()
@@ -132,6 +138,9 @@ describeDb("repo-owned .openclaw sync", () => {
 
       const project = store.resolveProject("LawyerRAG", company.id)
       expect(project.verifyCommand).toBe("pytest -q")
+      expect(project.profileId).toBe("lawyerrag")
+      expect(project.profilePath).toBe(join(workspace.repoPath, ".openclaw", "profile.json"))
+      expect(project.profile.version).toBe("test-profile")
 
       const main = store.resolveAgent("main", company.id)
       expect(main.role).toBe("Custom Director")
@@ -152,6 +161,33 @@ describeDb("repo-owned .openclaw sync", () => {
       )
       expect(summary.skipped).toContain("Agent main: kept existing model codex-max instead of imported codex")
       expect(summary.skipped).toContain("Agent main: kept existing budget 900/monthly instead of imported 4000/monthly")
+    } finally {
+      store.close()
+    }
+  })
+
+  it("re-arms active automations whose persisted schedule was cleared", () => {
+    const workspace = createTempWorkspace("dispatcher-sync-rearm")
+    cleanups.push(workspace.cleanup)
+    createLawyerRagControlPlane(workspace.repoPath)
+
+    const store = new DispatcherStore!(join(workspace.repoPath, ".openclaw", "dispatcher.db"))
+    store.migrate()
+
+    try {
+      syncRepoOwnedOpenclaw!({ targetPath: workspace.repoPath, store })
+      const company = store.resolveCompany("Lawyer Labs")
+      const automation = store.listAutomations(company.id).find((entry) => entry.name === "execution-sweep")!
+      store.updateAutomation(automation.id, { nextRunAt: null })
+
+      const summary = syncRepoOwnedOpenclaw!({ targetPath: workspace.repoPath, store })
+      const rearmed = store.getAutomationById(automation.id)
+
+      expect(rearmed.nextRunAt).not.toBeNull()
+      expect(summary.automations.find((entry) => entry.name === "execution-sweep")).toMatchObject({
+        status: "updated",
+        details: expect.arrayContaining(["re-armed stalled active schedule"])
+      })
     } finally {
       store.close()
     }

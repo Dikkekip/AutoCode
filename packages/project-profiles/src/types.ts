@@ -37,6 +37,7 @@ export interface LaneDefinition {
   displayName: string
   preferredAdapterType: AdapterType
   allowedPaths: string[]
+  publicFacades?: string[] | undefined
   requiredReadingRuleId: string
   verificationRuleId: string
   categoryHints?: string[] | undefined

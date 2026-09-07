@@ -159,6 +159,28 @@ describeHelpers("doctor helpers", () => {
     expect(report.exitCode).toBe(1)
   })
 
+  it("fails dispatcher health when a module check fails", () => {
+    const report = aggregateDoctorReport!({
+      ...buildBaselineReport(),
+      moduleChecks: [
+        {
+          id: "database",
+          label: "dispatcher database",
+          status: "fail",
+          failure: {
+            class: "healthcheck_failed",
+            stage: "healthcheck",
+            message: "database unavailable"
+          },
+          details: {}
+        }
+      ]
+    })
+
+    expect(report.summary).toEqual({ passed: 1, failed: 0, total: 1 })
+    expect(report.exitCode).toBe(1)
+  })
+
   it("renders wrapper metadata in the human summary", () => {
     const report = aggregateDoctorReport!({
       ...buildBaselineReport(),

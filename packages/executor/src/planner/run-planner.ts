@@ -194,7 +194,8 @@ function plannerPrompt(input: {
     "",
     "Persona ideation rules:",
     "- Each queue-refresh is an active persona-led repo-search pass for features, improvements, bugs, missing tests, UX gaps, domain workflow gaps, and operational reliability issues.",
-    "- Every persona must search or inspect its owned repository surfaces before proposing work. Use laneInventory, laneHotspots, todoFixmeHits, staleTasks, promotionBlockers, directives, and verificationCommands as evidence.",
+    "- Every persona must search or inspect its owned repository surfaces before proposing work. Start with the selected lane's publicFacades, then use laneInventory, laneHotspots, todoFixmeHits, staleTasks, promotionBlockers, directives, and verificationCommands as evidence.",
+    "- publicFacades are bounded architectural reading anchors. They do not broaden allowedPaths or authorize edits outside the selected lane.",
     "- Every candidate must cite repo-search evidence in `sourceSignals`, `requiredReading`, or `repoNotes`; do not invent work without a concrete repository signal.",
     "- Rotate coverage across the persona roster over time so legal/domain personas and engineering/design personas all contribute dispatchable ideas.",
     "- Prefer the lowest-utilization compatible personas from the recent coverage list. Do not assign two candidates in one run to the same persona while another compatible persona is underrepresented.",
@@ -446,7 +447,9 @@ function fallbackInventoryPaths(snapshot: RepoPlanningSnapshot, laneId: string):
   const preferred = inventory.sampleFiles.filter(
     (path) => !/(?:^|\/)(?:__init__\.py|README\.md)$/i.test(path) && !/\.(?:test|spec)\.[^.]+$/i.test(path)
   )
-  return preferred.length > 0 ? preferred : inventory.sampleFiles
+  return Array.from(
+    new Set([...inventory.publicFacades, ...(preferred.length > 0 ? preferred : inventory.sampleFiles)])
+  ).slice(0, 12)
 }
 
 function fallbackInventoryReading(snapshot: RepoPlanningSnapshot, laneId: string): string[] {
@@ -642,7 +645,9 @@ export function deterministicFallbackPlannerCandidates(input: {
         taskSourceIntent: "planner_fallback",
         preferredAdapterType: persona?.preferredAdapterType ?? laneDefinition?.preferredAdapterType ?? null,
         priority: 58,
-        requiredReading: Array.from(new Set([...(readingRule?.paths ?? []), ...evidence.reading])).slice(0, 8),
+        requiredReading: Array.from(
+          new Set([...(laneDefinition?.publicFacades ?? []), ...(readingRule?.paths ?? []), ...evidence.reading])
+        ).slice(0, 8),
         verificationChecklist: verificationRule?.commands ?? input.snapshot.verificationCommands.slice(0, 1),
         contractUpdateReminders: lane.includes("contract")
           ? ["Update API/contract fixtures when behavior changes."]

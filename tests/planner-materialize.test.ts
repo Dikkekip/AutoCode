@@ -68,10 +68,14 @@ describeDb("planner task dependency materialization", () => {
         reason: "test"
       }))
 
+      const profile = loadProjectProfile("minimal-repo")
+      profile.laneDefinitions.find((lane) => lane.laneId === "app-core")!.publicFacades = [
+        "packages/shared/src/index.ts"
+      ]
       const createdTaskIds = materializePlannerTasks({
         store,
         projectId: project.id,
-        profile: loadProjectProfile("minimal-repo"),
+        profile,
         candidates,
         decisions,
         personaByName: () => null
@@ -82,6 +86,8 @@ describeDb("planner task dependency materialization", () => {
       const consumer = tasks.find((task) => task.title === "consumer")!
       expect(createdTaskIds).toEqual([foundation.id, consumer.id])
       expect(consumer.dependsOnTaskIds).toEqual([foundation.id])
+      expect(foundation.requiredReading).toContain("packages/shared/src/index.ts")
+      expect(foundation.allowedPaths).not.toContain("packages/shared/src/index.ts")
       expect(foundation.changedFiles).toEqual(["packages/foundation/src/index.ts"])
       expect(foundation.allowedPaths).toEqual(["packages/foundation/src/index.ts"])
       expect(decisions.find((decision) => decision.dedupeKey === "consumer")?.createdTaskId).toBe(consumer.id)

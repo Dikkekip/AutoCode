@@ -69,7 +69,11 @@ describeDb("dispatcher installer", () => {
       )
       expect(store.listJobSpecs()).toHaveLength(6)
       expect(store.listRoutingRules().map((rule) => rule.name)).toContain("minimal-default")
-      expect(store.resolveProject("demo-app", "Acme AI").verifyCommand).toBe("pnpm test")
+      const project = store.resolveProject("demo-app", "Acme AI")
+      expect(project.verifyCommand).toBe("pnpm test")
+      expect(project.profileId).toBe("minimal-repo")
+      expect(project.profilePath).toBe(join(workspace.repoPath, ".openclaw", "profile.json"))
+      expect(project.profile.profileId).toBe("minimal-repo")
     } finally {
       store.close()
     }
