@@ -30,6 +30,8 @@ export type NativeVerificationSandbox = {
   inputFiles: string[]
   /** Operator-reviewed source exceptions pinned to immutable Git blobs. */
   reviewedSourceFiles?: Array<{ path: string; blobSha: string; reviewedBy: string }>
+  /** Separately reviewed public root template; never a live environment file. */
+  reviewedEnvExample?: { blobSha: string; reviewedBy: string }
 } & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string })
 
 export interface NativeAcceptanceBinding {
@@ -547,18 +549,31 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
       reviewedSourceFiles.push({ path, blobSha, reviewedBy })
     }
   }
+  let reviewedEnvExample: NativeVerificationSandbox["reviewedEnvExample"]
+  if (r.reviewedEnvExample !== undefined) {
+    const entry = record(r.reviewedEnvExample)
+    const blobSha = text(entry.blobSha, "reviewed environment example blob")
+    const reviewedBy = text(entry.reviewedBy, "reviewed environment example reviewer")
+    if (!inputFiles.includes(".env.example") || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(blobSha))
+      throw new Error("Reviewed environment example requires root .env.example and exact Git blob")
+    reviewedEnvExample = { blobSha, reviewedBy }
+  }
   if (
     inputFiles.some(
       (p) =>
         p === "." ||
         /[*?[\]{}]/.test(p) ||
-        p.split("/").some((part) => /^(\.git|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*\.pem)$/i.test(part)) ||
+        (p.split("/").some((part) => /^(\.git|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*\.pem)$/i.test(part)) &&
+          !(p === ".env.example" && reviewedEnvExample)) ||
         (p.split("/").some((part) => /(?:policy|policies|credentials|secrets)/i.test(part)) &&
           !reviewedSourceFiles.some((entry) => entry.path === p))
     )
   )
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
-  const reviewed = reviewedSourceFiles.length ? { reviewedSourceFiles } : {}
+  const reviewed = {
+    ...(reviewedSourceFiles.length ? { reviewedSourceFiles } : {}),
+    ...(reviewedEnvExample ? { reviewedEnvExample } : {})
+  }
   return r.backend === "docker"
     ? { backend: "docker", image, inputFiles, ...reviewed }
     : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
