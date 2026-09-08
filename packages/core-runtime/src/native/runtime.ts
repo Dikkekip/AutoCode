@@ -1120,6 +1120,11 @@ export class NativeAutonomyRuntime {
     if (!this.store.holdsLease(`workflow:${id}`))
       return this.withWorkflowLease(id, () => this.requestRepair(id, workflow, reason))
     this.assertEnabled()
+    const unavailable = workflow.verification?.checks.find((check) => [126, 127].includes(check.exitCode ?? 0))
+    if (unavailable)
+      throw new Error(
+        `Verification command unavailable (exit ${unavailable.exitCode}): ${unavailable.argv[0]}; inspect ${unavailable.artifact} and repair the verification environment before operator recovery. Candidate and repair budget preserved.`
+      )
     const previousLifecycle = workflow.lifecycle ?? upgradeNativeLifecycle(id, workflow)
     const attempt = (workflow.repairCount ?? 0) + 1
     if (attempt > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)

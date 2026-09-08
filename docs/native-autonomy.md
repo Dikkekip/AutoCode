@@ -222,6 +222,8 @@ Large source files can be read in bounded pages with `autocode_inspect`. Omit `o
 
 Implementation, adoption, and repair cards wait in `blocked` status until admission capacity and any design review permit execution. `scheduled` is reserved for an actual schedule. Reconciliation can recover older framework-created undated scheduled holds while preserving an explicit future start time.
 
+Verification exits 126 (not executable) and 127 (not found) block for operator inspection of the command artifact. They do not create coding repair handoffs or consume the repair budget; the candidate and verification evidence remain available. Repair the verification environment before using the explicit recovery workflow. Other failing checks retain the normal bounded repair behavior.
+
 When independent verification fails, compare the failed command and affected files with the candidate's base revision before broadening a repair. Preserve the original candidate and receipts. An identical baseline failure is an upstream dependency, not a passing gate, and must not be hidden by weakening the required check. Keep the admitted file scope intact when recording that dependency.
 
 ### Reviewed verification authority and required CI
