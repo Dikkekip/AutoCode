@@ -589,3 +589,9 @@ absent remote. Unknown PR, merge, or deployment operations remain blocked.
 ## Work across multiple sessions
 
 Research and planning compare substantial user outcomes alongside short repairs. A long-horizon implementation plan records ordered milestones, dependencies, durable progress evidence, current-revision resume checks and final end-to-end acceptance. A milestone does not count as a completed outcome or release. Planners retain existing scope, resource and risk gates and explain a concrete blocker when deferring useful substantial work. Complexity routing remains evidence-based; neither release quotas nor invented large tasks establish value. These planning instructions do not extend execution budgets or automatically resume interrupted workers.
+
+### Public environment template verification
+
+Some parity checks read the repository's public `.env.example`. It remains excluded by default. After separately reviewing its complete committed contents as a public template containing placeholders, the operator may add the exact root `.env.example` to `inputFiles` and configure `reviewedEnvExample: {blobSha: "<full Git blob ID>", reviewedBy: "<operator identity>"}`. The pinned blob is checked before materialization. Changed template bytes require fresh review; dirty working-tree values are never copied.
+
+This option does not admit `.env`, `.env.local`, `.env.production`, nested environment templates, hidden runtime state, or credential data. It grants no host environment access and does not execute or source the template. Existing source-only approvals do not imply approval of this separate template option.

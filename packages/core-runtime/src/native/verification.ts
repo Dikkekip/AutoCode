@@ -150,7 +150,10 @@ export async function snapshotNativeCommandInputs(
     config.inputFiles,
     signal,
     () => authority?.authorize(),
-    config.reviewedSourceFiles
+    [
+      ...(config.reviewedSourceFiles ?? []),
+      ...(config.reviewedEnvExample ? [{ path: ".env.example", ...config.reviewedEnvExample }] : [])
+    ]
   )
   await assertSelection()
   if (selection) {
