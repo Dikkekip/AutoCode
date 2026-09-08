@@ -76,3 +76,42 @@ it("refuses writes when execution authority was revoked", async () => {
   ).rejects.toThrow("paused")
   expect(s.git("rev-parse", "candidate")).toBe(head)
 })
+
+it("explains tracked generated-file deletions without committing or altering them", async () => {
+  const s = setup()
+  writeFileSync(join(s.repo, "generated.js"), "tracked generated asset")
+  s.git("add", "generated.js")
+  s.git("commit", "-m", "generated fixture")
+  execFileSync("git", ["merge", "main"], { cwd: s.worktree, stdio: "pipe" })
+  const head = s.git("rev-parse", "candidate")
+  rmSync(join(s.worktree, "generated.js"))
+  writeFileSync(join(s.worktree, "code.ts"), "export const value = 2\n")
+  let message = ""
+  try {
+    await commitNativeCandidate(s.policy, s.worktree, ["code.ts"], "Fix", () => {})
+  } catch (error) {
+    message = String(error)
+  }
+  expect(message).toContain('outside admitted code scope (1): ["generated.js"]')
+  expect(message).toContain("Moving or removing tracked files creates deletions")
+  expect(message).not.toContain("tracked generated asset")
+  expect(s.git("rev-parse", "candidate")).toBe(head)
+  expect(existsSync(join(s.worktree, "generated.js"))).toBe(false)
+  expect(readFileSync(join(s.worktree, "code.ts"), "utf8")).toContain("value = 2")
+})
+
+it("bounds rejected-path diagnostics while retaining the total count", async () => {
+  const s = setup()
+  for (let i = 0; i < 20; i++) writeFileSync(join(s.worktree, `outside-${i}.txt`), "private file contents")
+  await expect(commitNativeCandidate(s.policy, s.worktree, ["code.ts"], "Fix", () => {})).rejects.toThrow(
+    /outside admitted code scope \(20\)/
+  )
+  try {
+    await commitNativeCandidate(s.policy, s.worktree, ["code.ts"], "Fix", () => {})
+  } catch (error) {
+    const message = String(error)
+    expect(message).not.toContain("private file contents")
+    expect(message.match(/outside-\d+\.txt/g)).toHaveLength(10)
+    expect(message.length).toBeLessThan(3000)
+  }
+})
