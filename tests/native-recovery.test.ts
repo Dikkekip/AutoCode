@@ -180,3 +180,26 @@ it("freezes only exact owned running sessions without pretending accepted abort 
   expect(s.cards[1].status).toBe("running")
   expect(s.store.get<any>("workflow", "workflow").blocker).toBeTruthy()
 })
+
+it.each([
+  "blocked",
+  "done"
+])("recovers an operator-disposed %s card while preserving its ended review association", async (status) => {
+  const s = setup()
+  s.cards[1].status = status
+  s.cards[1].execution = { status: "review", sessionKey: "ended-session", runId: "ended-run" }
+  const original = structuredClone(s.cards[1])
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Operator disposed the ended attempt")
+  expect(plan.allowed).toBe(true)
+  await s.runtime.applyWorkflowRecovery(plan, "operator")
+  expect(s.cards[1]).toEqual(original)
+  expect(s.store.list("attempt-history")).toHaveLength(1)
+  expect(s.runtime.requireWorkflow("workflow").implementationCardId).not.toBe(original.id)
+})
+it.each(["pending", "running"])("refuses recovery with a %s execution even if the card is blocked", async (status) => {
+  const s = setup()
+  s.cards[1].execution = { status }
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Must wait for the owner")
+  expect(plan.allowed).toBe(false)
+  await expect(s.runtime.applyWorkflowRecovery(plan, "operator")).rejects.toThrow(/owned Workboard/)
+})
