@@ -81,6 +81,7 @@ export interface NativeWorkflow {
   blocker?: string
   dependencyCardIds?: string[]
   designCardId?: string
+  designEvidenceComplete?: boolean
   designCardDigest?: string
   riskAssessment?: NativeRiskAssessment
   designReview?: {

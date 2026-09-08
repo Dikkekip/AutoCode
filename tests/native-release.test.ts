@@ -538,6 +538,7 @@ describe("native release reconciliation", () => {
     expect(s.io.github).not.toHaveBeenCalled()
     expect(s.io.command).not.toHaveBeenCalled()
     expect(s.workflow.designCardId).toBeTruthy()
+    expect(s.workflow.designEvidenceComplete).toBe(false)
   })
   it("records verified deployment and does not repeat external deploy effects", async () => {
     const s = setup()

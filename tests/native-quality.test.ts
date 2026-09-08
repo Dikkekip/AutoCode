@@ -368,6 +368,32 @@ describe("native quality investigations", () => {
     await s.runtime.reconcile()
     expect(implementation.status).toBe("ready")
   })
+  it.each([
+    ["ordinary", "export const navigation = true\n", true],
+    ["oversized", `export const navigation = "${"x".repeat(65000)}"\n`, false],
+    ["redacted", 'export const token = "synthetic-review-secret"\n', false],
+    ["binary", "export const navigation = true\0\n", false]
+  ])("provides bounded committed review evidence for %s changes", async (_name, content, complete) => {
+    const s = setup()
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const baseSha = s.git("rev-parse", "HEAD")
+    writeFileSync(join(s.root, "src/view.ts"), content as string)
+    s.git("add", "src/view.ts")
+    s.git("commit", "-m", "candidate evidence")
+    const headSha = s.git("rev-parse", "HEAD")
+    await s.runtime.quality.classifyCandidate(workflowId, w, { cwd: s.root, baseSha, headSha } as any, "submission")
+    writeFileSync(join(s.root, "src/view.ts"), "UNCOMMITTED PRIVATE CONTENT")
+    const evidence = await (s.runtime.quality as any).designEvidence(w)
+    expect(evidence.complete).toBe(complete)
+    expect(evidence.content).not.toContain("UNCOMMITTED PRIVATE CONTENT")
+    expect(evidence.content).not.toContain("synthetic-review-secret")
+    expect(Buffer.byteLength(evidence.content)).toBeLessThanOrEqual(64000)
+    expect(evidence).toMatchObject({ baseSha, headSha })
+    w.riskAssessment!.changesDigest = "mismatched-classification"
+    await expect((s.runtime.quality as any).designEvidence(w)).rejects.toThrow(/differs from classified/)
+  })
   it("requires new evidence for a rejected problem even when its title changes", async () => {
     const s = setup()
     const c = await prepare(s)
@@ -431,6 +457,20 @@ describe("native quality investigations", () => {
     expect(held.candidate).toBeUndefined()
     expect(held.riskAssessment?.reasons.join(" ")).toContain("src/auth/login.ts")
     expect(held.designCardId).toBeTruthy()
+    expect(held.designEvidenceComplete).toBe(true)
+    const designInput = s.gateway.cards.find((card) => card.id === held.designCardId)
+    const pointer = JSON.parse(designInput.notes)
+    const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+    expect(notes.committedDiff).toMatchObject({
+      baseSha: held.riskAssessment!.baseSha,
+      headSha: held.riskAssessment!.headSha,
+      changesDigest: held.riskAssessment!.changesDigest,
+      complete: true,
+      truncated: false,
+      redacted: false
+    })
+    expect(notes.committedDiff.content).toContain("+export const login = true")
+    expect(notes.committedDiff.trust).toContain("Untrusted committed source")
     const design = s.gateway.cards.find((card) => card.id === held.designCardId)
     design.status = "running"
     design.sessionKey = "candidate-design"
