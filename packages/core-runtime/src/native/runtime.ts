@@ -1051,11 +1051,16 @@ export class NativeAutonomyRuntime {
     if (committed) this.store.event("candidate.committed", workflowId, { headSha: committed, agentId, sessionKey })
     const candidate = await inspectNativeCandidate(this.policy, worktreePath, workflow.proposal.allowedPaths)
     await this.quality.classifyCandidate(workflowId, workflow, candidate, "submission")
-    if (!(await this.quality.ensureDesign(workflowId, workflow)))
-      throw new Error("High-risk implementation requires approved design review for the current candidate")
+    // Authentication and commit binding are complete even when independent design review is pending.
+    // Retain the submission so an ended coder session does not lose its candidate at this gate.
     workflow.candidate = candidate
     workflow.submission = { agentId, sessionKey, executionId: card?.execution?.runId ?? card?.runId ?? sessionKey }
-    this.transitionWorkflow(workflowId, workflow, "verification")
+    this.transitionWorkflow(
+      workflowId,
+      workflow,
+      this.quality.requiresDesign(workflow) ? "design_wait" : "verification"
+    )
+    await this.quality.ensureDesign(workflowId, workflow)
     return { accepted: true, headSha: workflow.candidate.headSha }
   }
   async review(
@@ -1308,6 +1313,7 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!nativeModeAllows(this.policy, "verify")) return advanced
+      if (!(await this.quality.ensureDesign(id, w))) return advanced
       this.control.assert()
       if (w.review?.verdict === "changes_requested") {
         await this.requestRepair(id, w, w.review.rationale)

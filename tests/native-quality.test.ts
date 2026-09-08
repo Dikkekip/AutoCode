@@ -452,9 +452,18 @@ describe("native quality investigations", () => {
     card.status = "running"
     card.sessionKey = "coder-session"
     card.metadata = { automation: { workspace: { path: worktree } } }
-    await expect(s.runtime.submit("coder", "coder-session", workflowId, worktree)).rejects.toThrow(/design review/)
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
     const held = s.runtime.requireWorkflow(workflowId)
-    expect(held.candidate).toBeUndefined()
+    expect(held.candidate?.headSha).toBe(held.riskAssessment?.headSha)
+    expect(held.submission).toMatchObject({ agentId: "coder", sessionKey: "coder-session" })
+    expect(held.lifecycle?.state).toBe("design_wait")
+    card.status = "review"
+    card.execution = { status: "review" }
+    await s.runtime.reconcile()
+    const waiting = s.runtime.requireWorkflow(workflowId)
+    expect(waiting.blocker).toBeUndefined()
+    expect(waiting.verification).toBeUndefined()
+    expect(waiting.lifecycle?.state).toBe("design_wait")
     expect(held.riskAssessment?.reasons.join(" ")).toContain("src/auth/login.ts")
     expect(held.designCardId).toBeTruthy()
     expect(held.designEvidenceComplete).toBe(true)
@@ -485,7 +494,7 @@ describe("native quality investigations", () => {
     const approved = s.runtime.requireWorkflow(workflowId)
     expect(s.runtime.quality.designApproved(approved)).toBe(true)
     s.policy.quality!.highRiskPaths.push("src/security/**")
-    await expect(s.runtime.submit("coder", "coder-session", workflowId, worktree)).rejects.toThrow(/design review/)
+    expect(await s.runtime.quality.ensureDesign(workflowId, s.runtime.requireWorkflow(workflowId))).toBe(false)
     const stale = s.runtime.requireWorkflow(workflowId)
     expect(stale.designReview).toBeUndefined()
     expect(stale.designCardId).not.toBe(held.designCardId)
@@ -500,7 +509,12 @@ describe("native quality investigations", () => {
       "Reviewed updated policy",
       assessment
     )
-    expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
+    const ready = s.runtime.requireWorkflow(workflowId)
+    expect(ready.lifecycle?.state).toBe("verification")
+    expect(ready.candidate?.headSha).toBe(held.candidate?.headSha)
+    await expect(s.runtime.submit("coder", "coder-session", workflowId, worktree)).rejects.toThrow(
+      /active Workboard session/
+    )
     const events = s.store.db.prepare("SELECT kind,data FROM native_events WHERE subject=?").all(workflowId)
     expect(events.some((e) => e.kind === "design.invalidated")).toBe(true)
     expect(events.some((e) => e.kind === "risk.classified" && String(e.data).includes("src/auth/login.ts"))).toBe(true)
