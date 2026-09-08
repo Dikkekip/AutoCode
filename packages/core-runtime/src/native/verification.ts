@@ -43,6 +43,7 @@ import {
 } from "@openclaw/os-adapters"
 
 import { nativeContentDigest, nativeRepositoryIdentity } from "./provenance.js"
+import { snapshotNativeInputs } from "./snapshot.js"
 
 export interface NativeVerificationAuthority {
   authorize(): void
@@ -389,21 +390,7 @@ export async function runNativeCommand(
   try {
     // Read committed blobs, never candidate symlinks, untracked secrets or host git metadata.
     const sha = await nativeGit(root, "rev-parse", "HEAD")
-    for (const file of config.inputFiles) {
-      const entry = await nativeGit(root, "ls-tree", sha, "--", file)
-      if (!/^100(644|755) blob [a-f0-9]+\t/.test(entry) || entry.includes("\n"))
-        throw new Error(`Sandbox input is not a committed regular file: ${file}`)
-      const blob = await exec("git", ["cat-file", "blob", `${sha}:${file}`], {
-        cwd: root,
-        env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
-        encoding: "buffer",
-        maxBuffer: 64 * 1024 * 1024,
-        timeout: 30_000
-      })
-      const target = resolve(workspace, file)
-      mkdirSync(dirname(target), { recursive: true })
-      writeFileSync(target, blob.stdout, { mode: entry.startsWith("100755") ? 0o700 : 0o600, flag: "wx" })
-    }
+    await snapshotNativeInputs(root, workspace, sha, config.inputFiles, signal, () => authority?.authorize())
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
     return await recordCommand(
