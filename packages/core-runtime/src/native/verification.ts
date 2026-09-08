@@ -390,7 +390,15 @@ export async function runNativeCommand(
   try {
     // Read committed blobs, never candidate symlinks, untracked secrets or host git metadata.
     const sha = await nativeGit(root, "rev-parse", "HEAD")
-    await snapshotNativeInputs(root, workspace, sha, config.inputFiles, signal, () => authority?.authorize())
+    await snapshotNativeInputs(
+      root,
+      workspace,
+      sha,
+      config.inputFiles,
+      signal,
+      () => authority?.authorize(),
+      config.reviewedSourceFiles
+    )
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
     return await recordCommand(

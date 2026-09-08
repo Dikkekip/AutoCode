@@ -188,3 +188,34 @@ it("requires explicit immutable Docker image authority and safe inputs", () => {
     /credentials/
   )
 })
+
+it("admits reviewed source modules by exact blob without allowing credential or policy data", () => {
+  const image = `sha256:${"a".repeat(64)}`
+  const source = "libs/common/src/secrets.py"
+  const reviewed = { path: source, blobSha: "b".repeat(40), reviewedBy: "operator" }
+  const policy = { backend: "docker", image, inputFiles: [source], reviewedSourceFiles: [reviewed] }
+  expect(validateNativeVerificationSandbox(policy).reviewedSourceFiles).toEqual([reviewed])
+  expect(() => validateNativeVerificationSandbox({ ...policy, reviewedSourceFiles: [] })).toThrow(/credentials/)
+  for (const path of [
+    ".env",
+    ".env.py",
+    ".ssh/secrets.py",
+    ".openclaw/policy.ts",
+    "config/credentials.json",
+    "config/policy.json",
+    "key.pem",
+    "src/*secrets.py"
+  ])
+    expect(() =>
+      validateNativeVerificationSandbox({
+        ...policy,
+        inputFiles: [path],
+        reviewedSourceFiles: [{ ...reviewed, path }]
+      })
+    ).toThrow()
+  for (const patch of [{ blobSha: "main" }, { reviewedBy: "" }, { path: "src/other.py" }])
+    expect(() =>
+      validateNativeVerificationSandbox({ ...policy, reviewedSourceFiles: [{ ...reviewed, ...patch }] })
+    ).toThrow()
+  expect(() => validateNativeVerificationSandbox({ ...policy, reviewedSourceFiles: [reviewed, reviewed] })).toThrow()
+})

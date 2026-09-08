@@ -31,7 +31,8 @@ export async function snapshotNativeInputs(
   sha: string,
   inputFiles: string[],
   signal?: AbortSignal,
-  authorize: () => void = () => {}
+  authorize: () => void = () => {},
+  reviewedSourceFiles: Array<{ path: string; blobSha: string }> = []
 ) {
   const check = () => {
     signal?.throwIfAborted()
@@ -59,6 +60,11 @@ export async function snapshotNativeInputs(
   }
   for (const file of inputFiles)
     if (!entries.has(file)) throw new Error(`Sandbox input is not a committed regular file: ${file}`)
+
+  for (const reviewed of reviewedSourceFiles) {
+    if (entries.get(reviewed.path)?.oid !== reviewed.blobSha)
+      throw new Error(`Reviewed sandbox source blob changed: ${reviewed.path}`)
+  }
 
   const files = inputFiles.map((file) => entries.get(file)!)
   let index = 0

@@ -89,3 +89,24 @@ it("honors cancellation and authority revocation during input preparation", asyn
   ).rejects.toThrow(/ownership revoked/)
   expect(existsSync(join(destination, "safe"))).toBe(false)
 })
+
+it("pins reviewed source modules to their approved blob before copying any input", async () => {
+  const f = fixture(),
+    destination = temp()
+  writeFileSync(join(f.root, "secrets.py"), "class SecretProvider: pass\n")
+  writeFileSync(join(f.root, "safe.py"), "pass\n")
+  const sha = f.commit()
+  const reviewed = [{ path: "secrets.py", blobSha: f.git("rev-parse", `${sha}:secrets.py`) }]
+  await snapshotNativeInputs(f.root, destination, sha, ["safe.py", "secrets.py"], undefined, undefined, reviewed)
+  expect(readFileSync(join(destination, "secrets.py"), "utf8")).toContain("SecretProvider")
+  writeFileSync(join(f.root, "secrets.py"), "changed source\n")
+  const changed = f.commit(),
+    rejected = temp()
+  await expect(
+    snapshotNativeInputs(f.root, rejected, changed, ["safe.py", "secrets.py"], undefined, undefined, reviewed)
+  ).rejects.toThrow(/blob changed/)
+  expect(existsSync(join(rejected, "safe.py"))).toBe(false)
+  await expect(snapshotNativeInputs(f.root, temp(), sha, ["safe.py"], undefined, undefined, reviewed)).rejects.toThrow(
+    /blob changed/
+  )
+})
