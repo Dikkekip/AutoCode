@@ -67,6 +67,7 @@ export function containedDirectory(root: string, child: string): string {
   return actual
 }
 const runtimeNotes = new Set([
+  "DREAMS.md",
   "IDENTITY.md",
   "SOUL.md",
   "USER.md",
@@ -75,6 +76,9 @@ const runtimeNotes = new Set([
   "HEARTBEAT.md",
   "TOOLS.md"
 ])
+function isRuntimeNote(path: string): boolean {
+  return runtimeNotes.has(path) || path.startsWith("memory/dreaming/")
+}
 async function candidateChanges(cwd: string): Promise<string[]> {
   let filters = ""
   try {
@@ -124,7 +128,7 @@ async function candidateChanges(cwd: string): Promise<string[]> {
       [
         ...tracked.split("\0"),
         ...staged.split("\0"),
-        ...untracked.split("\0").filter((path) => !runtimeNotes.has(path))
+        ...untracked.split("\0").filter((path) => !isRuntimeNote(path))
       ].filter(Boolean)
     )
   ]
@@ -153,7 +157,7 @@ export async function commitNativeCandidate(
   const rejected = files.filter(
     (file) =>
       !allowedPaths.some((root) => nativePathAllowed(file, root)) ||
-      runtimeNotes.has(file) ||
+      isRuntimeNote(file) ||
       file
         .split("/")
         .some((part) =>

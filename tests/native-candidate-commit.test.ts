@@ -35,6 +35,9 @@ it("records scoped source edits without Git hooks, clean filters, or untracked a
   s.git("config", "filter.test.clean", `touch '${marker}'; cat`)
   writeFileSync(join(s.worktree, "code.ts"), "export const value = 2\n")
   writeFileSync(join(s.worktree, "USER.md"), "Private runtime context; never publish\n")
+  writeFileSync(join(s.worktree, "DREAMS.md"), "Private dream notes")
+  mkdirSync(join(s.worktree, "memory/dreaming"), { recursive: true })
+  writeFileSync(join(s.worktree, "memory/dreaming/session.md"), "Private session notes")
   let authorized = 0
   const sha = await commitNativeCandidate(s.policy, s.worktree, ["code.ts"], "Fix value", () => {
     authorized++
@@ -44,6 +47,8 @@ it("records scoped source edits without Git hooks, clean filters, or untracked a
   expect(existsSync(marker)).toBe(false)
   expect(s.git("show", `${sha}:code.ts`)).toBe("export const value = 2")
   expect(s.git("ls-tree", "--name-only", sha!)).not.toContain("USER.md")
+  expect(s.git("ls-tree", "-r", "--name-only", sha!)).not.toMatch(/DREAMS|dreaming/)
+  expect(readFileSync(join(s.worktree, "memory/dreaming/session.md"), "utf8")).toBe("Private session notes")
   expect(readFileSync(join(s.worktree, "USER.md"), "utf8")).toContain("Private runtime context")
   expect((await inspectNativeCandidate(s.policy, s.worktree, ["code.ts"])).files).toEqual(["code.ts"])
   expect(existsSync(marker)).toBe(false)
@@ -114,4 +119,12 @@ it("bounds rejected-path diagnostics while retaining the total count", async () 
     expect(message.match(/outside-\d+\.txt/g)).toHaveLength(10)
     expect(message.length).toBeLessThan(3000)
   }
+})
+
+it.each(["DREAMS.md", "memory/dreaming/session.md"])("rejects staged runtime notes: %s", async (path) => {
+  const s = setup()
+  mkdirSync(join(s.worktree, "memory/dreaming"), { recursive: true })
+  writeFileSync(join(s.worktree, path), "private")
+  execFileSync("git", ["add", path], { cwd: s.worktree })
+  await expect(commitNativeCandidate(s.policy, s.worktree, ["**"], "Unsafe", () => {})).rejects.toThrow(/scope/)
 })
