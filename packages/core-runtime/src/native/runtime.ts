@@ -560,8 +560,17 @@ export class NativeAutonomyRuntime {
                 workflowId,
                 proposal: workflow.proposal,
                 previousAttemptId: previous.attemptId,
+                recoveryReason: plan.reason,
+                previousCandidate: before.candidate
+                  ? {
+                      cwd: before.candidate.cwd,
+                      baseSha: before.candidate.baseSha,
+                      headSha: before.candidate.headSha,
+                      files: before.candidate.files
+                    }
+                  : null,
                 instructions:
-                  "Recover the preserved scoped task. Edit a fresh candidate and call autocode_submit to record its scoped commit before workboard_complete. Fresh verification and independent review are required. Do not push, merge or deploy."
+                  "Recover the preserved scoped task. Inspect the recovery reason and previous committed candidate before editing the fresh worktree; preserve prior work and adapt only relevant changes to the current base. Edit a fresh candidate and call autocode_submit to record its scoped commit before workboard_complete. Fresh verification and independent review are required. Do not push, merge or deploy."
               })
             })
             workflow.implementationCardId = card.id

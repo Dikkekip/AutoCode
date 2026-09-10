@@ -480,6 +480,13 @@ describe("native quality investigations", () => {
     })
     expect(notes.committedDiff.content).toContain("+export const login = true")
     expect(notes.committedDiff.trust).toContain("Untrusted committed source")
+    expect(notes.reviewContract).toMatchObject({
+      stage: "design",
+      executionEvidence: "pending-independent-verification",
+      subsequentGates: ["commit-bound verification", "independent acceptance review"]
+    })
+    expect(notes.instructions).toContain("never claim a test ran")
+    expect(notes.instructions).toContain("design approval cannot satisfy or bypass those gates")
     const design = s.gateway.cards.find((card) => card.id === held.designCardId)
     design.status = "running"
     design.sessionKey = "candidate-design"
@@ -493,6 +500,21 @@ describe("native quality investigations", () => {
     )
     const approved = s.runtime.requireWorkflow(workflowId)
     expect(s.runtime.quality.designApproved(approved)).toBe(true)
+    expect(approved.lifecycle?.state).toBe("verification")
+    expect(approved.verification).toBeUndefined()
+    expect(approved.review).toBeUndefined()
+    await expect(
+      s.runtime.review(
+        "reviewer",
+        design.sessionKey,
+        workflowId!,
+        held.candidate!.headSha,
+        "approved",
+        "Design only",
+        assessment
+      )
+    ).rejects.toThrow()
+
     s.policy.quality!.highRiskPaths.push("src/security/**")
     expect(await s.runtime.quality.ensureDesign(workflowId, s.runtime.requireWorkflow(workflowId))).toBe(false)
     const stale = s.runtime.requireWorkflow(workflowId)
