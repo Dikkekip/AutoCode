@@ -8,6 +8,7 @@ import { readExecutionOwnership } from "@openclaw/os-adapters"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NATIVE_GATEWAY_CONTRACT_VERSION, type NativeGateway, nativeCards, nativeObject } from "./gateway.js"
 import { nativeModeAllows } from "./promotion-mode.js"
+import { loadNativeSkillText } from "./skill-bundle.js"
 import type { NativeEvidenceStore } from "./store.js"
 
 export function loadNativePolicy(path: string): NativeAutonomyPolicy {
@@ -61,8 +62,8 @@ export async function nativeDoctor(
   })
   if (policy.quality) {
     await check("prompt-skill", () => {
-      if (!readFileSync(policy.quality!.skillPath, "utf8").trim()) throw new Error("Prompt skill is empty")
-      return "Prompt skill readable"
+      const text = loadNativeSkillText(policy.quality!.skillPath)
+      return `Prompt skill and declared resources readable (${Buffer.byteLength(text)} bytes)`
     })
     await check("research-tool-authority", async () => {
       const response = await gateway.request("config.get", {})

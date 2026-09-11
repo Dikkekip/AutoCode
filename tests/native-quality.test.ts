@@ -210,6 +210,8 @@ describe("native quality investigations", () => {
     const notes = JSON.parse(c.notes)
     expect(notes.promptSkill).toContain("Prompt Engineering Expert")
     expect(notes.persona.ideationPrompt).toBe("Inspect missing source links")
+    expect(notes.responseStyle).toMatchObject({ skill: "caveman", level: "full" })
+    expect(notes.responseStyle.instructions.join(" ")).toContain("Preserve required structured output")
     expect(notes.skillHash).toMatch(/^[a-f0-9]{64}$/)
     expect(s.gateway.cards[1].parents).toEqual([c.id])
     expect((await s.runtime.discover()).reason).toMatch(/active/)
@@ -221,11 +223,13 @@ describe("native quality investigations", () => {
     const c = s.start()
     expect(c.card.notes.length).toBeLessThanOrEqual(4000)
     const { contextId } = JSON.parse(c.card.notes)
+    expect(JSON.parse(c.card.notes).responseStyle).toMatchObject({ skill: "caveman", level: "full" })
     expect(contextId).toMatch(/^[a-f0-9]{64}$/)
     await expect(s.runtime.readContext("other", c.session, contextId)).rejects.toThrow(/assigned/)
     await expect(s.runtime.readContext(c.agent, "spoof", contextId)).rejects.toThrow(/session/)
     const result = await s.runtime.readContext(c.agent, c.session, contextId)
     expect(JSON.parse(result.notes).promptSkill).toBe(skill)
+    expect(JSON.parse(result.notes).responseStyle.instructions.join(" ")).toContain("Respond terse like smart caveman")
     expect(JSON.parse(result.notes).persona.ideationPrompt).toBe("Inspect missing source links")
     const again = await s.runtime.createCard({
       boardId: s.policy.boardId,

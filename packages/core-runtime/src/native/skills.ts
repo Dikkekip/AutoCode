@@ -4,6 +4,7 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, sep } from "node:path"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeGovernanceDigest as digest, type NativeHumanAuthority, requireNativeHuman } from "./governance.js"
+import { loadNativeSkillText, NATIVE_SKILL_MAX_BYTES } from "./skill-bundle.js"
 import type { NativeEvidenceStore } from "./store.js"
 export const NATIVE_SKILL_CONTRACT_VERSION = 1
 export const nativeSkillPolicyDigest = (policy: NativeAutonomyPolicy) =>
@@ -22,6 +23,20 @@ export interface NativeSkillVersion {
   text: string
   contractVersion: 1
 }
+/** Review the configured snapshot without registering evidence or contacting a gateway. */
+export function inspectNativeSkill(policy: NativeAutonomyPolicy, includeText = false) {
+  if (!policy.quality) throw new Error("No investigation skill configured")
+  const text = loadNativeSkillText(policy.quality.skillPath)
+  return {
+    boardId: policy.boardId,
+    path: policy.quality.skillPath,
+    digest: digest(text),
+    policyDigest: nativeSkillPolicyDigest(policy),
+    contractVersion: NATIVE_SKILL_CONTRACT_VERSION,
+    bytes: Buffer.byteLength(text),
+    ...(includeText ? { text } : {})
+  }
+}
 export interface NativeSkillEvaluation {
   version: 1
   kind: "benchmark" | "injection"
@@ -39,7 +54,8 @@ export interface NativeSkillEvaluation {
   recordedAt: number
 }
 export function registerNativeSkill(store: NativeEvidenceStore, text: string): NativeSkillVersion {
-  if (!text.trim() || text.length > 512_000) throw new Error("Skill text outside bounded contract")
+  if (!text.trim() || Buffer.byteLength(text) > NATIVE_SKILL_MAX_BYTES)
+    throw new Error("Skill text outside bounded contract")
   const value: NativeSkillVersion = {
     version: 1,
     digest: digest(text),
@@ -90,7 +106,7 @@ export function resolveNativeSkill(
   path: string,
   policyDigest: string
 ): NativeSkillVersion {
-  const text = readFileSync(path, "utf8")
+  const text = loadNativeSkillText(path)
   const snapshot = registerNativeSkill(store, text)
   const active = store.get<{ digest: string; policyDigest: string; contractVersion: number }>("active-skill", boardId)
   if (!active) throw new Error("Skill requires human bootstrap of its exact immutable digest")

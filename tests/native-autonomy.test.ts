@@ -239,7 +239,7 @@ describe("native autonomy policy and creative provenance", () => {
       store.close()
     }
   })
-  it("retains evidence and caps repairs at two attempts", async () => {
+  it("retains repair deltas, rejects unchanged failures and caps changed candidates at two attempts", async () => {
     const p = policy(),
       gateway = new Gateway(),
       store = new NativeEvidenceStore(join(p.repository, "evidence.db"))
@@ -263,7 +263,16 @@ describe("native autonomy policy and creative provenance", () => {
       expect(store.list("attempt-evidence")).toHaveLength(1)
       expect(runtime.requireWorkflow("repair-workflow").candidate).toBeUndefined()
       workflow.candidate = original
+      await expect(runtime.requestRepair("repair-workflow", workflow, "test failed")).rejects.toThrow(/stalled/)
+      expect(gateway.cards).toHaveLength(1)
+      expect(store.list("attempt-evidence")).toHaveLength(1)
+      workflow.candidate = { ...original, headSha: "c".repeat(40) }
       await runtime.requestRepair("repair-workflow", workflow, "test failed")
+      const effect = store.list<any>("effect-intent").find((row) => row.value.input?.title.startsWith("Repair 2:"))
+      expect(JSON.parse(effect!.value.input.notes).repairPlan).toMatchObject({
+        repeatedFailure: true,
+        history: [{ headSha: original.headSha }]
+      })
       workflow.candidate = original
       await expect(runtime.requestRepair("repair-workflow", workflow, "test failed")).rejects.toThrow(/budget/)
       expect(gateway.cards).toHaveLength(2)

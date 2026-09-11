@@ -8,7 +8,7 @@ export function nativePolicyFromProfile(profile: ProjectProfile, repository: str
     version: 1,
     enabled: false,
     quality: {
-      skillPath: fileURLToPath(new URL("../../../../skills/prompt-engineering-expert/SKILL.md", import.meta.url))
+      skillPath: fileURLToPath(new URL("../../../../skills/native-coding/SKILL.md", import.meta.url))
     },
     boardId: profile.profileId,
     repository,

@@ -43,13 +43,16 @@ Execution policy covers JavaScript/Python verification, dependency preparation, 
 
 Only framework-integrated or profile-referenced guidance is bundled:
 
-- `prompt-engineering-expert`: the native quality workflow's configured investigation guidance.
+- `native-coding`: the default native investigation bundle, including focused investigation, context retrieval, evidence-based repair, durable handoffs, contract changes, and harness experiments. All declared resources participate in its reviewed digest.
+- `prompt-engineering-expert`: retained for existing policies that explicitly configure its single-file guidance.
 - `openclaw-autonomy-framework`: templates consumed by the dispatcher installer.
 - `error-recovery`, `reflect`, `tiered-memory`, `loop-budget`, `loop-triage`, `loop-verifier`, `minimal-fix`: installer-referenced guidance for existing dispatcher projects.
 - `codex-account-switcher`: the explicit compatibility transport and cached quota inspection helper.
 - `openclaw-workspace-bootstrap`: the profile-referenced workspace bootstrap template.
 
 Operator credentials, runtime state, and personal notes do not belong in these assets. Native provider authentication is owned by OpenClaw.
+
+See [upstream ideas](upstream-ideas.md) for the nine-repository analysis, applied patterns, source revisions, and controlled comparison.
 
 ## Validation
 

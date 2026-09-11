@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "mode": "controlled",
+  "benchmark": "native-context-selection-v1",
+  "datasetDigest": "b16eb67a7ab499607483816747e3400c14035358a68ceb1781183a85ea12224d",
+  "candidateArtifactSha256": "92aa2629198b0e7ad535e7a9b2845c8d90a010d44f271b328e03284c5aaad7b2",
+  "budgets": {
+    "maxFiles": 4,
+    "maxBytes": 2048
+  },
+  "baselinePassed": 2,
+  "candidatePassed": 5,
+  "regressions": [],
+  "results": [
+    {
+      "id": "dependency-and-test",
+      "baseline": {
+        "expectedFiles": 3,
+        "relevantFiles": 1,
+        "irrelevantFiles": 3,
+        "passed": false,
+        "usedBytes": 1999,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/a0.ts",
+          "src/a1.ts",
+          "src/a10.ts"
+        ]
+      },
+      "candidate": {
+        "expectedFiles": 3,
+        "relevantFiles": 3,
+        "irrelevantFiles": 1,
+        "passed": true,
+        "usedBytes": 580,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/z-dep.ts",
+          "src/z-entry.test.ts",
+          "src/a0.ts"
+        ]
+      }
+    },
+    {
+      "id": "two-hop-imports",
+      "baseline": {
+        "expectedFiles": 3,
+        "relevantFiles": 1,
+        "irrelevantFiles": 3,
+        "passed": false,
+        "usedBytes": 99,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/a0.ts",
+          "src/a1.ts",
+          "src/a10.ts"
+        ]
+      },
+      "candidate": {
+        "expectedFiles": 3,
+        "relevantFiles": 3,
+        "irrelevantFiles": 1,
+        "passed": true,
+        "usedBytes": 121,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/z-middle.ts",
+          "src/z-leaf.ts",
+          "src/a0.ts"
+        ]
+      }
+    },
+    {
+      "id": "separate-test-directory",
+      "baseline": {
+        "expectedFiles": 2,
+        "relevantFiles": 1,
+        "irrelevantFiles": 3,
+        "passed": false,
+        "usedBytes": 85,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/a0.ts",
+          "src/a1.ts",
+          "src/a10.ts"
+        ]
+      },
+      "candidate": {
+        "expectedFiles": 2,
+        "relevantFiles": 2,
+        "irrelevantFiles": 2,
+        "passed": true,
+        "usedBytes": 89,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/tests/z-entry.spec.ts",
+          "src/a0.ts",
+          "src/a1.ts"
+        ]
+      }
+    },
+    {
+      "id": "explicit-seeds",
+      "baseline": {
+        "expectedFiles": 2,
+        "relevantFiles": 2,
+        "irrelevantFiles": 2,
+        "passed": true,
+        "usedBytes": 79,
+        "selectedPaths": [
+          "src/z-one.ts",
+          "src/z-two.ts",
+          "src/a0.ts",
+          "src/a1.ts"
+        ]
+      },
+      "candidate": {
+        "expectedFiles": 2,
+        "relevantFiles": 2,
+        "irrelevantFiles": 2,
+        "passed": true,
+        "usedBytes": 79,
+        "selectedPaths": [
+          "src/z-one.ts",
+          "src/z-two.ts",
+          "src/a0.ts",
+          "src/a1.ts"
+        ]
+      }
+    },
+    {
+      "id": "out-of-scope-import",
+      "baseline": {
+        "expectedFiles": 1,
+        "relevantFiles": 1,
+        "irrelevantFiles": 3,
+        "passed": true,
+        "usedBytes": 84,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/a0.ts",
+          "src/a1.ts",
+          "src/a10.ts"
+        ]
+      },
+      "candidate": {
+        "expectedFiles": 1,
+        "relevantFiles": 1,
+        "irrelevantFiles": 3,
+        "passed": true,
+        "usedBytes": 84,
+        "selectedPaths": [
+          "src/z-entry.ts",
+          "src/a0.ts",
+          "src/a1.ts",
+          "src/a10.ts"
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic retrieval cases measure relevant excerpt availability, not code correctness or live model effectiveness",
+    "Baseline reproduces the previous alphabetical selection policy; this is not a provider benchmark or a skill promotion receipt",
+    "No wall-clock, token-cost, or 10x improvement claim follows from this report"
+  ]
+}

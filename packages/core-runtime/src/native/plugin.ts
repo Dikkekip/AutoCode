@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
 import type { NativeReviewEvidence } from "@openclaw/domain"
 import { authorizeNativeTool, resolveNativeToolRuntime } from "./broker.js"
@@ -6,6 +5,7 @@ import { loadNativePolicy, nativeDoctor } from "./doctor.js"
 import { NativeCliGateway } from "./gateway.js"
 import { assertNativeMode } from "./promotion-mode.js"
 import { NativeAutonomyRuntime } from "./runtime.js"
+import { loadNativeSkillText } from "./skill-bundle.js"
 import { bootstrapNativeSkill, nativeSkillPolicyDigest, registerNativeSkill } from "./skills.js"
 import { NativeEvidenceStore } from "./store.js"
 import { NativeWorkspaceGateway } from "./workspaces.js"
@@ -212,7 +212,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
         if (!operatorId || !client?.connect?.scopes?.includes("operator.admin"))
           throw new Error("Authenticated administrator context required")
         if (!r.policy.quality) throw new Error("No investigation skill configured")
-        const snapshot = registerNativeSkill(r.store, readFileSync(r.policy.quality.skillPath, "utf8"))
+        const snapshot = registerNativeSkill(r.store, loadNativeSkillText(r.policy.quality.skillPath))
         const policyDigest = nativeSkillPolicyDigest(r.policy)
         if (params.digest !== snapshot.digest || params.policyDigest !== policyDigest)
           throw new Error("Review the current exact skill and policy digests before bootstrap")

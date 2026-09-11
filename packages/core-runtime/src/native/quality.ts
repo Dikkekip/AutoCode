@@ -578,7 +578,6 @@ export class NativeQualityRuntime {
             maxRuntimeSeconds: this.policy.quality!.sessionSeconds,
             maxRetries: 1,
             workspace: { kind: "scratch" },
-            skills: ["prompt-engineering-expert"],
             notes: JSON.stringify({
               roundId,
               persona,
@@ -588,7 +587,7 @@ export class NativeQualityRuntime {
               recentOutcomes: this.feedback(entry.personaId),
               instructions: [
                 "Use autocode_inspect(roundId, personaId, path) to inspect committed repository files. Empty path lists owned files. When truncated, pass the returned nextOffset as offset to continue reading the same committed file. No shell, editing, deployment or release tools are available in this research role.",
-                "Run a short real investigation for your persona goals. Use the supplied prompt-engineering-expert skill to create at most two bounded implementation prompts for useful features or fixes.",
+                "Run a short real investigation for your persona goals. Use the supplied reviewed prompt skill and its bundled resources to create at most two bounded implementation prompts for useful features or fixes.",
                 "First write a short persona-specific investigation brief: questions, counterchecks, stopping criteria and expected evidence. Apply it, then include the brief with your implementationPrompt. Self-prompting must retain the fixed evidence, uncertainty and acceptance requirements.",
                 "The proposal goal must exactly copy one of persona.goals. Do not replace it with a newly phrased task goal; put that task-specific outcome in title and quality.expectedBenefit.",
                 "Submit via autocode_propose. Include personaId, goal, title, evidence [{path,observation}], allowedPaths, acceptance, alternatives, implementationPrompt, and quality {problem,userWorkflow,expectedBenefit,approach,nonGoals,risk,riskReasons,verification:[{criterion,method}]}. Alternatives must be non-empty strings. quality.risk must be routine or high, and riskReasons must be an array of strings. Every criterion needs a verification method. quality.hypothesis is required: {metric,unit,baseline,target,direction:increase|decrease,baselineEvidence:[inspected evidence paths],evidenceStrength:observed|reproduced|measured,confidence:0..1,uncertainty,effortHours,costCents,measurementPlan,alternatives:[{kind:no_op|change,description,rationale}]}. Include both no_op and change; quantify benefit without inventing measurements.",
