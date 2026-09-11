@@ -1,11 +1,12 @@
 /** Operator recovery is planned, revision-bound and never a second scheduler. */
-import { mkdtempSync, rmSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
 import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
-import { upgradeNativeLifecycle } from "../packages/domain/src/native-lifecycle.js"
+import { transitionNativeLifecycle, upgradeNativeLifecycle } from "../packages/domain/src/native-lifecycle.js"
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -213,13 +214,41 @@ it("carries the operator diagnosis and preserved commit into the fresh recovery 
     files: ["src/fix.ts"]
   }
   const s = setup(candidate as any)
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: s.runtime.policy.repository,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim()
+  git("init")
+  git("config", "user.name", "Fixture")
+  git("config", "user.email", "fixture@example.invalid")
+  mkdirSync(join(s.runtime.policy.repository, "src"))
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "before")
+  git("add", "src")
+  git("commit", "-m", "base")
+  candidate.baseSha = git("rev-parse", "HEAD")
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "after")
+  git("add", "src")
+  git("commit", "-m", "candidate")
+  candidate.headSha = git("rev-parse", "HEAD")
+  s.workflow.candidate = candidate as any
+  s.workflow.lifecycle = transitionNativeLifecycle(s.workflow.lifecycle!, "blocked", s.workflow)
+  s.store.put("workflow", "workflow", s.workflow)
   const reason = "Rebase preserved fix; previous verification failed because the baseline fixture was stale."
   const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
   await s.runtime.applyWorkflowRecovery(plan, "operator")
   const intent = s.store.get<any>("effect-intent", "card:recovery:workflow:attempt:1")
   const notes = JSON.parse(intent.input.notes)
   expect(notes.recoveryReason).toBe(reason)
-  expect(notes.previousCandidate).toEqual(candidate)
+  expect(notes.previousCandidate).toMatchObject({
+    baseSha: candidate.baseSha,
+    headSha: candidate.headSha,
+    files: candidate.files,
+    complete: true
+  })
+  expect(notes.previousCandidate.cwd).toBeUndefined()
+  expect(notes.previousCandidate.content).toContain("+after")
   expect(intent.input.workspace.sourceBranch).toBe("origin/main")
   expect(s.store.get<any>("workflow", "workflow").candidate).toBeUndefined()
   expect(s.store.list<any>("attempt-history")[0]!.value.candidate).toEqual(candidate)

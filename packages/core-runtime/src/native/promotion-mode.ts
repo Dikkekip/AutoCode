@@ -1,7 +1,12 @@
 // Mode authorization is policy, never a prompt convention or a task-count threshold.
 import { readFileSync } from "node:fs"
 import { isAbsolute } from "node:path"
-import { type NativeAutonomyPolicy, type NativePromotionMode, nativePolicyDigest } from "@openclaw/domain"
+import {
+  type NativeAutonomyPolicy,
+  type NativePromotionMode,
+  nativeCoderAgentIds,
+  nativePolicyDigest
+} from "@openclaw/domain"
 import { validateNativeCanaryReport } from "./canary-evidence.js"
 import { nativeContentDigest } from "./provenance.js"
 export type NativeModeAction =
@@ -65,7 +70,7 @@ export function assertNativePromotion(policy: NativeAutonomyPolicy): void {
   if (
     !approval ||
     [
-      policy.coderAgentId,
+      ...nativeCoderAgentIds(policy),
       policy.reviewerAgentId,
       policy.plannerAgentId,
       ...policy.personas.map((p) => p.investigationAgentId)

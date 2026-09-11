@@ -5,6 +5,7 @@ import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { NativeGateway } from "../packages/core-runtime/src/native/gateway.js"
 import type { Investigation } from "../packages/core-runtime/src/native/quality.js"
+import { createNativeOperatorRequest } from "../packages/core-runtime/src/native/requests.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import {
   bootstrapNativeSkill,
@@ -22,6 +23,10 @@ class Gateway implements NativeGateway {
   cards: any[] = []
   calls: any[] = []
   failCreateAt = -1
+  async abortOwnedInvestigation(input: { sessionKey: string }) {
+    this.calls.push({ method: "sessions.abort", params: { key: input.sessionKey } })
+    return { status: "terminal" as const }
+  }
   async request<T = any>(method: string, params: any): Promise<T> {
     this.calls.push({ method, params })
     if (method === "workboard.cards.list") return { cards: this.cards } as T
@@ -286,6 +291,8 @@ describe("native quality investigations", () => {
     const investigation = s.store.get<Investigation>("investigation", `${c.roundId}:ux`)!
     s.store.put("investigation", `${c.roundId}:ux`, { ...investigation, state })
     c.card.startedAt = Date.now() - 301_000
+    c.card.runId = "owned-run"
+    c.card.updatedAt = Date.now()
     s.policy.enabled = false
     await s.runtime.quality.enforceBudgets()
     expect(s.gateway.calls.some((call) => call.method === "sessions.abort" && call.params.key === c.session)).toBe(true)
@@ -370,6 +377,12 @@ describe("native quality investigations", () => {
   })
   it.each([
     ["ordinary", "export const navigation = true\n", true],
+    ["query reference", "const detailKey = reportsQueryKeys.bundle({ bundleId });\n", true],
+    [
+      "query with credential",
+      'const detailKey = reportsQueryKeys.bundle({ bundleId }); API_KEY="synthetic-review-secret"\n',
+      false
+    ],
     ["oversized", `export const navigation = "${"x".repeat(65000)}"\n`, false],
     ["redacted", 'export const token = "synthetic-review-secret"\n', false],
     ["binary", "export const navigation = true\0\n", false]
@@ -378,6 +391,11 @@ describe("native quality investigations", () => {
     const c = await prepare(s)
     const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
     const w = s.runtime.requireWorkflow(workflowId)
+    if (_name === "query reference") {
+      writeFileSync(join(s.root, "src/view.ts"), "const detailKey = reportsQueryKeys.previous({ bundleId });\n")
+      s.git("add", "src/view.ts")
+      s.git("commit", "-m", "previous query reference")
+    }
     const baseSha = s.git("rev-parse", "HEAD")
     writeFileSync(join(s.root, "src/view.ts"), content as string)
     s.git("add", "src/view.ts")
@@ -387,6 +405,10 @@ describe("native quality investigations", () => {
     writeFileSync(join(s.root, "src/view.ts"), "UNCOMMITTED PRIVATE CONTENT")
     const evidence = await (s.runtime.quality as any).designEvidence(w)
     expect(evidence.complete).toBe(complete)
+    if (_name === "query reference") {
+      expect(evidence.content).toContain("-const detailKey = reportsQueryKeys.previous({ bundleId });")
+      expect(evidence.content).toContain("+const detailKey = reportsQueryKeys.bundle({ bundleId });")
+    }
     expect(evidence.content).not.toContain("UNCOMMITTED PRIVATE CONTENT")
     expect(evidence.content).not.toContain("synthetic-review-secret")
     expect(Buffer.byteLength(evidence.content)).toBeLessThanOrEqual(64000)
@@ -765,4 +787,136 @@ it("defers discovery when mutable skill bytes diverge from the human-approved sn
     reason: expect.stringMatching(/reviewed bootstrap or promotion/)
   })
   expect(s.gateway.cards).toHaveLength(0)
+})
+
+function operatorBrief(s: ReturnType<typeof setup>) {
+  return {
+    idempotencyKey: "reported-navigation",
+    personaId: "ux",
+    title: "Reported missing navigation",
+    brief: "Investigate the reported missing source navigation. Preserve independent validation.",
+    expectedBaseSha: s.git("rev-parse", "HEAD"),
+    evidence: [{ path: "src/view.ts", observation: "Navigation is false" }]
+  }
+}
+it("queues immutable source-bound operator requests while paused and rejects mismatches and scope escapes", async () => {
+  const s = setup()
+  s.runtime.control.change(true)
+  const brief = operatorBrief(s)
+  const request = await createNativeOperatorRequest(s.runtime, brief, "authenticated operator.admin")
+  expect(request.state).toBe("queued")
+  expect(request.brief.evidence[0]!.blobSha).toBe(s.git("rev-parse", "HEAD:src/view.ts"))
+  expect(await createNativeOperatorRequest(s.runtime, brief, "different-verified-operator")).toEqual(request)
+  expect(s.store.get<any>("operator-request", request.id).operator).toBe("authenticated operator.admin")
+  await expect(createNativeOperatorRequest(s.runtime, { ...brief, title: "different" }, "operator")).rejects.toThrow(
+    /mismatch/
+  )
+  await expect(
+    createNativeOperatorRequest(
+      s.runtime,
+      { ...brief, idempotencyKey: "base", expectedBaseSha: "a".repeat(40) },
+      "operator"
+    )
+  ).rejects.toThrow(/base changed/)
+  for (const path of ["../src/view.ts", "/src/view.ts", "src/../secret", "outside.ts", "src/missing.ts"])
+    await expect(
+      createNativeOperatorRequest(
+        s.runtime,
+        { ...brief, idempotencyKey: path, evidence: [{ path, observation: "x" }] },
+        "operator"
+      )
+    ).rejects.toThrow(/scope|tracked/)
+  await expect(createNativeOperatorRequest(s.runtime, { ...brief, agentId: "coder" }, "operator")).rejects.toThrow(
+    /Unknown/
+  )
+  await expect(s.runtime.discover()).rejects.toThrow(/paused/)
+  expect(s.gateway.cards).toHaveLength(0)
+  expect(s.store.list("operator-request")).toHaveLength(1)
+})
+it("runs directed intake through actual inspection, proposal and planner admission after crash-safe card creation", async () => {
+  const s = setup()
+  const request = await createNativeOperatorRequest(s.runtime, operatorBrief(s), "authenticated operator.admin")
+  s.gateway.failCreateAt = 1
+  await expect(s.runtime.discover()).rejects.toThrow(/connection lost/)
+  expect(s.store.get<any>("operator-request", request.id).state).toBe("building")
+  await s.runtime.discover()
+  expect(s.gateway.cards).toHaveLength(2)
+  expect(s.store.list("investigation")).toHaveLength(1)
+  expect(s.store.get<any>("operator-request", request.id).state).toBe("dispatched")
+  s.store.put("operator-request", request.id, { ...request, state: "building" })
+  expect((await s.runtime.discover()).reason).toMatch(/round still active/)
+  expect(s.store.get<any>("operator-request", request.id).state).toBe("dispatched")
+  expect(s.gateway.cards).toHaveLength(2)
+  const notes = JSON.parse(s.gateway.cards[0].notes)
+  expect(notes.operatorRequest).toMatchObject({
+    requestId: request.id,
+    untrustedContent: true,
+    expectedBaseSha: request.brief.expectedBaseSha
+  })
+  expect(s.gateway.cards[1].agentId).toBe("planner")
+  expect(s.gateway.cards[1].parents).toEqual([s.gateway.cards[0].id])
+  await expect(
+    s.runtime.quality.propose("research-ux", "invented-session", request.roundId, proposal())
+  ).rejects.toThrow(/session|Session/)
+  const ctx = s.start()
+  await expect(s.runtime.quality.propose(ctx.agent, ctx.session, ctx.roundId, proposal())).rejects.toThrow(/inspected/)
+  await s.runtime.quality.inspect(ctx.agent, ctx.session, ctx.roundId, "ux", "src/view.ts")
+  const result = await s.runtime.quality.propose(ctx.agent, ctx.session, ctx.roundId, proposal())
+  await s.runtime.quality.finish(ctx.agent, ctx.session, ctx.roundId, "ux", "completed", "Confirmed source gap")
+  ctx.card.status = "done"
+  const admitted = await s.runtime.admit(
+    "planner",
+    result.proposalId,
+    "Evidence supports a scoped navigation improvement"
+  )
+  const explanation = await s.runtime.explainWorkflow(admitted.workflowId)
+  expect(explanation.acceptance).toEqual(proposal().acceptance)
+  expect(s.store.get<any>("workflow", admitted.workflowId).candidate).toBeUndefined()
+})
+it("defers a stale queued request without consuming it as an investigation or blocking fresh intake", async () => {
+  const s = setup()
+  const request = await createNativeOperatorRequest(s.runtime, operatorBrief(s), "operator")
+  writeFileSync(join(s.root, "src/view.ts"), "export const navigation = true\n")
+  s.git("add", "src/view.ts")
+  s.git("commit", "-m", "new base")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  expect((await s.runtime.discover()).reason).toMatch(/base changed/)
+  expect(s.store.get<any>("operator-request", request.id).state).toBe("deferred")
+  expect(s.gateway.cards).toHaveLength(0)
+  await createNativeOperatorRequest(s.runtime, { ...operatorBrief(s), idempotencyKey: "fresh" }, "operator")
+  expect((await s.runtime.discover()).created).toHaveLength(2)
+})
+it("retains queued operator work behind an active research round", async () => {
+  const s = setup()
+  await s.runtime.discover()
+  const request = await createNativeOperatorRequest(s.runtime, operatorBrief(s), "operator")
+  expect((await s.runtime.discover()).reason).toMatch(/round still active/)
+  expect(s.store.get<any>("operator-request", request.id).state).toBe("queued")
+})
+
+it("resumes a building operator round against its original source after the remote base changes", async () => {
+  const s = setup()
+  const request = await createNativeOperatorRequest(s.runtime, operatorBrief(s), "verified-device")
+  // Simulate process loss after the round journal but before investigation records/cards.
+  s.store.put("operator-request", request.id, { ...request, state: "building" })
+  s.store.put("round", request.roundId, {
+    personas: ["ux"],
+    cards: [],
+    phase: "building",
+    startedAt: Date.now(),
+    qualityVersion: 1
+  })
+  writeFileSync(join(s.root, "src/view.ts"), "export const navigation = true\n")
+  s.git("add", "src/view.ts")
+  s.git("commit", "-m", "changed after intake")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  expect((await s.runtime.discover()).created).toHaveLength(2)
+  const entry = s.store.get<Investigation>("investigation", `${request.roundId}:ux`)!
+  expect(entry.revision).toBe(request.brief.expectedBaseSha)
+  const ctx = s.start()
+  const inspected = await s.runtime.quality.inspect(ctx.agent, ctx.session, ctx.roundId, "ux", "src/view.ts")
+  expect(JSON.stringify(inspected)).toContain("navigation = false")
+  const notes = JSON.parse(s.gateway.cards[0].notes)
+  expect(notes.revision).toBe(request.brief.expectedBaseSha)
+  expect(notes.operatorRequest.evidence[0].blobSha).toBe(request.brief.evidence[0]!.blobSha)
 })

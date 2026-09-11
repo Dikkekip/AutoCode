@@ -233,3 +233,100 @@ it("binds skill bootstrap to an authenticated administrator and exact reviewed d
   expect((await invoke(client))[0]).toBe(true)
   expect((await invoke(client))[0]).toBe(false)
 })
+
+it("protects skill evaluation and promotion with paused exact-policy operator authority", async () => {
+  const s = setup()
+  await s.service.start()
+  const { loadNativePolicy } = await import("../packages/core-runtime/src/native/doctor.js")
+  const { nativeSkillPolicyDigest } = await import("../packages/core-runtime/src/native/skills.js")
+  const policyDigest = nativeSkillPolicyDigest(loadNativePolicy(join(s.root, "policy.json")))
+  const client = { connect: { client: { id: "operator-cli" }, scopes: ["operator.admin"] } }
+  const invoke = async (method: string, identity: unknown = client, overrides = {}) => {
+    let response: any
+    await s.methods.get(method)({
+      params: { boardId: "app", policyDigest, reason: "Reviewed protected evaluation", ...overrides },
+      client: identity,
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    return response
+  }
+  for (const method of ["autocode.skill.evaluate", "autocode.skill.promote"]) {
+    expect((await invoke(method))[2].message).toMatch(/Pause execution/)
+  }
+  await s.call("autocode.pause")
+  for (const method of ["autocode.skill.evaluate", "autocode.skill.promote"]) {
+    expect((await invoke(method, null))[2].message).toMatch(/administrator/)
+    expect(
+      (await invoke(method, { connect: { client: { id: "operator-cli" }, scopes: ["operator.read"] } }))[2].message
+    ).toMatch(/administrator/)
+    expect((await invoke(method, client, { policyDigest: "stale" }))[2].message).toMatch(/exact skill policy/)
+  }
+  expect(
+    (await invoke("autocode.skill.evaluate", client, { evaluation: { policyDigest: "stale" } }))[2].message
+  ).toMatch(/Evaluation policy/)
+  const denied = await invoke("autocode.skill.promote", client, { candidateDigest: "missing", evaluationIds: [] })
+  expect(denied[0]).toBe(false)
+  expect(denied[2].message).toMatch(/baseline\/candidate missing/)
+})
+
+it("rejects operator request intake without explicit admin connection scope", async () => {
+  const s = setup()
+  await s.service.start()
+  for (const client of [undefined, { connect: { scopes: ["operator.read"] } }]) {
+    let response: any
+    await s.methods.get("autocode.requests.create")({
+      params: { boardId: "app", request: {} },
+      client,
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    expect(response[0]).toBe(false)
+    expect(response[2].message).toMatch(/admin scope/)
+  }
+  for (const identity of [{}, { client: { id: "" } }, { device: { id: " " } }]) {
+    let rejected: any
+    await s.methods.get("autocode.requests.create")({
+      params: { boardId: "app", request: {} },
+      client: { connect: { ...identity, scopes: ["operator.admin"] } },
+      respond: (...args: any[]) => {
+        rejected = args
+      }
+    })
+    expect(rejected[0]).toBe(false)
+    expect(rejected[2].message).toMatch(/identity required/)
+  }
+  let authorized: any
+  await s.methods.get("autocode.requests.create")({
+    params: { boardId: "app", request: {} },
+    client: { connect: { client: { id: "operator-cli" }, scopes: ["operator.admin"] } },
+    respond: (...args: any[]) => {
+      authorized = args
+    }
+  })
+  expect(authorized[2].message).toMatch(/quality investigations/)
+})
+
+it("passes verified device identity with client identity fallback to request auditing", async () => {
+  const s = setup()
+  await s.service.start()
+  const intake = await import("../packages/core-runtime/src/native/requests.js")
+  const create = vi.spyOn(intake, "createNativeOperatorRequest").mockResolvedValue({ id: "request" } as any)
+  for (const [identity, expected] of [
+    [{ device: { id: "verified-device" }, client: { id: "operator-cli" } }, "verified-device"],
+    [{ client: { id: "operator-cli" } }, "operator-cli"]
+  ] as const) {
+    let response: any
+    await s.methods.get("autocode.requests.create")({
+      params: { boardId: "app", request: { title: "source brief" } },
+      client: { connect: { ...identity, scopes: ["operator.admin"] } },
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    expect(response[0]).toBe(true)
+    expect(create).toHaveBeenLastCalledWith(expect.any(NativeAutonomyRuntime), { title: "source brief" }, expected)
+  }
+})

@@ -50,8 +50,9 @@ Review the generated JSON:
 | personas | Goals, success observations, owned paths, weights, and custom ideationPrompt briefs. |
 | quality.skillPath | A readable absolute path to prompt-engineering-expert/SKILL.md. |
 | verification | Host-run commands covering permitted changes. Replace the sample pnpm test when necessary. |
-| plannerAgentId, coderAgentId, reviewerAgentId | Registered roles; the reviewer must differ from the coder. |
-| workerConcurrency | Keep one during the pilot. |
+| plannerAgentId, coderAgentId, reviewerAgentId | Registered roles; the reviewer must differ from every coder. |
+| coderAgentIds | Optional pool of up to eight distinct coder IDs, including coderAgentId; each must be independent of planner, reviewer and research roles. Omit for the existing single-coder behavior. |
+| workerConcurrency | Integer from one to eight; keep one during the pilot. Increasing this alone does not create coder identities. |
 | deployment | Deployment and application-workflow verification commands; initially null. |
 
 For an existing dispatcher project, use its .openclaw/profile.json as input. Conversion preserves persona instructions and lane rules but does not migrate task state. Policies without a quality object retain the earlier native behavior.

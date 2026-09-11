@@ -135,3 +135,103 @@ it.each([
   if (status !== "running") expect(observed.lifecycle.state).toBe("blocked")
   expect(observed.candidate).toBeUndefined()
 })
+
+it("dispatches from a second connection while verification owns its workflow without advancing gates or cursor", async () => {
+  const s = fixture()
+  s.seed("a")
+  const request = vi.spyOn(s.gateway, "request")
+  let resume!: () => void
+  const gate = new Promise<void>((done) => {
+    resume = done
+  })
+  const firstStep = vi.spyOn(s.runtime, "advanceWorkflowStep").mockImplementation(async () => {
+    await gate
+    return 1
+  })
+  const duplicateStep = vi.spyOn(s.second, "advanceWorkflowStep")
+  const first = s.runtime.reconcile()
+  try {
+    await vi.waitFor(() => expect(firstStep).toHaveBeenCalledTimes(1))
+    const cursor = s.store.get("reconcile-cursor", "board")
+    request.mockClear()
+    expect(await s.second.reconcile({ dispatchOnly: true })).toEqual({ advanced: 0 })
+    expect(request).toHaveBeenCalledWith("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+    expect(duplicateStep).not.toHaveBeenCalled()
+    expect(s.other.acquire("workflow:a", 120_000)).toBeNull()
+    expect(s.store.get("reconcile-cursor", "board")).toEqual(cursor)
+  } finally {
+    resume()
+    await first
+  }
+})
+
+it("keeps dispatch-only reconciliation paused and never advances candidate gates", async () => {
+  const s = fixture()
+  s.seed("a")
+  s.runtime.control.change(true)
+  const request = vi.spyOn(s.gateway, "request")
+  const advance = vi.spyOn(s.runtime, "advanceWorkflowStep")
+  expect(await s.runtime.reconcile({ dispatchOnly: true })).toEqual({ advanced: 0, paused: true })
+  expect(request).not.toHaveBeenCalledWith("workboard.cards.dispatchWithOptions", expect.anything())
+  expect(advance).not.toHaveBeenCalled()
+  expect(s.store.get("reconcile-cursor", "board")).toBeNull()
+})
+
+it.each([
+  false,
+  true
+])("reports native dispatch starts and capacity deferrals without advancing workflows: %s", async (deferred) => {
+  const s = fixture()
+  s.gateway.request = (async (method: string) =>
+    method === "workboard.cards.dispatchWithOptions"
+      ? {
+          started: [{ privatePath: "/host/private" }],
+          startedCardIds: ["research"],
+          deferred: deferred ? [{ cardId: "coder-card", reason: "worktree-capacity", message: "/host/private" }] : []
+        }
+      : { cards: [] }) as any
+  expect(await s.runtime.reconcile({ dispatchOnly: true })).toEqual({
+    advanced: 0,
+    dispatch: {
+      startedCount: 1,
+      startedCardIds: ["research"],
+      deferredCount: deferred ? 1 : 0,
+      deferred: deferred ? [{ cardId: "coder-card", reason: "worktree-capacity" }] : []
+    }
+  })
+})
+it("never exposes unrecognized dispatch diagnostics or unsafe identifiers", async () => {
+  const s = fixture()
+  s.gateway.request = (async (method: string) =>
+    method === "workboard.cards.dispatchWithOptions"
+      ? {
+          started: [{}],
+          startedCardIds: ["/host/private"],
+          deferred: [
+            { cardId: "valid", reason: "secret diagnostic" },
+            { cardId: "/host/private", reason: "worktree-capacity" },
+            null
+          ]
+        }
+      : { cards: [] }) as any
+  expect(await s.runtime.reconcile({ dispatchOnly: true })).toEqual({
+    advanced: 0,
+    dispatch: {
+      startedCount: 1,
+      startedCardIds: [],
+      deferredCount: 0,
+      deferred: []
+    }
+  })
+})
+it("does not dispatch or invent observability while the decision lease is held", async () => {
+  const s = fixture(),
+    lease = s.other.acquire("reconcile", 120000)!
+  const request = vi.spyOn(s.gateway, "request")
+  try {
+    expect(await s.runtime.reconcile({ dispatchOnly: true })).toEqual({ advanced: 0 })
+    expect(request).not.toHaveBeenCalled()
+  } finally {
+    s.other.release(lease)
+  }
+})
