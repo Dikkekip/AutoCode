@@ -150,8 +150,8 @@ export async function commitNativeCandidate(
   const cwd = await assertCandidateRepository(policy, worktree)
   const files = await candidateChanges(cwd)
   if (!files.length) return undefined
-  for (const file of files) {
-    if (
+  const rejected = files.filter(
+    (file) =>
       !allowedPaths.some((root) => nativePathAllowed(file, root)) ||
       runtimeNotes.has(file) ||
       file
@@ -159,8 +159,17 @@ export async function commitNativeCandidate(
         .some((part) =>
           /^(\.git.*|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*(?:credentials|secrets).*|.*\.pem)$/i.test(part)
         )
+  )
+  if (rejected.length) {
+    const examples = rejected.slice(0, 10).map((file) => redactLogText(file).slice(0, 200))
+    throw new Error(
+      `Candidate contains uncommitted files outside admitted code scope (${rejected.length}): ${JSON.stringify(examples)}. ` +
+        "Inspect git status for the complete list. Moving or removing tracked files creates deletions; " +
+        "restore only generated files changed by your own tooling to their committed state. " +
+        "Preserve unrelated work and do not widen the admitted scope."
     )
-      throw new Error("Candidate contains uncommitted files outside admitted code scope")
+  }
+  for (const file of files) {
     const path = resolve(cwd, file)
     const stat = lstatSync(path, { throwIfNoEntry: false })
     if (stat) {
