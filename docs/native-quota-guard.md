@@ -22,3 +22,20 @@ The guard requires matching email and backend account ID, explicit backend denia
 A read after the reset must explicitly allow ordinary usage before the guard reports `continue`. Only `reset` or `alreadyRedeemed` proves redemption. Definitive `nothingToReset` and `noCredit` outcomes remain recorded and require operator review on later denial; they never report a successful reset or allocate another key. An exhausted window after a proven redemption reports `exhausted`. Native Automation operators may use that structured outcome to pause their board with its supported control API, taking care not to resume an unrelated operator pause.
 
 Output is one JSON result with `action` (`continue`, `blocked`, or `exhausted`) and sanitized usage details when available. Transport/configuration failures produce `action: error` on stderr and exit 1. No passwords or tokens are persisted. Malformed state fails closed; an absent file initializes the first authorized attempt; process interruption before a successful first state write has no remote side effect. Run `node --test scripts/native-quota-reset.test.mjs` for the isolated reset-state tests.
+
+## Optional native board monitor
+
+`scripts/native-quota-monitor.mjs` runs the guard and saves a private, atomic status snapshot. It calls the supported `autocode.pause` API only when the guard reports `exhausted` after a proven `reset` or `alreadyRedeemed` outcome. It never resumes a board, retries an uncertain reset independently, or changes scheduling. A previously recorded pause remains intact. An unconfirmed pause fails without replacing the previous snapshot.
+
+Keep a separate operator-owned monitor configuration outside Git, with mode 0600:
+
+```json
+{
+  "guardConfigPath": "/var/lib/operator/quota-guard.json",
+  "snapshotPath": "/var/lib/operator/quota-status.json",
+  "openclawPath": "/opt/openclaw/bin/openclaw",
+  "boardId": "example-board"
+}
+```
+
+Run `node scripts/native-quota-monitor.mjs --config /absolute/path/monitor.json`. Schedule a single monitor invocation at a time; the reset guard serializes redemption, but the wrapper does not serialize board control or snapshot updates. Keep the snapshot in a private operator directory and preserve it across runs. Do not commit either configuration, account bindings, reset identifiers, or status snapshots. Publishing this wrapper does not replace an already deployed operator script. Validate with `node --test scripts/native-quota-monitor.test.mjs scripts/native-quota-reset.test.mjs`.
