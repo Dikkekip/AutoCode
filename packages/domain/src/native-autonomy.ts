@@ -62,8 +62,11 @@ export interface NativeAutonomyPolicy {
   baseBranch: string
   plannerAgentId: string
   coderAgentId: string
+  /** Optional reviewed pool, including coderAgentId. Each coder retains an isolated workspace. */
+  coderAgentIds?: string[]
   reviewerAgentId: string
   workerConcurrency: number
+  verificationConcurrency?: number
   personasPerRound: number
   maxTasksPerRound: number
   dedupeWindowHours: number
@@ -166,6 +169,23 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
   }
   const coderAgentId = text(r.coderAgentId, "coderAgentId")
   const reviewerAgentId = text(r.reviewerAgentId, "reviewerAgentId")
+  const coderAgentIds = r.coderAgentIds === undefined ? undefined : strings(r.coderAgentIds, "coderAgentIds")
+  if (
+    coderAgentIds &&
+    (coderAgentIds.length > 8 ||
+      new Set(coderAgentIds).size !== coderAgentIds.length ||
+      !coderAgentIds.includes(coderAgentId))
+  )
+    throw new Error("Coder pool must contain the primary coder and at most 8 distinct identities")
+  if (
+    coderAgentIds?.some(
+      (id) =>
+        id === reviewerAgentId ||
+        id === r.plannerAgentId ||
+        personas.some((p) => id === (p.investigationAgentId ?? p.personaId))
+    )
+  )
+    throw new Error("Coder pool requires independent planner, reviewer and research identities")
   if (coderAgentId === reviewerAgentId) throw new Error("Reviewer must be independent of coder")
   const verification = (Array.isArray(r.verification) ? r.verification : []).map(command)
   if (!verification.length) throw new Error("Native autonomy requires verification commands")
@@ -214,8 +234,12 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     baseBranch: text(r.baseBranch, "baseBranch"),
     plannerAgentId: text(r.plannerAgentId, "plannerAgentId"),
     coderAgentId,
+    ...(coderAgentIds ? { coderAgentIds } : {}),
     reviewerAgentId,
-    workerConcurrency: integer(r.workerConcurrency, 1, 2),
+    workerConcurrency: integer(r.workerConcurrency, 1, 8),
+    ...(r.verificationConcurrency === undefined
+      ? {}
+      : { verificationConcurrency: integer(r.verificationConcurrency, 0, 8) }),
     personasPerRound: integer(r.personasPerRound, 3, 10),
     maxTasksPerRound: integer(r.maxTasksPerRound, 6, 6),
     dedupeWindowHours: integer(r.dedupeWindowHours, 72, 720),
@@ -562,4 +586,9 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
   return r.backend === "docker"
     ? { backend: "docker", image, inputFiles, ...reviewed }
     : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
+}
+
+/** Retain the legacy single-coder policy when no pool was configured. */
+export function nativeCoderAgentIds(policy: NativeAutonomyPolicy): readonly string[] {
+  return policy.coderAgentIds ?? [policy.coderAgentId]
 }

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto"
 import { lstatSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, sep } from "node:path"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
+import { nativeCoderAgentIds } from "@openclaw/domain"
 import { nativeGovernanceDigest as digest, type NativeHumanAuthority, requireNativeHuman } from "./governance.js"
 import type { NativeEvidenceStore } from "./store.js"
 export const NATIVE_SKILL_CONTRACT_VERSION = 1
@@ -13,7 +14,7 @@ export const nativeSkillPolicyDigest = (policy: NativeAutonomyPolicy) =>
     verification: policy.verification,
     verificationAuthority: policy.verificationAuthority,
     repositoryKind: policy.repositoryKind,
-    roles: [policy.plannerAgentId, policy.coderAgentId, policy.reviewerAgentId]
+    roles: [policy.plannerAgentId, ...nativeCoderAgentIds(policy), policy.reviewerAgentId]
   })
 const artifactDigest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
 export interface NativeSkillVersion {

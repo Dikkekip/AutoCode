@@ -131,6 +131,80 @@ function legacy(root: string) {
   return path
 }
 describe("native autonomy policy and creative provenance", () => {
+  it("omits an unset verification ceiling and validates explicit independent limits", () => {
+    const legacy = policy()
+    expect(Object.hasOwn(legacy, "verificationConcurrency")).toBe(false)
+    expect(JSON.stringify(validateNativeAutonomyPolicy({ ...legacy, verificationConcurrency: undefined }))).toBe(
+      JSON.stringify(legacy)
+    )
+    for (const limit of [1, 8])
+      expect(validateNativeAutonomyPolicy({ ...legacy, verificationConcurrency: limit }).verificationConcurrency).toBe(
+        limit
+      )
+    for (const limit of [null, 0, 9, 1.5, "1", true, NaN, Infinity])
+      expect(() => validateNativeAutonomyPolicy({ ...legacy, verificationConcurrency: limit })).toThrow(/integer/)
+  })
+
+  it("validates a bounded independent coder pool and retains legacy defaults", () => {
+    const p = policy()
+    expect(p.coderAgentIds).toBeUndefined()
+    expect(
+      validateNativeAutonomyPolicy({ ...p, coderAgentIds: ["coder", "coder-2", "coder-3"], workerConcurrency: 3 })
+        .workerConcurrency
+    ).toBe(3)
+    for (const coderAgentIds of [
+      ["coder-2"],
+      ["coder", "coder"],
+      ["coder", "reviewer"],
+      ["coder", "planner"],
+      ["coder", "legal"]
+    ])
+      expect(() => validateNativeAutonomyPolicy({ ...p, coderAgentIds })).toThrow(/pool/)
+    expect(() => validateNativeAutonomyPolicy({ ...p, workerConcurrency: 9 })).toThrow(/between/)
+  })
+  it("assigns distinct pooled coders to disjoint workflows and rejects another pool member's submission", async () => {
+    const p = policy()
+    p.coderAgentIds = ["coder", "coder-2", "coder-3"]
+    p.workerConcurrency = 3
+    p.verificationConcurrency = 1
+    const gateway = new Gateway(),
+      store = new NativeEvidenceStore(join(p.repository, "pool.db"))
+    try {
+      const runtime = new NativeAutonomyRuntime(p, gateway, store)
+      await runtime.discover()
+      const round = store.list("round")[0]!
+      gateway.cards.forEach((card) => {
+        card.status = "done"
+      })
+      for (let i = 0; i < 20; i++)
+        gateway.cards.push({ id: `old-${i}`, title: "Historical attempt", agentId: "coder", status: "blocked" })
+      const assigned: string[] = []
+      for (let i = 0; i < 3; i++) {
+        mkdirSync(join(p.repository, "src", String(i)), { recursive: true })
+        const personaId = ["legal", "design", "backend"][i]!
+        const { proposalId } = runtime.propose(personaId, round.id, {
+          ...proposal(),
+          personaId,
+          goal: `${personaId} outcome`,
+          title: `Fix navigation ${i}`,
+          allowedPaths: [`src/${i}`]
+        })
+        const { workflowId } = await runtime.admit("planner", proposalId, "Independent evidence-backed scope")
+        const workflow = runtime.requireWorkflow(workflowId)
+        const card = gateway.cards.find((c) => c.id === workflow.implementationCardId)!
+        assigned.push(card.agentId!)
+        card.status = "running"
+        card.sessionKey = `pool-session-${i}`
+        await expect(
+          runtime.submit(p.coderAgentIds[(i + 1) % 3]!, card.sessionKey, workflowId, p.repository)
+        ).rejects.toThrow(/assigned coder/)
+      }
+      expect(assigned).toEqual(p.coderAgentIds)
+    } finally {
+      store.close()
+    }
+  })
+
   it("requires independent review, verification, bounded paths and explicit goals", () => {
     const p = policy()
     expect(() => validateNativeAutonomyPolicy({ ...p, reviewerAgentId: p.coderAgentId })).toThrow(/independent/)

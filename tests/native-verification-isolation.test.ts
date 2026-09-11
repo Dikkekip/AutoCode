@@ -154,7 +154,7 @@ integration("Kernel verification isolation", () => {
       else process.env.CI = oldCI
     }
   })
-  it("enforces cancellation, timeout and output bounds", async () => {
+  it("cancels the verifier and its surviving children", async () => {
     const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     const controller = new AbortController()
     const running = executeIsolated(["/bin/sh", "-c", "(sleep 1; echo survived > /work/survived) & wait"], {
@@ -165,9 +165,15 @@ integration("Kernel verification isolation", () => {
     await expect(running).rejects.toMatchObject({ outcome: "cancelled" })
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(existsSync(join(options.workspace, "survived"))).toBe(false)
+  })
+  it("enforces the command timeout", async () => {
+    const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     await expect(executeIsolated(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })).rejects.toMatchObject({
       outcome: "timeout"
     })
+  })
+  it("enforces the command output bound", async () => {
+    const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     await expect(
       executeIsolated(["/bin/sh", "-c", "yes flood"], { ...options, maxBufferBytes: 1024 })
     ).rejects.toMatchObject({ outcome: "output_limit" })

@@ -115,3 +115,13 @@ it("does not call a paused legacy repository ready before execution ownership tr
   const report = await nativeDoctor({ ...policy, repository }, gateway, { platform: "darwin" })
   expect(report.checks.find((check) => check.name === "execution-owner")?.ok).toBe(false)
 })
+
+it("requires every pooled coder to retain confined coding authority", () => {
+  const pooled = { ...policy, coderAgentIds: ["coder", "coder-2"] }
+  const config = roles()
+  expect(() => validateNativeRoleAuthority(pooled, config)).toThrow(/coder-2/)
+  config.agents.entries["coder-2"] = structuredClone(config.agents.entries.coder!)
+  expect(() => validateNativeRoleAuthority(pooled, config)).not.toThrow()
+  config.agents.entries["coder-2"]!.tools.exec.host = "gateway"
+  expect(() => validateNativeRoleAuthority(pooled, config)).toThrow(/exec.host sandbox/)
+})
