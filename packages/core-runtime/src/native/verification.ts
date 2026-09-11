@@ -43,6 +43,7 @@ import {
 } from "@openclaw/os-adapters"
 
 import { nativeContentDigest, nativeRepositoryIdentity } from "./provenance.js"
+import { snapshotNativeInputs } from "./snapshot.js"
 
 export interface NativeVerificationAuthority {
   authorize(): void
@@ -66,6 +67,7 @@ export function containedDirectory(root: string, child: string): string {
   return actual
 }
 const runtimeNotes = new Set([
+  "DREAMS.md",
   "IDENTITY.md",
   "SOUL.md",
   "USER.md",
@@ -74,6 +76,9 @@ const runtimeNotes = new Set([
   "HEARTBEAT.md",
   "TOOLS.md"
 ])
+function isRuntimeNote(path: string): boolean {
+  return runtimeNotes.has(path) || path.startsWith("memory/dreaming/")
+}
 async function candidateChanges(cwd: string): Promise<string[]> {
   let filters = ""
   try {
@@ -123,7 +128,7 @@ async function candidateChanges(cwd: string): Promise<string[]> {
       [
         ...tracked.split("\0"),
         ...staged.split("\0"),
-        ...untracked.split("\0").filter((path) => !runtimeNotes.has(path))
+        ...untracked.split("\0").filter((path) => !isRuntimeNote(path))
       ].filter(Boolean)
     )
   ]
@@ -149,17 +154,26 @@ export async function commitNativeCandidate(
   const cwd = await assertCandidateRepository(policy, worktree)
   const files = await candidateChanges(cwd)
   if (!files.length) return undefined
-  for (const file of files) {
-    if (
+  const rejected = files.filter(
+    (file) =>
       !allowedPaths.some((root) => nativePathAllowed(file, root)) ||
-      runtimeNotes.has(file) ||
+      isRuntimeNote(file) ||
       file
         .split("/")
         .some((part) =>
           /^(\.git.*|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*(?:credentials|secrets).*|.*\.pem)$/i.test(part)
         )
+  )
+  if (rejected.length) {
+    const examples = rejected.slice(0, 10).map((file) => redactLogText(file).slice(0, 200))
+    throw new Error(
+      `Candidate contains uncommitted files outside admitted code scope (${rejected.length}): ${JSON.stringify(examples)}. ` +
+        "Inspect git status for the complete list. Moving or removing tracked files creates deletions; " +
+        "restore only generated files changed by your own tooling to their committed state. " +
+        "Preserve unrelated work and do not widen the admitted scope."
     )
-      throw new Error("Candidate contains uncommitted files outside admitted code scope")
+  }
+  for (const file of files) {
     const path = resolve(cwd, file)
     const stat = lstatSync(path, { throwIfNoEntry: false })
     if (stat) {
@@ -389,21 +403,15 @@ export async function runNativeCommand(
   try {
     // Read committed blobs, never candidate symlinks, untracked secrets or host git metadata.
     const sha = await nativeGit(root, "rev-parse", "HEAD")
-    for (const file of config.inputFiles) {
-      const entry = await nativeGit(root, "ls-tree", sha, "--", file)
-      if (!/^100(644|755) blob [a-f0-9]+\t/.test(entry) || entry.includes("\n"))
-        throw new Error(`Sandbox input is not a committed regular file: ${file}`)
-      const blob = await exec("git", ["cat-file", "blob", `${sha}:${file}`], {
-        cwd: root,
-        env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
-        encoding: "buffer",
-        maxBuffer: 64 * 1024 * 1024,
-        timeout: 30_000
-      })
-      const target = resolve(workspace, file)
-      mkdirSync(dirname(target), { recursive: true })
-      writeFileSync(target, blob.stdout, { mode: entry.startsWith("100755") ? 0o700 : 0o600, flag: "wx" })
-    }
+    await snapshotNativeInputs(
+      root,
+      workspace,
+      sha,
+      config.inputFiles,
+      signal,
+      () => authority?.authorize(),
+      config.reviewedSourceFiles
+    )
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
     return await recordCommand(

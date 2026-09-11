@@ -81,6 +81,7 @@ export interface NativeWorkflow {
   blocker?: string
   dependencyCardIds?: string[]
   designCardId?: string
+  designEvidenceComplete?: boolean
   designCardDigest?: string
   riskAssessment?: NativeRiskAssessment
   designReview?: {
@@ -559,8 +560,17 @@ export class NativeAutonomyRuntime {
                 workflowId,
                 proposal: workflow.proposal,
                 previousAttemptId: previous.attemptId,
+                recoveryReason: plan.reason,
+                previousCandidate: before.candidate
+                  ? {
+                      cwd: before.candidate.cwd,
+                      baseSha: before.candidate.baseSha,
+                      headSha: before.candidate.headSha,
+                      files: before.candidate.files
+                    }
+                  : null,
                 instructions:
-                  "Recover the preserved scoped task. Edit a fresh candidate and call autocode_submit to record its scoped commit before workboard_complete. Fresh verification and independent review are required. Do not push, merge or deploy."
+                  "Recover the preserved scoped task. Inspect the recovery reason and previous committed candidate before editing the fresh worktree; preserve prior work and adapt only relevant changes to the current base. Edit a fresh candidate and call autocode_submit to record its scoped commit before workboard_complete. Fresh verification and independent review are required. Do not push, merge or deploy."
               })
             })
             workflow.implementationCardId = card.id
@@ -1050,11 +1060,16 @@ export class NativeAutonomyRuntime {
     if (committed) this.store.event("candidate.committed", workflowId, { headSha: committed, agentId, sessionKey })
     const candidate = await inspectNativeCandidate(this.policy, worktreePath, workflow.proposal.allowedPaths)
     await this.quality.classifyCandidate(workflowId, workflow, candidate, "submission")
-    if (!(await this.quality.ensureDesign(workflowId, workflow)))
-      throw new Error("High-risk implementation requires approved design review for the current candidate")
+    // Authentication and commit binding are complete even when independent design review is pending.
+    // Retain the submission so an ended coder session does not lose its candidate at this gate.
     workflow.candidate = candidate
     workflow.submission = { agentId, sessionKey, executionId: card?.execution?.runId ?? card?.runId ?? sessionKey }
-    this.transitionWorkflow(workflowId, workflow, "verification")
+    this.transitionWorkflow(
+      workflowId,
+      workflow,
+      this.quality.requiresDesign(workflow) ? "design_wait" : "verification"
+    )
+    await this.quality.ensureDesign(workflowId, workflow)
     return { accepted: true, headSha: workflow.candidate.headSha }
   }
   async review(
@@ -1120,6 +1135,11 @@ export class NativeAutonomyRuntime {
     if (!this.store.holdsLease(`workflow:${id}`))
       return this.withWorkflowLease(id, () => this.requestRepair(id, workflow, reason))
     this.assertEnabled()
+    const unavailable = workflow.verification?.checks.find((check) => [126, 127].includes(check.exitCode ?? 0))
+    if (unavailable)
+      throw new Error(
+        `Verification command unavailable (exit ${unavailable.exitCode}): ${unavailable.argv[0]}; inspect ${unavailable.artifact} and repair the verification environment before operator recovery. Candidate and repair budget preserved.`
+      )
     const previousLifecycle = workflow.lifecycle ?? upgradeNativeLifecycle(id, workflow)
     const attempt = (workflow.repairCount ?? 0) + 1
     if (attempt > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)
@@ -1302,6 +1322,7 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!nativeModeAllows(this.policy, "verify")) return advanced
+      if (!(await this.quality.ensureDesign(id, w))) return advanced
       this.control.assert()
       if (w.review?.verdict === "changes_requested") {
         await this.requestRepair(id, w, w.review.rationale)

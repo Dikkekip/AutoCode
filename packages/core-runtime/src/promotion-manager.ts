@@ -27,6 +27,20 @@ export interface PromotionGateDecision {
   evidence: string[]
 }
 
+export interface PromotionReviewerBundleCheck {
+  id: PromotionGateId
+  passed: boolean
+  evidence: string[]
+}
+
+export interface PromotionReviewerBundle {
+  version: 1
+  verdict: "ready" | "blocked"
+  summary: string
+  blockingGateIds: PromotionGateId[]
+  checks: PromotionReviewerBundleCheck[]
+}
+
 export interface PromotionPolicySnapshot {
   source: "repo" | "builtin" | "default"
   profileId: string | null
@@ -49,6 +63,7 @@ export interface PromotionCheckResult {
   artifactPath: string
   branchName: string
   gates: PromotionGateDecision[]
+  reviewerBundle: PromotionReviewerBundle
   policy: PromotionPolicySnapshot
   existingPromotion: PromotionRecord | null
 }
@@ -254,6 +269,27 @@ function persistPromotionCheck(store: DispatcherStore, result: PromotionCheckRes
   })
 }
 
+export function buildPromotionReviewerBundle(gates: PromotionGateDecision[]): PromotionReviewerBundle {
+  const requiredGates = gates.filter((gate) => gate.required)
+  const blockingGateIds = requiredGates.filter((gate) => !gate.passed).map((gate) => gate.id)
+  const verdict = blockingGateIds.length === 0 ? "ready" : "blocked"
+
+  return {
+    version: 1,
+    verdict,
+    summary:
+      verdict === "ready"
+        ? `All ${requiredGates.length} required promotion gates passed.`
+        : `${blockingGateIds.length} of ${requiredGates.length} required promotion gates failed.`,
+    blockingGateIds,
+    checks: requiredGates.map((gate) => ({
+      id: gate.id,
+      passed: gate.passed,
+      evidence: [...gate.evidence]
+    }))
+  }
+}
+
 export function evaluatePromotionRun(
   store: DispatcherStore,
   runId: string,
@@ -419,16 +455,18 @@ export function evaluatePromotionRun(
     }
   ]
 
+  const reviewerBundle = buildPromotionReviewerBundle(gates)
   const result: PromotionCheckResult = {
     runId,
     taskId: task.id,
     projectId: project.id,
     target,
-    promotable: gates.every((gate) => !gate.required || gate.passed),
+    promotable: reviewerBundle.verdict === "ready",
     checkedAt: new Date().toISOString(),
     artifactPath: promotionArtifactPath(project, runId, target),
     branchName,
     gates,
+    reviewerBundle,
     policy,
     existingPromotion
   }

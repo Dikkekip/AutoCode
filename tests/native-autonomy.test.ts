@@ -271,6 +271,40 @@ describe("native autonomy policy and creative provenance", () => {
       store.close()
     }
   })
+  it.each([
+    126, 127
+  ])("preserves the candidate and repair budget when verification cannot execute (%s)", async (exitCode) => {
+    const p = policy(),
+      gateway = new Gateway(),
+      store = new NativeEvidenceStore(join(p.repository, "evidence.db"))
+    try {
+      const runtime = new NativeAutonomyRuntime(p, gateway, store)
+      const workflow: any = {
+        proposal: proposal(),
+        rootCardId: "root",
+        implementationCardId: "original",
+        stageCards: {},
+        repairCount: 2,
+        candidate: {
+          cwd: p.repository,
+          headSha: "a".repeat(40),
+          baseSha: "b".repeat(40),
+          files: ["src/a"],
+          branch: "candidate"
+        },
+        verification: { checks: [{ argv: ["/opt/openclaw/checks/contracts"], exitCode, artifact: "/tmp/check.json" }] }
+      }
+      const original = structuredClone(workflow)
+      await expect(runtime.requestRepair("unavailable-tool", workflow, "verification failed")).rejects.toThrow(
+        /Verification command unavailable/
+      )
+      expect(workflow).toEqual(original)
+      expect(gateway.calls).toHaveLength(0)
+      expect(store.list("attempt-evidence")).toHaveLength(0)
+    } finally {
+      store.close()
+    }
+  })
   it("resumes an interrupted discovery round instead of creating orphan rounds", async () => {
     const p = policy(),
       gateway = new Gateway(),

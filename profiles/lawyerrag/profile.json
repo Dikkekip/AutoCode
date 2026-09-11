@@ -496,6 +496,11 @@
         "apps/reports-ui/src/lib/reportsQueryOptions.ts",
         "apps/reports-ui/src/__contracts__/**"
       ],
+      "publicFacades": [
+        "contracts/openapi.yaml",
+        "apps/reports-ui/src/lib/api.ts",
+        "apps/reports-ui/src/__contracts__/README.md"
+      ],
       "requiredReadingRuleId": "ui-contracts",
       "verificationRuleId": "ui-contracts-verify",
       "categoryHints": [
@@ -510,6 +515,10 @@
       "allowedPaths": [
         "apps/backend/lawyer_rag/routes/incidents/**",
         "apps/backend/lawyer_rag/incidents/**"
+      ],
+      "publicFacades": [
+        "contracts/openapi.yaml",
+        "apps/backend/lawyer_rag/routes/incidents/router.py"
       ],
       "requiredReadingRuleId": "backend-base",
       "verificationRuleId": "backend-incidents-verify",
@@ -527,6 +536,11 @@
         "apps/backend/lawyer_rag/routes/smart_scan.py",
         "apps/backend/lawyer_rag/services/smart_scan_orchestrator.py",
         "apps/backend/lawyer_rag/services/batch_analysis_service.py"
+      ],
+      "publicFacades": [
+        "contracts/openapi.yaml",
+        "apps/backend/lawyer_rag/routes/ingestion/router.py",
+        "apps/backend/lawyer_rag/routes/smart_scan.py"
       ],
       "requiredReadingRuleId": "backend-base",
       "verificationRuleId": "backend-ingestion-verify",

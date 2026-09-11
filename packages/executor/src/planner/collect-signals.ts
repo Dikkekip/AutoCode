@@ -12,6 +12,8 @@ import type {
 import { proposeLanesFromSignals } from "@openclaw/domain"
 import type { ProjectProfile } from "@openclaw/project-profiles"
 
+const TEMPLATE_TODO_PLACEHOLDER_PATTERN = /\[TODO:\s*[^\]\r\n]+\]/g
+
 function run(command: string, args: string[], cwd: string): string {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" })
   return result.status === 0 ? (result.stdout ?? "") : ""
@@ -64,6 +66,9 @@ function todoFixmeHits(project: Project, profile: ProjectProfile): RepoPlanningS
       }
     })
     .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .filter((entry) =>
+      /\b(?:TODO|FIXME)(?:\([^)]*\))?\s*:/.test(entry.text.replace(TEMPLATE_TODO_PLACEHOLDER_PATTERN, ""))
+    )
     .slice(0, 50)
 }
 

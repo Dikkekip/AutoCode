@@ -11,7 +11,7 @@ const cleanups: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup()
 })
-function setup() {
+function setup(candidate?: NativeWorkflow["candidate"]) {
   const root = mkdtempSync(join(tmpdir(), "native-recovery-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const store = new NativeEvidenceStore(join(root, "evidence.db"))
@@ -52,6 +52,7 @@ function setup() {
       acceptance: ["works"],
       implementationPrompt: "Fix the issue"
     } as any,
+    ...(candidate ? { candidate } : {}),
     rootCardId: "root",
     implementationCardId: "implementation",
     stageCards: {},
@@ -179,4 +180,47 @@ it("freezes only exact owned running sessions without pretending accepted abort 
   expect(result.frozen).toBe(true)
   expect(s.cards[1].status).toBe("running")
   expect(s.store.get<any>("workflow", "workflow").blocker).toBeTruthy()
+})
+
+it.each([
+  "blocked",
+  "done"
+])("recovers an operator-disposed %s card while preserving its ended review association", async (status) => {
+  const s = setup()
+  s.cards[1].status = status
+  s.cards[1].execution = { status: "review", sessionKey: "ended-session", runId: "ended-run" }
+  const original = structuredClone(s.cards[1])
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Operator disposed the ended attempt")
+  expect(plan.allowed).toBe(true)
+  await s.runtime.applyWorkflowRecovery(plan, "operator")
+  expect(s.cards[1]).toEqual(original)
+  expect(s.store.list("attempt-history")).toHaveLength(1)
+  expect(s.runtime.requireWorkflow("workflow").implementationCardId).not.toBe(original.id)
+})
+it.each(["pending", "running"])("refuses recovery with a %s execution even if the card is blocked", async (status) => {
+  const s = setup()
+  s.cards[1].execution = { status }
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Must wait for the owner")
+  expect(plan.allowed).toBe(false)
+  await expect(s.runtime.applyWorkflowRecovery(plan, "operator")).rejects.toThrow(/owned Workboard/)
+})
+
+it("carries the operator diagnosis and preserved commit into the fresh recovery context", async () => {
+  const candidate = {
+    cwd: "/preserved/candidate",
+    baseSha: "a".repeat(40),
+    headSha: "b".repeat(40),
+    files: ["src/fix.ts"]
+  }
+  const s = setup(candidate as any)
+  const reason = "Rebase preserved fix; previous verification failed because the baseline fixture was stale."
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
+  await s.runtime.applyWorkflowRecovery(plan, "operator")
+  const intent = s.store.get<any>("effect-intent", "card:recovery:workflow:attempt:1")
+  const notes = JSON.parse(intent.input.notes)
+  expect(notes.recoveryReason).toBe(reason)
+  expect(notes.previousCandidate).toEqual(candidate)
+  expect(intent.input.workspace.sourceBranch).toBe("origin/main")
+  expect(s.store.get<any>("workflow", "workflow").candidate).toBeUndefined()
+  expect(s.store.list<any>("attempt-history")[0]!.value.candidate).toEqual(candidate)
 })

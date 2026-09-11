@@ -191,13 +191,28 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
         const ids: Record<string, string> = {}
         for (const kind of ["discover", "reconcile"]) {
           const declarationKey = `autocode:${policy.boardId}:${kind}`
+          const payload = {
+            kind: "command",
+            argv: [
+              resolve(options.node),
+              resolve(options.cli),
+              "native",
+              "--policy",
+              resolve(root.opts().policy),
+              "--openclaw",
+              root.opts().openclaw,
+              kind
+            ],
+            cwd: policy.repository,
+            timeoutSeconds: 7200
+          }
           const previous = jobs.find((j: any) => j.declarationKey === declarationKey)
           if (previous) {
+            const patch: Record<string, unknown> = {}
+            if (JSON.stringify(previous.payload) !== JSON.stringify(payload)) patch.payload = payload
             if (kind === "discover" && policy.quality && previous.schedule?.expr !== "0 * * * *")
-              await gateway.request("cron.update", {
-                id: previous.id,
-                patch: { schedule: { kind: "cron", expr: "0 * * * *", tz: "UTC" } }
-              })
+              patch.schedule = { kind: "cron", expr: "0 * * * *", tz: "UTC" }
+            if (Object.keys(patch).length) await gateway.request("cron.update", { id: previous.id, patch })
             ids[kind] = previous.id
             continue
           }
@@ -213,21 +228,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
             sessionTarget: "isolated",
             wakeMode: "now",
             delivery: { mode: "none" },
-            payload: {
-              kind: "command",
-              argv: [
-                resolve(options.node),
-                resolve(options.cli),
-                "native",
-                "--policy",
-                resolve(root.opts().policy),
-                "--openclaw",
-                root.opts().openclaw,
-                kind
-              ],
-              cwd: policy.repository,
-              timeoutSeconds: 7200
-            }
+            payload
           })
           const jobId = job.id ?? job.job?.id
           if (typeof jobId !== "string" || !jobId)

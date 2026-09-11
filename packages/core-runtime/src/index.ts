@@ -43,9 +43,12 @@ import {
 
 export {
   branchNameForPromotionRun,
+  buildPromotionReviewerBundle,
   evaluatePromotionRun,
   type PromotionCheckResult,
   type PromotionGateDecision,
+  type PromotionReviewerBundle,
+  type PromotionReviewerBundleCheck,
   type PromotionTarget
 } from "./promotion-manager.js"
 

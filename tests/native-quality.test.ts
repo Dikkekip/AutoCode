@@ -368,6 +368,32 @@ describe("native quality investigations", () => {
     await s.runtime.reconcile()
     expect(implementation.status).toBe("ready")
   })
+  it.each([
+    ["ordinary", "export const navigation = true\n", true],
+    ["oversized", `export const navigation = "${"x".repeat(65000)}"\n`, false],
+    ["redacted", 'export const token = "synthetic-review-secret"\n', false],
+    ["binary", "export const navigation = true\0\n", false]
+  ])("provides bounded committed review evidence for %s changes", async (_name, content, complete) => {
+    const s = setup()
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const baseSha = s.git("rev-parse", "HEAD")
+    writeFileSync(join(s.root, "src/view.ts"), content as string)
+    s.git("add", "src/view.ts")
+    s.git("commit", "-m", "candidate evidence")
+    const headSha = s.git("rev-parse", "HEAD")
+    await s.runtime.quality.classifyCandidate(workflowId, w, { cwd: s.root, baseSha, headSha } as any, "submission")
+    writeFileSync(join(s.root, "src/view.ts"), "UNCOMMITTED PRIVATE CONTENT")
+    const evidence = await (s.runtime.quality as any).designEvidence(w)
+    expect(evidence.complete).toBe(complete)
+    expect(evidence.content).not.toContain("UNCOMMITTED PRIVATE CONTENT")
+    expect(evidence.content).not.toContain("synthetic-review-secret")
+    expect(Buffer.byteLength(evidence.content)).toBeLessThanOrEqual(64000)
+    expect(evidence).toMatchObject({ baseSha, headSha })
+    w.riskAssessment!.changesDigest = "mismatched-classification"
+    await expect((s.runtime.quality as any).designEvidence(w)).rejects.toThrow(/differs from classified/)
+  })
   it("requires new evidence for a rejected problem even when its title changes", async () => {
     const s = setup()
     const c = await prepare(s)
@@ -426,11 +452,41 @@ describe("native quality investigations", () => {
     card.status = "running"
     card.sessionKey = "coder-session"
     card.metadata = { automation: { workspace: { path: worktree } } }
-    await expect(s.runtime.submit("coder", "coder-session", workflowId, worktree)).rejects.toThrow(/design review/)
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
     const held = s.runtime.requireWorkflow(workflowId)
-    expect(held.candidate).toBeUndefined()
+    expect(held.candidate?.headSha).toBe(held.riskAssessment?.headSha)
+    expect(held.submission).toMatchObject({ agentId: "coder", sessionKey: "coder-session" })
+    expect(held.lifecycle?.state).toBe("design_wait")
+    card.status = "review"
+    card.execution = { status: "review" }
+    await s.runtime.reconcile()
+    const waiting = s.runtime.requireWorkflow(workflowId)
+    expect(waiting.blocker).toBeUndefined()
+    expect(waiting.verification).toBeUndefined()
+    expect(waiting.lifecycle?.state).toBe("design_wait")
     expect(held.riskAssessment?.reasons.join(" ")).toContain("src/auth/login.ts")
     expect(held.designCardId).toBeTruthy()
+    expect(held.designEvidenceComplete).toBe(true)
+    const designInput = s.gateway.cards.find((card) => card.id === held.designCardId)
+    const pointer = JSON.parse(designInput.notes)
+    const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+    expect(notes.committedDiff).toMatchObject({
+      baseSha: held.riskAssessment!.baseSha,
+      headSha: held.riskAssessment!.headSha,
+      changesDigest: held.riskAssessment!.changesDigest,
+      complete: true,
+      truncated: false,
+      redacted: false
+    })
+    expect(notes.committedDiff.content).toContain("+export const login = true")
+    expect(notes.committedDiff.trust).toContain("Untrusted committed source")
+    expect(notes.reviewContract).toMatchObject({
+      stage: "design",
+      executionEvidence: "pending-independent-verification",
+      subsequentGates: ["commit-bound verification", "independent acceptance review"]
+    })
+    expect(notes.instructions).toContain("never claim a test ran")
+    expect(notes.instructions).toContain("design approval cannot satisfy or bypass those gates")
     const design = s.gateway.cards.find((card) => card.id === held.designCardId)
     design.status = "running"
     design.sessionKey = "candidate-design"
@@ -444,8 +500,23 @@ describe("native quality investigations", () => {
     )
     const approved = s.runtime.requireWorkflow(workflowId)
     expect(s.runtime.quality.designApproved(approved)).toBe(true)
+    expect(approved.lifecycle?.state).toBe("verification")
+    expect(approved.verification).toBeUndefined()
+    expect(approved.review).toBeUndefined()
+    await expect(
+      s.runtime.review(
+        "reviewer",
+        design.sessionKey,
+        workflowId!,
+        held.candidate!.headSha,
+        "approved",
+        "Design only",
+        assessment
+      )
+    ).rejects.toThrow()
+
     s.policy.quality!.highRiskPaths.push("src/security/**")
-    await expect(s.runtime.submit("coder", "coder-session", workflowId, worktree)).rejects.toThrow(/design review/)
+    expect(await s.runtime.quality.ensureDesign(workflowId, s.runtime.requireWorkflow(workflowId))).toBe(false)
     const stale = s.runtime.requireWorkflow(workflowId)
     expect(stale.designReview).toBeUndefined()
     expect(stale.designCardId).not.toBe(held.designCardId)
@@ -460,7 +531,12 @@ describe("native quality investigations", () => {
       "Reviewed updated policy",
       assessment
     )
-    expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
+    const ready = s.runtime.requireWorkflow(workflowId)
+    expect(ready.lifecycle?.state).toBe("verification")
+    expect(ready.candidate?.headSha).toBe(held.candidate?.headSha)
+    await expect(s.runtime.submit("coder", "coder-session", workflowId, worktree)).rejects.toThrow(
+      /active Workboard session/
+    )
     const events = s.store.db.prepare("SELECT kind,data FROM native_events WHERE subject=?").all(workflowId)
     expect(events.some((e) => e.kind === "design.invalidated")).toBe(true)
     expect(events.some((e) => e.kind === "risk.classified" && String(e.data).includes("src/auth/login.ts"))).toBe(true)

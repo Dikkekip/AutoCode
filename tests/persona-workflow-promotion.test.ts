@@ -1801,7 +1801,20 @@ describeDb("persona, workflow, and promotion flows", () => {
     const artifactPath = fullOutput.match(/promotion\.artifact=(.+)/)?.[1]?.trim()
     expect(artifactPath).toBeTruthy()
     expect(existsSync(artifactPath!)).toBe(true)
-    expect(readFileSync(artifactPath!, "utf8")).toContain('"promotable": true')
+    const artifact = JSON.parse(readFileSync(artifactPath!, "utf8"))
+    expect(artifact.promotable).toBe(true)
+    expect(artifact.reviewerBundle).toMatchObject({
+      version: 1,
+      verdict: "ready",
+      summary: "All 8 required promotion gates passed.",
+      blockingGateIds: []
+    })
+    expect(artifact.reviewerBundle.checks).toHaveLength(8)
+    expect(artifact.reviewerBundle.checks.every((check: { passed: boolean }) => check.passed)).toBe(true)
+
+    const renderedBundle = fullOutput.match(/promotion\.reviewer_bundle=(.+)/)?.[1]?.trim()
+    expect(renderedBundle).toBeTruthy()
+    expect(JSON.parse(renderedBundle!)).toEqual(artifact.reviewerBundle)
   })
 
   it("accounts for repaired nested backend pytest paths during promotion", async () => {
@@ -1933,7 +1946,29 @@ describeDb("persona, workflow, and promotion flows", () => {
     expect(fullOutput).toContain("promotion.promotable=false")
     expect(fullOutput).toContain("FAIL review_approved")
     const artifactPath = fullOutput.match(/promotion\.artifact=(.+)/)?.[1]?.trim()
-    expect(readFileSync(artifactPath!, "utf8")).toContain("deterministic_review=architecture_blocked")
+    const artifact = JSON.parse(readFileSync(artifactPath!, "utf8"))
+    expect(artifact.reviewerBundle).toMatchObject({
+      version: 1,
+      verdict: "blocked"
+    })
+    expect(artifact.reviewerBundle.blockingGateIds).toEqual(
+      artifact.reviewerBundle.checks
+        .filter((check: { passed: boolean }) => !check.passed)
+        .map((check: { id: string }) => check.id)
+    )
+    expect(artifact.reviewerBundle.blockingGateIds).toContain("review_approved")
+    expect(artifact.reviewerBundle.checks.find((check: { id: string }) => check.id === "review_approved")).toEqual({
+      id: "review_approved",
+      passed: false,
+      evidence: expect.arrayContaining(["deterministic_review=architecture_blocked"])
+    })
+    expect(artifact.gates.find((gate: { id: string }) => gate.id === "review_approved")?.evidence).toContain(
+      "deterministic_review=architecture_blocked"
+    )
+
+    const renderedBundle = fullOutput.match(/promotion\.reviewer_bundle=(.+)/)?.[1]?.trim()
+    expect(renderedBundle).toBeTruthy()
+    expect(JSON.parse(renderedBundle!)).toEqual(artifact.reviewerBundle)
   })
 
   it("treats reviewed promotion-pending implementation tasks as promotable", async () => {

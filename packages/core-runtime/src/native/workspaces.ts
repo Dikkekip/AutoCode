@@ -32,6 +32,19 @@ export class NativeWorkspaceGateway implements NativeGateway {
     )
     if (!Array.isArray(all.cards)) throw new Error("Workboard card listing unavailable")
     const busy = new Set(all.cards.filter((c) => c.status === "running").map((c) => c.agentId))
+    const pending = await nativeCards(this.gateway, this.policy.boardId)
+    for (const card of pending) {
+      if (card.status !== "todo") continue
+      const parents = (card.metadata?.links ?? []).filter((link) => link.type === "parent")
+      if (
+        !parents.length ||
+        !parents.every((link) => pending.some((p) => p.id === link.targetCardId && p.status === "done"))
+      )
+        continue
+      this.authorize()
+      // Preserve Workboard dependency/schedule holds; never force operator-blocked work.
+      await this.gateway.request("workboard.cards.promote", { id: card.id })
+    }
     const cards = (await nativeCards(this.gateway, this.policy.boardId)).filter(
       (c) => c.status === "ready" && c.agentId && !busy.has(c.agentId)
     )

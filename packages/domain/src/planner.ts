@@ -60,6 +60,7 @@ export interface RepoPlanningSnapshot {
   }>
   memoryHighlights: string[]
   directives: string[]
+  /** Actionable TODO/FIXME lines; bracketed `[TODO: ...]` template placeholders are excluded. */
   todoFixmeHits: Array<{
     path: string
     line: number

@@ -375,7 +375,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_design_review",
-      "Independent design decision for high-risk work before implementation.",
+      "Independent design coverage decision before verification. Assess planned acceptance coverage; executed acceptance remains gated by independent verification and final review.",
       {
         workflowId: field,
         verdict: { type: "string", enum: ["approved", "changes_requested"] },

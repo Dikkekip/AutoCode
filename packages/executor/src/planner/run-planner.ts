@@ -453,7 +453,11 @@ function fallbackInventoryPaths(snapshot: RepoPlanningSnapshot, laneId: string):
 }
 
 function fallbackInventoryReading(snapshot: RepoPlanningSnapshot, laneId: string): string[] {
-  return fallbackInventoryPaths(snapshot, laneId).slice(0, 3)
+  const inventory = snapshot.laneInventory.find((lane) => lane.laneId === laneId)
+  return Array.from(new Set([...(inventory?.publicFacades ?? []), ...fallbackInventoryPaths(snapshot, laneId)])).slice(
+    0,
+    5
+  )
 }
 
 function fallbackSignal(
@@ -516,7 +520,15 @@ function fallbackSignal(
     const anchor = inventoryPaths[index]!
     const signal = `lane_inventory:${laneId}:${anchor}`
     if (!isAvailable(signal)) continue
-    const reading = [anchor, ...inventoryPaths.slice(index + 1), ...inventoryPaths.slice(0, index)].slice(0, 3)
+    const inventory = snapshot.laneInventory.find((entry) => entry.laneId === laneId)
+    const reading = Array.from(
+      new Set([
+        ...(inventory?.publicFacades ?? []),
+        anchor,
+        ...inventoryPaths.slice(index + 1),
+        ...inventoryPaths.slice(0, index)
+      ])
+    ).slice(0, 5)
     const surface = readableSurface(anchor)
     return {
       signal,

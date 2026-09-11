@@ -111,3 +111,26 @@ it("fails before changing configuration when a worktree source differs from poli
   ).rejects.toThrow(/source/)
   expect(s.calls.some(([m]) => m === "config.patch" || m === "workboard.cards.start")).toBe(false)
 })
+
+it.each([
+  "done",
+  "running",
+  "blocked"
+])("promotes queued research only after its parent is done: %s", async (status) => {
+  const s = setup()
+  s.card.status = "todo"
+  s.card.metadata.automation.workspace.kind = "scratch"
+  const child = { ...s.card, metadata: { ...s.card.metadata, links: [{ type: "parent", targetCardId: "parent" }] } }
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    s.calls.push([method, params])
+    if (method === "workboard.cards.list")
+      return { cards: params.boardId ? [child, { id: "parent", title: "Parent", status }] : [] } as any
+    if (method === "workboard.cards.promote") child.status = "ready"
+    return {} as any
+  })
+  await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+  expect(s.calls.some(([m]) => m === "workboard.cards.start")).toBe(status === "done")
+  expect(s.calls.filter(([m]) => m === "workboard.cards.promote")).toEqual(
+    status === "done" ? [["workboard.cards.promote", { id: "card" }]] : []
+  )
+})

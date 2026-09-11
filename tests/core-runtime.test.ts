@@ -12,6 +12,7 @@ let DispatcherExecutor: typeof import("@openclaw/executor").DispatcherExecutor |
 let DirectorRuntime: typeof import("@openclaw/core-runtime").DirectorRuntime | null = null
 let archiveHistoricalBlockedTasks: typeof import("@openclaw/core-runtime").archiveHistoricalBlockedTasks | null = null
 let backupRuntimeState: typeof import("@openclaw/core-runtime").backupRuntimeState | null = null
+let buildPromotionReviewerBundle: typeof import("@openclaw/core-runtime").buildPromotionReviewerBundle | null = null
 let diagnoseQueueHealth: typeof import("@openclaw/core-runtime").diagnoseQueueHealth | null = null
 let pruneDuplicateQueuedWorkflows: typeof import("@openclaw/core-runtime").pruneDuplicateQueuedWorkflows | null = null
 let repairQueueHealth: typeof import("@openclaw/core-runtime").repairQueueHealth | null = null
@@ -26,6 +27,7 @@ if (HAS_NODE_SQLITE) {
     DirectorRuntime,
     archiveHistoricalBlockedTasks,
     backupRuntimeState,
+    buildPromotionReviewerBundle,
     diagnoseQueueHealth,
     pruneDuplicateQueuedWorkflows,
     repairQueueHealth,
@@ -100,6 +102,53 @@ describeDb("core runtime", () => {
     const runtime = new DirectorRuntime!(store, executor)
     return { workspace, store, company, project, executor, runtime }
   }
+
+  it("builds a compact reviewer bundle from required promotion gates", () => {
+    const gates = [
+      {
+        id: "task_completed",
+        label: "Task completed",
+        passed: true,
+        required: true,
+        explanation: "The task completed.",
+        evidence: ["run.status=succeeded"]
+      },
+      {
+        id: "review_approved",
+        label: "Review approved",
+        passed: false,
+        required: true,
+        explanation: "Review is missing.",
+        evidence: ["deterministic_review=<none>"]
+      },
+      {
+        id: "profile_policy",
+        label: "Optional profile signal",
+        passed: false,
+        required: false,
+        explanation: "This signal is informational.",
+        evidence: ["mode=manual"]
+      }
+    ] satisfies import("@openclaw/core-runtime").PromotionGateDecision[]
+
+    expect(buildPromotionReviewerBundle!(gates)).toEqual({
+      version: 1,
+      verdict: "blocked",
+      summary: "1 of 2 required promotion gates failed.",
+      blockingGateIds: ["review_approved"],
+      checks: [
+        { id: "task_completed", passed: true, evidence: ["run.status=succeeded"] },
+        { id: "review_approved", passed: false, evidence: ["deterministic_review=<none>"] }
+      ]
+    })
+
+    gates[1]!.passed = true
+    expect(buildPromotionReviewerBundle!(gates)).toMatchObject({
+      verdict: "ready",
+      summary: "All 2 required promotion gates passed.",
+      blockingGateIds: []
+    })
+  })
 
   it("refreshes queue state from a project profile and seeds profile-backed workflows", () => {
     const { store, company, project, runtime } = setup()
