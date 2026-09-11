@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@10.30.3",
   "scripts": {
+    "benchmark:context": "pnpm build && node scripts/benchmark-context-selection.mjs",
     "build": "tsc -b tsconfig.build.json",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "ci": "pnpm check && pnpm test:node && pnpm build && pnpm runtime:smoke",

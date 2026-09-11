@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import {
   applyNativeMigration,
+  inspectNativeSkill,
   loadNativePolicy,
   NativeCliGateway,
   NativeEvidenceStore,
@@ -24,6 +25,14 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
     gateway: new NativeCliGateway(root.opts().openclaw)
   })
   const output = (value: unknown) => io.stdout(`${JSON.stringify(value, null, 2)}\n`)
+  root
+    .command("skill")
+    .description("Inspect the configured skill without changing activation or evidence")
+    .command("inspect")
+    .option("--include-text", "Include the complete composed instructions", false)
+    .action((options) => {
+      output(inspectNativeSkill(loadNativePolicy(resolve(root.opts().policy)), options.includeText))
+    })
   root
     .command("prepare")
     .requiredOption("--profile <file>", "Existing project profile")

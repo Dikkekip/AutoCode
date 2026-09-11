@@ -215,6 +215,8 @@ describe("native quality investigations", () => {
     const notes = JSON.parse(c.notes)
     expect(notes.promptSkill).toContain("Prompt Engineering Expert")
     expect(notes.persona.ideationPrompt).toBe("Inspect missing source links")
+    expect(notes.responseStyle).toMatchObject({ skill: "caveman", level: "full" })
+    expect(notes.responseStyle.instructions.join(" ")).toContain("Preserve required structured output")
     expect(notes.skillHash).toMatch(/^[a-f0-9]{64}$/)
     expect(s.gateway.cards[1].parents).toEqual([c.id])
     expect((await s.runtime.discover()).reason).toMatch(/active/)
@@ -226,11 +228,13 @@ describe("native quality investigations", () => {
     const c = s.start()
     expect(c.card.notes.length).toBeLessThanOrEqual(4000)
     const { contextId } = JSON.parse(c.card.notes)
+    expect(JSON.parse(c.card.notes).responseStyle).toMatchObject({ skill: "caveman", level: "full" })
     expect(contextId).toMatch(/^[a-f0-9]{64}$/)
     await expect(s.runtime.readContext("other", c.session, contextId)).rejects.toThrow(/assigned/)
     await expect(s.runtime.readContext(c.agent, "spoof", contextId)).rejects.toThrow(/session/)
     const result = await s.runtime.readContext(c.agent, c.session, contextId)
     expect(JSON.parse(result.notes).promptSkill).toBe(skill)
+    expect(JSON.parse(result.notes).responseStyle.instructions.join(" ")).toContain("Respond terse like smart caveman")
     expect(JSON.parse(result.notes).persona.ideationPrompt).toBe("Inspect missing source links")
     const again = await s.runtime.createCard({
       boardId: s.policy.boardId,
@@ -847,7 +851,8 @@ it("runs directed intake through actual inspection, proposal and planner admissi
   expect((await s.runtime.discover()).reason).toMatch(/round still active/)
   expect(s.store.get<any>("operator-request", request.id).state).toBe("dispatched")
   expect(s.gateway.cards).toHaveLength(2)
-  const notes = JSON.parse(s.gateway.cards[0].notes)
+  const pointer = JSON.parse(s.gateway.cards[0].notes)
+  const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
   expect(notes.operatorRequest).toMatchObject({
     requestId: request.id,
     untrustedContent: true,
@@ -916,7 +921,8 @@ it("resumes a building operator round against its original source after the remo
   const ctx = s.start()
   const inspected = await s.runtime.quality.inspect(ctx.agent, ctx.session, ctx.roundId, "ux", "src/view.ts")
   expect(JSON.stringify(inspected)).toContain("navigation = false")
-  const notes = JSON.parse(s.gateway.cards[0].notes)
+  const pointer = JSON.parse(s.gateway.cards[0].notes)
+  const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
   expect(notes.revision).toBe(request.brief.expectedBaseSha)
   expect(notes.operatorRequest.evidence[0].blobSha).toBe(request.brief.evidence[0]!.blobSha)
 })
