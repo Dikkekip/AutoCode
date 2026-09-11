@@ -48,7 +48,9 @@ export function planNativeRecovery(
     snapshot.cards.some(
       (c) =>
         ["ready", "running", "scheduled", "review"].includes(c.status) ||
-        ["pending", "running", "review"].includes(c.executionStatus ?? "")
+        ["pending", "running"].includes(c.executionStatus ?? "") ||
+        // Workboard retains the ended execution's review status after operator disposition.
+        (c.executionStatus === "review" && !["blocked", "done"].includes(c.status))
     )
   )
     blockers.push("Stop or finish owned Workboard execution and return runnable cards to blocked before replanning")

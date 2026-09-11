@@ -81,6 +81,7 @@ export interface NativeWorkflow {
   blocker?: string
   dependencyCardIds?: string[]
   designCardId?: string
+  designEvidenceComplete?: boolean
   designCardDigest?: string
   riskAssessment?: NativeRiskAssessment
   designReview?: {
@@ -1050,11 +1051,16 @@ export class NativeAutonomyRuntime {
     if (committed) this.store.event("candidate.committed", workflowId, { headSha: committed, agentId, sessionKey })
     const candidate = await inspectNativeCandidate(this.policy, worktreePath, workflow.proposal.allowedPaths)
     await this.quality.classifyCandidate(workflowId, workflow, candidate, "submission")
-    if (!(await this.quality.ensureDesign(workflowId, workflow)))
-      throw new Error("High-risk implementation requires approved design review for the current candidate")
+    // Authentication and commit binding are complete even when independent design review is pending.
+    // Retain the submission so an ended coder session does not lose its candidate at this gate.
     workflow.candidate = candidate
     workflow.submission = { agentId, sessionKey, executionId: card?.execution?.runId ?? card?.runId ?? sessionKey }
-    this.transitionWorkflow(workflowId, workflow, "verification")
+    this.transitionWorkflow(
+      workflowId,
+      workflow,
+      this.quality.requiresDesign(workflow) ? "design_wait" : "verification"
+    )
+    await this.quality.ensureDesign(workflowId, workflow)
     return { accepted: true, headSha: workflow.candidate.headSha }
   }
   async review(
@@ -1120,6 +1126,11 @@ export class NativeAutonomyRuntime {
     if (!this.store.holdsLease(`workflow:${id}`))
       return this.withWorkflowLease(id, () => this.requestRepair(id, workflow, reason))
     this.assertEnabled()
+    const unavailable = workflow.verification?.checks.find((check) => [126, 127].includes(check.exitCode ?? 0))
+    if (unavailable)
+      throw new Error(
+        `Verification command unavailable (exit ${unavailable.exitCode}): ${unavailable.argv[0]}; inspect ${unavailable.artifact} and repair the verification environment before operator recovery. Candidate and repair budget preserved.`
+      )
     const previousLifecycle = workflow.lifecycle ?? upgradeNativeLifecycle(id, workflow)
     const attempt = (workflow.repairCount ?? 0) + 1
     if (attempt > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)
@@ -1302,6 +1313,7 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!nativeModeAllows(this.policy, "verify")) return advanced
+      if (!(await this.quality.ensureDesign(id, w))) return advanced
       this.control.assert()
       if (w.review?.verdict === "changes_requested") {
         await this.requestRepair(id, w, w.review.rationale)

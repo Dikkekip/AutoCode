@@ -28,6 +28,10 @@ export interface NativeCommand {
 export type NativeVerificationSandbox = {
   /** Exact committed regular files made available to the build. No directories or globs. */
   inputFiles: string[]
+  /** Operator-reviewed source exceptions pinned to immutable Git blobs. */
+  reviewedSourceFiles?: Array<{ path: string; blobSha: string; reviewedBy: string }>
+  /** Separately reviewed public root template; never a live environment file. */
+  reviewedEnvExample?: { blobSha: string; reviewedBy: string }
 } & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string })
 
 export interface NativeAcceptanceBinding {
@@ -526,22 +530,51 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
   if (r.backend === "bubblewrap" && (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/"))
     throw new Error("Sandbox needs a dedicated root filesystem")
   const inputFiles = strings(r.inputFiles, "sandbox inputFiles").map(nativeRelativePath)
+  const reviewedSourceFiles: NonNullable<NativeVerificationSandbox["reviewedSourceFiles"]> = []
+  if (r.reviewedSourceFiles !== undefined) {
+    if (!Array.isArray(r.reviewedSourceFiles)) throw new Error("Invalid reviewed sandbox source files")
+    for (const value of r.reviewedSourceFiles) {
+      const entry = record(value)
+      const path = nativeRelativePath(text(entry.path, "reviewed source path"))
+      const blobSha = text(entry.blobSha, "reviewed source blob")
+      const reviewedBy = text(entry.reviewedBy, "reviewed source reviewer")
+      if (
+        !inputFiles.includes(path) ||
+        reviewedSourceFiles.some((entry) => entry.path === path) ||
+        !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(blobSha) ||
+        !/\.(?:py|ts|tsx|js|jsx|mjs|cjs|go|rs|java|c|h|cpp|hpp)$/.test(path) ||
+        path.split("/").some((part) => part.startsWith(".") || /[*?[\]{}]/.test(part))
+      )
+        throw new Error("Reviewed sandbox exceptions require an explicit source path and exact Git blob")
+      reviewedSourceFiles.push({ path, blobSha, reviewedBy })
+    }
+  }
+  let reviewedEnvExample: NativeVerificationSandbox["reviewedEnvExample"]
+  if (r.reviewedEnvExample !== undefined) {
+    const entry = record(r.reviewedEnvExample)
+    const blobSha = text(entry.blobSha, "reviewed environment example blob")
+    const reviewedBy = text(entry.reviewedBy, "reviewed environment example reviewer")
+    if (!inputFiles.includes(".env.example") || !/^[a-f0-9]{40}(?:[a-f0-9]{24})?$/.test(blobSha))
+      throw new Error("Reviewed environment example requires root .env.example and exact Git blob")
+    reviewedEnvExample = { blobSha, reviewedBy }
+  }
   if (
     inputFiles.some(
       (p) =>
         p === "." ||
         /[*?[\]{}]/.test(p) ||
-        p
-          .split("/")
-          .some((part) =>
-            /^(\.git|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*(?:policy|policies|credentials|secrets).*|.*\.pem)$/i.test(
-              part
-            )
-          )
+        (p.split("/").some((part) => /^(\.git|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*\.pem)$/i.test(part)) &&
+          !(p === ".env.example" && reviewedEnvExample)) ||
+        (p.split("/").some((part) => /(?:policy|policies|credentials|secrets)/i.test(part)) &&
+          !reviewedSourceFiles.some((entry) => entry.path === p))
     )
   )
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
+  const reviewed = {
+    ...(reviewedSourceFiles.length ? { reviewedSourceFiles } : {}),
+    ...(reviewedEnvExample ? { reviewedEnvExample } : {})
+  }
   return r.backend === "docker"
-    ? { backend: "docker", image, inputFiles }
-    : { backend: "bubblewrap", rootFilesystem, inputFiles }
+    ? { backend: "docker", image, inputFiles, ...reviewed }
+    : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
 }

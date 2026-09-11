@@ -222,6 +222,8 @@ Large source files can be read in bounded pages with `autocode_inspect`. Omit `o
 
 Implementation, adoption, and repair cards wait in `blocked` status until admission capacity and any design review permit execution. `scheduled` is reserved for an actual schedule. Reconciliation can recover older framework-created undated scheduled holds while preserving an explicit future start time.
 
+Verification exits 126 (not executable) and 127 (not found) block for operator inspection of the command artifact. They do not create coding repair handoffs or consume the repair budget; the candidate and verification evidence remain available. Repair the verification environment before using the explicit recovery workflow. Other failing checks retain the normal bounded repair behavior.
+
 When independent verification fails, compare the failed command and affected files with the candidate's base revision before broadening a repair. Preserve the original candidate and receipts. An identical baseline failure is an upstream dependency, not a passing gate, and must not be hidden by weakening the required check. Keep the admitted file scope intact when recording that dependency.
 
 ### Reviewed verification authority and required CI
@@ -395,3 +397,13 @@ An explicit `verificationSandbox: {backend: "docker", image: "sha256:<64 hex dig
 OpenClaw 2026.9.1 and 2026.9.2 have reviewed Workboard contracts. In `implement-human-review` mode release remains disabled; named CI identities become mandatory before switching to a release mode.
 
 Before first discovery, pause execution and use the administrator-only `autocode.skill.bootstrap` Gateway method with `boardId`, the reviewed immutable skill `digest`, `policyDigest`, and a `reason`. The method checks the authenticated administrator context and exact configured content; it cannot replace an already active skill. Skill changes still require evaluated promotion.
+
+
+Source modules whose names contain `secrets`, `credentials`, or `policy` remain excluded by default. If a build needs one, the operator can include its exact path in `verificationSandbox.inputFiles` and add `reviewedSourceFiles: [{path: "libs/common/src/secrets.py", blobSha: "<full Git blob ID>", reviewedBy: "<operator identity>"}]` to the same sandbox configuration. Review the committed source first and obtain its blob ID with `git rev-parse <reviewed-commit>:<path>`. Only explicit source-code extensions qualify; hidden directories, environment files, PEM files and JSON policy or credential data cannot be exempted through `reviewedSourceFiles`. Snapshot preparation checks every approved blob before copying any files. A changed module requires fresh review and policy approval; neither candidate content nor a worker request can update the allowance.
+
+
+### Public environment template verification
+
+Some parity checks read the repository's public `.env.example`. It remains excluded by default. After separately reviewing its complete committed contents as a public template containing placeholders, the operator may add the exact root `.env.example` to `inputFiles` and configure `reviewedEnvExample: {blobSha: "<full Git blob ID>", reviewedBy: "<operator identity>"}`. The pinned blob is checked before materialization. Changed template bytes require fresh review; dirty working-tree values are never copied.
+
+This option does not admit `.env`, `.env.local`, `.env.production`, nested environment templates, hidden runtime state, or credential data. It grants no host environment access and does not execute or source the template. Existing source-only approvals do not imply approval of this separate template option.
