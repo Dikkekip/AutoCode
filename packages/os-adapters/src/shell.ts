@@ -789,6 +789,7 @@ export async function executeDockerSandboxedCommand(
       [
         "run",
         "--rm",
+        "--init",
         "--pull=never",
         "--name",
         name,

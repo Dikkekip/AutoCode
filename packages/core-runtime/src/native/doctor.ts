@@ -3,7 +3,7 @@ import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { promisify } from "node:util"
-import { type NativeAutonomyPolicy, validateNativeAutonomyPolicy } from "@openclaw/domain"
+import { type NativeAutonomyPolicy, nativeCoderAgentIds, validateNativeAutonomyPolicy } from "@openclaw/domain"
 import { readExecutionOwnership } from "@openclaw/os-adapters"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NATIVE_GATEWAY_CONTRACT_VERSION, type NativeGateway, nativeCards, nativeObject } from "./gateway.js"
@@ -52,7 +52,7 @@ export async function nativeDoctor(
     const ids = new Set(result.agents.map((a: any) => a.id))
     const required = [
       policy.plannerAgentId,
-      policy.coderAgentId,
+      ...nativeCoderAgentIds(policy),
       policy.reviewerAgentId,
       ...policy.personas.map((p) => (policy.quality ? (p.investigationAgentId ?? p.personaId) : p.personaId))
     ]
@@ -79,7 +79,7 @@ export async function nativeDoctor(
       ])
       for (const persona of policy.personas) {
         const id = persona.investigationAgentId
-        if (!id || [policy.coderAgentId, policy.reviewerAgentId, policy.plannerAgentId].includes(id))
+        if (!id || [...nativeCoderAgentIds(policy), policy.reviewerAgentId, policy.plannerAgentId].includes(id))
           throw new Error(`Dedicated research agent required for ${persona.personaId}`)
         const agent = config.agents?.entries?.[id] ?? config.agents?.list?.find((a: any) => a.id === id)
         const tools = agent?.tools
@@ -236,11 +236,11 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
       tools: ["autocode_context", "autocode_proposals", "autocode_admit", "autocode_defer", ...completion],
       access: "ro"
     },
-    {
-      id: policy.coderAgentId,
+    ...nativeCoderAgentIds(policy).map((id) => ({
+      id,
       tools: ["autocode_context", "autocode_submit", "read", "write", "edit", "exec", "process", ...completion],
       access: "rw"
-    },
+    })),
     {
       id: policy.reviewerAgentId,
       tools: ["autocode_context", "autocode_review", "autocode_design_review", "read", ...completion],
@@ -279,7 +279,7 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
       docker.dangerouslyAllowContainerNamespaceJoin
     )
       throw new Error(`Role ${role.id} cannot add host mounts or sandbox escape overrides`)
-    if (role.id === policy.coderAgentId && tools.exec?.host !== "sandbox")
+    if (nativeCoderAgentIds(policy).includes(role.id) && tools.exec?.host !== "sandbox")
       throw new Error(`Role ${role.id} requires exec.host sandbox`)
     for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || tool === "workboard_complete"))
       if (!tools.allow.includes(tool)) throw new Error(`Role ${role.id} is missing ${tool}`)

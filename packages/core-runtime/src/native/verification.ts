@@ -26,6 +26,7 @@ import {
   type NativeVerificationCoveragePlan,
   type NativeVerificationEvidence,
   type NativeVerificationSandbox,
+  nativeCoderAgentIds,
   nativePathAllowed,
   nativePolicyDigest,
   nativeVerificationRuleId,
@@ -270,6 +271,14 @@ export async function inspectNativeCandidate(policy: NativeAutonomyPolicy, workt
   }
   return { cwd, headSha, baseSha, files, branch: await nativeGit(cwd, "branch", "--show-current") }
 }
+function requireNewCommandArtifact(artifact: string) {
+  // lstat also detects dangling symlinks. This avoids wasted execution, while
+  // the final exclusive write remains the authority against concurrent writers.
+  if (lstatSync(artifact, { throwIfNoEntry: false })) {
+    throw Object.assign(new Error(`Command receipt already exists: ${artifact}`), { code: "EEXIST" })
+  }
+}
+
 async function recordCommand(
   command: NativeCommand,
   cwd: string,
@@ -283,6 +292,7 @@ async function recordCommand(
     exitCode: number | null = null,
     outcome = "success"
   authority?.authorize()
+  requireNewCommandArtifact(artifact)
   try {
     const result = await execute()
     stdout = result.stdout
@@ -399,6 +409,7 @@ export async function runNativeCommand(
       throw new Error("Sandbox root filesystem must be administrator-owned and immutable to workers")
   }
   const cwd = containedDirectory(root, command.cwd)
+  requireNewCommandArtifact(artifact)
   const workspace = mkdtempSync(resolve(tmpdir(), "native-verification-"))
   try {
     // Read committed blobs, never candidate symlinks, untracked secrets or host git metadata.
@@ -591,7 +602,7 @@ export function nativeAcceptanceBindings(
     if (
       manual &&
       (manual.headSha !== headSha ||
-        manual.reviewedBy === policy.coderAgentId ||
+        nativeCoderAgentIds(policy).includes(manual.reviewedBy) ||
         !isAbsolute(manual.artifact) ||
         createHash("sha256").update(readFileSync(manual.artifact)).digest("hex") !== manual.sha256)
     )
@@ -655,7 +666,9 @@ export async function assertNativeVerificationAuthority(
     if (
       !(policy.verificationAuthority?.approvedChanges ?? []).some(
         (approval) =>
-          approval.path === path && approval.blobSha === blobSha && approval.reviewedBy !== policy.coderAgentId
+          approval.path === path &&
+          approval.blobSha === blobSha &&
+          !nativeCoderAgentIds(policy).includes(approval.reviewedBy)
       )
     )
       throw new Error(`Verification authority change requires independent policy approval: ${path}`)

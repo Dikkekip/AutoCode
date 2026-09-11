@@ -76,8 +76,8 @@ export function validateNativeQualityPolicy(value: any): NativeQualityPolicy {
   const skillPath = qualityText(value?.skillPath, "quality.skillPath")
   if (!isAbsolute(skillPath)) throw new Error("quality.skillPath must be absolute")
   const sessionSeconds = value.sessionSeconds ?? 300
-  if (!Number.isInteger(sessionSeconds) || sessionSeconds < 30 || sessionSeconds > 300)
-    throw new Error("Investigation budget must be between 30 and 300 seconds")
+  if (!Number.isInteger(sessionSeconds) || sessionSeconds < 30 || sessionSeconds > 600)
+    throw new Error("Investigation budget must be between 30 and 600 seconds")
   const highRiskPaths = value.highRiskPaths ?? nativeHighRiskPaths
   if (!Array.isArray(highRiskPaths) || highRiskPaths.some((p: unknown) => typeof p !== "string" || !p.trim()))
     throw new Error("Invalid high-risk paths")

@@ -153,7 +153,7 @@ export async function releaseNativeWorkflow(
   const candidate = w.candidate!
   assertNativeReleaseGate({
     headSha: candidate.headSha,
-    authorAgentId: policy.coderAgentId,
+    authorAgentId: w.submission?.agentId ?? policy.coderAgentId,
     reviewerAgentId: policy.reviewerAgentId,
     verification: w.verification ?? null,
     review: w.review ?? null

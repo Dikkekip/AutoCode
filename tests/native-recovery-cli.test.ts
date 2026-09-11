@@ -94,7 +94,7 @@ it("exposes emergency freeze as a distinct operator request", async () => {
 
 it("repoints existing automation commands after relocation without changing operator enablement", async () => {
   const s = fixture()
-  const jobs = ["discover", "reconcile"].map((kind, index) => ({
+  const jobs: any[] = ["discover", "reconcile"].map((kind, index) => ({
     id: kind,
     declarationKey: `autocode:board:${kind}`,
     enabled: index === 0,
@@ -109,13 +109,41 @@ it("repoints existing automation commands after relocation without changing oper
       Object.assign(jobs.find((job) => job.id === update.id)!, update.patch)
       return {}
     }
+    if (method === "cron.add") {
+      expect(params).toMatchObject({
+        declarationKey: "autocode:board:dispatch",
+        enabled: false,
+        schedule: { expr: "* * * * *" }
+      })
+      jobs.push({ ...params, id: "dispatch" })
+      return { id: "dispatch" }
+    }
     throw new Error(`Unexpected request ${method}`)
   })
   await s.run("install-automations", "--cli", "/new/dispatcher.js", "--node", "/new/node")
-  expect(jobs.map((job) => job.enabled)).toEqual([true, false])
+  expect(jobs.map((job) => job.enabled)).toEqual([true, false, false])
   for (const job of jobs) expect(job.payload.argv.slice(0, 2)).toEqual(["/new/node", "/new/dispatcher.js"])
   expect(request.mock.calls.filter(([method]) => method === "cron.update")).toHaveLength(2)
+  jobs.find((job) => job.id === "dispatch")!.schedule.expr = "*/3 * * * *"
   request.mockClear()
   await s.run("install-automations", "--cli", "/new/dispatcher.js", "--node", "/new/node")
   expect(request.mock.calls.map(([method]) => method)).toEqual(["cron.list"])
+})
+
+it("routes dispatch through the independent native administrative RPC", async () => {
+  const s = fixture()
+  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({ advanced: 0 })
+  await s.run("dispatch")
+  expect(request).toHaveBeenCalledWith("autocode.dispatch", { boardId: "board" })
+})
+
+it("routes source-bound request documents and list through native operator APIs", async () => {
+  const s = fixture()
+  const brief = { idempotencyKey: "defect", title: "Observed defect", evidence: [] }
+  writeFileSync(s.out, JSON.stringify(brief))
+  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({})
+  await s.run("requests", "create", "--file", s.out)
+  expect(request).toHaveBeenCalledWith("autocode.requests.create", { boardId: "board", request: brief })
+  await s.run("requests", "list")
+  expect(request).toHaveBeenCalledWith("autocode.requests.list", { boardId: "board" })
 })

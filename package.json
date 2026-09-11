@@ -23,7 +23,7 @@
     "release:witness": "node scripts/release-witness.mjs",
     "test": "vitest run --fileParallelism=false",
     "typecheck": "tsc -b tsconfig.build.json",
-    "test:node": "node --test scripts/secrets/openclaw-dotenv-secret-resolver.test.mjs scripts/export-policy.test.mjs scripts/check-dependency-licenses.test.mjs",
+    "test:node": "node --test scripts/secrets/openclaw-dotenv-secret-resolver.test.mjs scripts/export-policy.test.mjs scripts/check-dependency-licenses.test.mjs scripts/native-quota-reset.test.mjs scripts/native-quota-monitor.test.mjs",
     "test:native": "vitest run tests/native-*.test.ts --fileParallelism=false",
     "deps:licenses": "node scripts/check-dependency-licenses.mjs",
     "deps:audit": "pnpm audit"

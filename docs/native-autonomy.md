@@ -22,6 +22,27 @@ The submission broker rejects outside-scope files and symlinks, snapshots bounde
 
 Verification and review rejection allow at most two repair handoffs against the preserved worktree. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
 
+## Optional native coder pool
+
+Omitting `coderAgentIds` preserves the singular `coderAgentId` behavior. A reviewed pool can distribute implementations among distinct registered coder identities:
+
+```json
+{
+  "coderAgentId": "native-coder",
+  "coderAgentIds": ["native-coder", "native-coder-2", "native-coder-3"],
+  "workerConcurrency": 3
+}
+```
+
+This is a policy fragment, not a complete activation policy. The pool must include the primary `coderAgentId`, contain at most eight distinct IDs, and exclude planner, reviewer and research identities. `workerConcurrency` accepts integers from one to eight. Register and review each coder's tool policy and isolated workspace before using the pool; the concurrency setting does not provision agents. New implementation assignments favor the least-loaded pool member, counting running cards and pending current implementations.
+
+Dispatch excludes an agent that already has a running Workboard card, including on another board. It also excludes a managed workspace whose resolved path is already in use by a running card, even when a different coder is assigned. This preserves isolation when a repair reuses a candidate worktree. Workspace binding uses the supported configuration API, and only the prepared card starts. Pool membership alone does not authorize submission: `autocode_submit` requires the exact assigned implementation card, active session and managed worktree. Review remains assigned to the independent reviewer, who cannot be any pool member.
+
+A finished coding session can leave an unexpired Workboard claim. Before dispatch, the adapter releases its own coder claim only when the exact session is terminal, has an end time, and explicitly reports no active run or subagent. Missing or ambiguous session evidence keeps that coder busy. Expired historical claims do not block new work.
+
+
+Coder identities participate in skill-policy and other governance digests. Changing the pool requires renewed evidence for the resulting policy where those digests are checked; existing receipts do not establish readiness for a changed role mapping. Follow the pilot and cutover acceptance requirements before increasing concurrency. These configuration and source contracts do not establish a successful production rollout.
+
 ## Prepare and inspect
 
 Build with `pnpm build`. Native commands emit JSON; `quality` also offers a readable default and takes `--policy` before its subcommand:
@@ -408,5 +429,18 @@ OpenClaw 2026.9.1 and 2026.9.2 have reviewed Workboard contracts. In `implement-
 
 Before first discovery, pause execution and use the administrator-only `autocode.skill.bootstrap` Gateway method with `boardId`, the reviewed immutable skill `digest`, `policyDigest`, and a `reason`. The method checks the authenticated administrator context and exact configured content; it cannot replace an already active skill. Skill changes still require evaluated promotion.
 
+The supported operator Gateway methods are `autocode.skill.evaluate` and `autocode.skill.promote`. Both require paused execution, an authenticated `operator.admin` caller independent of all configured worker roles, the exact current `policyDigest`, and a non-empty `reason`. Their common parameters include `boardId`, `policyDigest` and `reason`:
+
+- `autocode.skill.evaluate` additionally accepts `evaluation` and returns `evaluationId`. The evaluation follows `NativeSkillEvaluation` in `packages/core-runtime/src/native/skills.ts`: version, benchmark/injection kind, baseline/candidate/policy/dataset digests, case and success/safety counts, controlled/live mode, timestamp, and an artifact path with its SHA-256. The regular JSON artifact must reside under `<repository>/.openclaw/native-artifacts/skill-evaluations`, match its hash and agree with the reported results. This method registers existing evaluation evidence; it does not run a benchmark.
+- `autocode.skill.promote` additionally accepts `candidateDigest` and `evaluationIds`, and returns the activated digest, policy digest and contract version. Both baseline and candidate snapshots must already exist. Promotion requires benchmark and injection evidence matching the active baseline, candidate and current policy, with no candidate safety failures or success regression. It revalidates retained artifacts before recording the operator decision.
+
+Workers cannot supply operator authority or approve their own skill evidence. Controlled fixture reports demonstrate the checks they exercise; they do not certify live model efficacy. Neither method changes the skill source file, enables execution, or completes production rollout acceptance.
+
 
 Source modules whose names contain `secrets`, `credentials`, or `policy` remain excluded by default. If a build needs one, the operator can include its exact path in `verificationSandbox.inputFiles` and add `reviewedSourceFiles: [{path: "libs/common/src/secrets.py", blobSha: "<full Git blob ID>", reviewedBy: "<operator identity>"}]` to the same sandbox configuration. Review the committed source first and obtain its blob ID with `git rev-parse <reviewed-commit>:<path>`. Only explicit source-code extensions qualify; hidden directories, environment files, PEM files and JSON policy or credential data cannot be exempted. Snapshot preparation checks every approved blob before copying any files. A changed module requires fresh review and policy approval; neither candidate content nor a worker request can update the allowance.
+
+Native `dispatch` runs the same admission and Workboard dispatch decisions as `reconcile`, without advancing verification or release gates. When a dispatch attempt returns, its additive `dispatch` result reports successful start counts/card IDs and deferred card IDs with the fixed `worktree-capacity` reason. `advanced` continues to count workflow advancement; zero does not mean no worker started. Allocator messages, host paths, and opaque start responses are not exposed. `install-automations` creates a separate disabled dispatch job running every minute, so a long reconciliation job does not prevent ready workers from starting. Existing dispatch jobs retain their schedule and enabled state. Enable the new job through the normal operator automation controls. Workflow and verification-pool leases remain responsible for gate ownership; dispatch does not change those leases or verification evidence.
+
+For a concrete operator-reported defect, use `native requests create --file brief.json` and inspect the durable queue with `native requests list`. The administrative RPC is `autocode.requests.create`; its request document contains `idempotencyKey`, configured `personaId`, `title`, `brief`, full `expectedBaseSha`, and `evidence` entries with repository-relative `path` and `observation`. Evidence must be regular files tracked at the current remote base and within the persona scope. Identical keys retry safely; changed content requires a new key. Queueing while paused does not start work. Discovery selects queued requests before random personas, subject to its existing limits, and creates a real investigation followed by planner admission. A moved base defers the request for renewed inspection and a fresh key. A reviewed candidate SHA may be described in the brief as an unverified lead; this version does not import candidate patches. Neither the brief nor the intake record supplies inspections, submissions, test-authority approval, or review evidence. `autocode.workflow.explain` exposes the existing acceptance list for operator review without granting agent context access.
+
+`verificationConcurrency` optionally limits concurrent native verifier jobs independently of `workerConcurrency` (integer 1–8). When omitted, verification retains the worker limit and the normalized policy omits this field. Three coders can therefore use one verifier without changing admission or dispatch capacity. Apply a changed limit only through the paused, quiescent policy refresh or a fully drained restart; existing verification leases and release capacity remain unchanged.
