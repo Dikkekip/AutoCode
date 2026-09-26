@@ -415,7 +415,7 @@ paused/observe until that review; running this test suite never activates them.
 
 An explicit `verificationSandbox: {backend: "docker", image: "sha256:<64 hex digits>", inputFiles: [...]}` selects a locally provisioned immutable Docker image. The image must include the administrator-reviewed `/opt/openclaw/checks/` executables and build dependencies. Candidate commands run without network or inherited credentials, with a read-only image, dropped capabilities, bounded resources, and only committed source copies mounted at `/work`. Cancellation removes the container as well as its client. Bubblewrap remains supported; there is no automatic unrestricted fallback.
 
-OpenClaw 2026.9.1 and 2026.9.2 have reviewed Workboard contracts. In `implement-human-review` mode release remains disabled; named CI identities become mandatory before switching to a release mode.
+OpenClaw 2026.9.1, 2026.9.2 and 2026.9.6 have reviewed Workboard contracts. The 2026.9.6 installed-contract check uses its real SQLite store in a disposable directory, including conditional writes, dependency holds, idempotent creation and recovery association clearing. In `implement-human-review` mode release remains disabled; named CI identities become mandatory before switching to a release mode.
 
 Before first discovery, pause execution and use the administrator-only `autocode.skill.bootstrap` Gateway method with `boardId`, the reviewed immutable skill `digest`, `policyDigest`, and a `reason`. The method checks the authenticated administrator context and exact configured content; it cannot replace an already active skill. Skill changes still require evaluated promotion.
 

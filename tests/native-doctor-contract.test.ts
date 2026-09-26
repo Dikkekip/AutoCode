@@ -85,14 +85,22 @@ it("reports malformed reads and unsupported supervisor without mutating Gateway 
   expect(calls).toEqual(["workboard.boards.list", "agents.list", "config.get", "cron.list"])
 })
 
-// Both releases pass scripts/native-contract-smoke.mjs against their installed Workboard contract.
-it.each(["2026.9.1", "2026.9.2", "2026.10.0"])("checks the reviewed gateway release %s", async (version) => {
+// These releases pass scripts/native-contract-smoke.mjs against their installed Workboard contract.
+it.each([
+  "2026.9.1",
+  "2026.9.2",
+  "2026.9.6",
+  "2026.9.7",
+  "2026.10.0"
+])("checks the reviewed gateway release %s", async (version) => {
   const gateway = {
     version: async () => version,
     request: async <T = any>() => ({}) as T
   }
   const report = await nativeDoctor({ ...policy, repository: "/tmp" }, gateway, { platform: "darwin" })
-  expect(report.checks.find((check) => check.name === "gateway-version")?.ok).toBe(version !== "2026.10.0")
+  expect(report.checks.find((check) => check.name === "gateway-version")?.ok).toBe(
+    ["2026.9.1", "2026.9.2", "2026.9.6"].includes(version)
+  )
 })
 
 it.each([
