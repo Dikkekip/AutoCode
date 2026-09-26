@@ -67,6 +67,23 @@ scheduled account reloads. Restore temporarily held timers after maintenance.
 A migration lease failure must be investigated; do not edit SQLite records or
 mark a plugin migration complete manually.
 
+After an upgrade, inspect every owned cron command's executable path. A removed
+user-installed Node path can leave jobs enabled but failing with `ENOENT`. Repair
+the command through the supported cron API, preserving IDs and scheduling, then
+inspect both terminal cron status and its diagnostic result. A successful command
+that reports `reconciliation already running` has not created new investigations.
+Run discovery sequentially when necessary so interrupted rounds can close through
+normal reconciliation with their evidence retained.
+
+Account synchronization must compare persisted credential content independent of
+JSON field ordering and omitted optional values. Preserve newer gateway refreshes
+and reload the gateway credential snapshot only after a real credential or account
+order change. Journal pending reload before SDK writes and clear it only after a
+successful reload, so partial writes and reload failures remain recoverable. An
+unconditional five-minute reload can repeatedly invalidate model preparation with
+`prepared model runtime publication was superseded`. Record the accepted run ID
+and reconcile or abort that run through the public session API before retrying.
+
 ## Monitoring
 
 `scripts/native-health-monitor.py` reads native status, board cards, and schedules
@@ -81,7 +98,8 @@ python3 scripts/native-health-monitor.py --openclaw /absolute/path/to/openclaw \
 ```
 
 Reports flag missing, disabled, failed, or unobserved schedules and ready cards
-waiting over 15 minutes without a running worker. Existing workflow blockers are
+or todo cards waiting over 15 minutes without a running worker. This includes a
+planner held behind interrupted research. Existing workflow blockers are
 retained for inspection. `observed` means the snapshot checks passed; it does not
 prove worker process liveness, successful implementation, or deployment. An RPC
 failure replaces the snapshot with `unknown`, never a stale healthy report.
