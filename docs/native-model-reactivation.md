@@ -45,8 +45,27 @@ Reassess this compatibility override after upgrading OpenClaw.
 On 2026-09-26, the transport and reasoning configuration reached the provider,
 but all three existing account canaries returned HTTP 400: Sol was not supported
 with those ChatGPT accounts. Terra returned a successful exact-model receipt.
-Sol remains registered, but the coding pool uses Terra with Astra fallback until
-a fresh Sol canary succeeds. Catalog presence alone must not activate a model.
+Sol remained registered, while the coding pool used Terra with Astra fallback
+until a fresh Sol canary could succeed. Catalog presence alone must not activate
+a model. The subsequently requested GPT-6 pairing is Sol and Luna:
+`gpt-6-sol` and `gpt-6-luna`.
+
+## After upgrading OpenClaw
+
+OpenClaw 2026.9.6 includes native GPT-6 Sol and Luna routing. Remove a
+compatibility-only Sol provider override after validating a scoped configuration
+patch; preserve any unrelated provider settings. Register both model IDs in the
+allowlist and bind them to the Codex runtime. Test each through an isolated,
+non-delivering turn before assigning coding roles, and inspect requested and
+effective model IDs to exclude fallback success.
+
+An installed package version does not establish upgrade completion. If the CLI
+requires session identity migration, stop the Gateway and use the supported
+`openclaw doctor --fix --non-interactive` flow. Keep native dispatch paused while
+maintenance runs. Avoid overlapping Doctor, update repair, Gateway startup, and
+scheduled account reloads. Restore temporarily held timers after maintenance.
+A migration lease failure must be investigated; do not edit SQLite records or
+mark a plugin migration complete manually.
 
 ## Monitoring
 
