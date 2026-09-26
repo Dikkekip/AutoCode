@@ -84,6 +84,34 @@ unconditional five-minute reload can repeatedly invalidate model preparation wit
 `prepared model runtime publication was superseded`. Record the accepted run ID
 and reconcile or abort that run through the public session API before retrying.
 
+### OpenClaw 2026.9.6 catalog initialization workaround
+
+A model can work through the Codex CLI while gateway turns never enter inference.
+On the observed multi-agent installation, both the old Terra control and new GPT-6
+turns stalled; auth diagnostics showed usable profiles. Gateway `status` reported
+active and pending model-catalog work, and a plugin reload exposed
+`plugin service startup timed out ... (codex/codex-session-catalog)`.
+
+The installed Codex plugin supports these independent optional catalog settings:
+
+```json
+{"plugins":{"entries":{"codex":{"config":{
+  "discovery":{"enabled":false},
+  "sessionCatalog":{"enabled":false}
+}}}}}
+```
+
+This isolates dynamic model enumeration and browsing external native Codex
+sessions. It keeps the Codex execution harness registered and uses the explicitly
+configured models. The external-session catalog is unavailable until re-enabled;
+this is an operational workaround, not an upstream performance fix. Preserve a
+private config backup, pause new work and reconcile accepted runs, validate a
+scoped `config patch --dry-run --json`, then apply without `--json`. Wait for the
+explicit successful hot-reload event before any canary. A failed hot reload is not
+an applied runtime change. Verify requested/effective model identity and no fallback
+in terminal receipts before changing role assignments. The observed Sol canary
+completed through the Codex harness in about eight seconds after isolation.
+
 ## Monitoring
 
 `scripts/native-health-monitor.py` reads native status, board cards, and schedules
