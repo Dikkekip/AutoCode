@@ -112,6 +112,16 @@ an applied runtime change. Verify requested/effective model identity and no fall
 in terminal receipts before changing role assignments. The observed Sol canary
 completed through the Codex harness in about eight seconds after isolation.
 
+This workaround did not establish reliable cold-start inference: subsequent Sol
+and Luna gateway tests stalled, including an old-model control. Direct Codex CLI
+tests succeeded for both models, and the plugin's bundled binary also ran Luna.
+A five-second catalog-worker CPU profile showed substantial plugin source capture,
+file hashing, and garbage collection. Captures included roughly 340 MB of bundled
+Codex executables. This is measured preparation overhead, not proof of the turn
+admission root cause: static turn admission and background catalog discovery are
+separate paths. Preserve the profile and correlate accepted run IDs with trajectory
+events and terminal outcomes before changing runtime guards or retrying work.
+
 ## Monitoring
 
 `scripts/native-health-monitor.py` reads native status, board cards, and schedules
@@ -132,6 +142,9 @@ retained for inspection. `observed` means the snapshot checks passed; it does no
 prove worker process liveness, successful implementation, or deployment. An RPC
 failure replaces the snapshot with `unknown`, never a stale healthy report.
 Long-running jobs are not restarted because of an old error or timestamp.
+Reports also flag unavailable, degraded, or pending gateway model preparation and
+include the model-catalog worker's task counts. Active catalog tasks alone do not
+establish a stalled turn; a ready gateway likewise does not prove inference ran.
 
 Hourly worktree maintenance must use audit mode. Its documented `--apply` contract
 requires a short operator maintenance window and excludes unattended deletion.

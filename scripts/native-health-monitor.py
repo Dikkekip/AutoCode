@@ -9,8 +9,19 @@ import tempfile
 import time
 
 
-def summarize(board, status, cards, jobs, now):
+def summarize(board, status, cards, jobs, now, gateway=None):
     issues = []
+    gateway_evidence = None
+    if gateway is not None:
+        runtime = gateway.get("modelRuntime")
+        gateway_evidence = {
+            "modelRuntime": runtime,
+            "modelCatalog": gateway.get("workerPools", {}).get("modelCatalog"),
+        }
+        if runtime is None:
+            issues.append("gateway model runtime readiness is unavailable")
+        elif runtime.get("degraded") or runtime.get("pendingAgents"):
+            issues.append("gateway model runtime is degraded or agents are pending preparation")
     control = status.get("control", {})
     if not status.get("enabled") or control.get("paused") or control.get("frozen"):
         issues.append("native execution disabled, paused, or frozen")
@@ -57,6 +68,7 @@ def summarize(board, status, cards, jobs, now):
             "issues": issues, "schedules": schedules, "runningCards": active,
             "readyCards": ready, "waitingCards": waiting, "counts": status.get("counts", {}),
             "blockedWorkflows": workflows,
+            "gateway": gateway_evidence,
             "evidenceLimit": "Card running state is not process liveness or proof of successful implementation/release."}
 
 
@@ -80,7 +92,8 @@ def main():
         status = collect(args.openclaw, "autocode.status", {"boardId": args.board})
         cards = collect(args.openclaw, "workboard.cards.list", {"boardId": args.board})["cards"]
         jobs = collect(args.openclaw, "cron.list", {"includeDisabled": True})["jobs"]
-        report = summarize(args.board, status, cards, jobs, now)
+        gateway = collect(args.openclaw, "status", {"includeChannelSummary": False})
+        report = summarize(args.board, status, cards, jobs, now, gateway)
     except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError, KeyError) as error:
         report = {"observedAtMs": now, "boardId": args.board, "health": "unknown",
                   "issues": [str(error) if isinstance(error, RuntimeError) else type(error).__name__]}

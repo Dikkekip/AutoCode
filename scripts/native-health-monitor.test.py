@@ -8,6 +8,26 @@ spec.loader.exec_module(monitor)
 
 
 class HealthTests(unittest.TestCase):
+    def test_runtime_pending_cannot_be_hidden_by_running_cards(self):
+        now = 2_000_000
+        jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
+                 "state": {"lastRunAtMs": now, "lastRunStatus": "ok"}}
+                for r in ("discover", "dispatch", "reconcile")]
+        cards = [{"id": "coder", "status": "running"}]
+        gateway = {"modelRuntime": {"degraded": False, "pendingAgents": ["coder"]}}
+        result = monitor.summarize("demo", {"enabled": True}, cards, jobs, now, gateway)
+        self.assertEqual(result["health"], "attention")
+        self.assertIn("pending preparation", result["issues"][0])
+        gateway["modelRuntime"] = {"degraded": False, "pendingAgents": []}
+        gateway["workerPools"] = {"modelCatalog": {"activeTasks": 1, "pendingTasks": 1}}
+        result = monitor.summarize("demo", {"enabled": True}, cards, jobs, now, gateway)
+        self.assertEqual(result["health"], "observed")
+        self.assertEqual(result["gateway"]["modelCatalog"]["pendingTasks"], 1)
+
+    def test_unavailable_runtime_readiness_is_reported(self):
+        result = monitor.summarize("demo", {"enabled": True}, [], [], 1, {})
+        self.assertIn("gateway model runtime readiness is unavailable", result["issues"])
+
     def test_green_schedules_do_not_hide_stalled_work(self):
         now = 2_000_000
         jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
