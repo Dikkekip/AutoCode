@@ -30,7 +30,7 @@ export type NativeVerificationSandbox = {
   inputFiles: string[]
   /** Operator-reviewed source exceptions pinned to immutable Git blobs. */
   reviewedSourceFiles?: Array<{ path: string; blobSha: string; reviewedBy: string }>
-} & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string })
+} & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string; pidsLimit?: number })
 
 export interface NativeAcceptanceBinding {
   criterion: string
@@ -548,6 +548,11 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
   const image = r.backend === "docker" ? text(r.image, "sandbox image") : ""
   if (r.backend === "docker" && !/^sha256:[a-f0-9]{64}$/.test(image))
     throw new Error("Docker verification requires an immutable local image ID")
+  if (
+    r.pidsLimit !== undefined &&
+    (r.backend !== "docker" || !Number.isInteger(r.pidsLimit) || Number(r.pidsLimit) < 64 || Number(r.pidsLimit) > 4096)
+  )
+    throw new Error("Docker verification pidsLimit must be an integer between 64 and 4096")
   const rootFilesystem = r.backend === "bubblewrap" ? text(r.rootFilesystem, "sandbox rootFilesystem") : ""
   if (r.backend === "bubblewrap" && (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/"))
     throw new Error("Sandbox needs a dedicated root filesystem")
@@ -584,7 +589,13 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
   const reviewed = reviewedSourceFiles.length ? { reviewedSourceFiles } : {}
   return r.backend === "docker"
-    ? { backend: "docker", image, inputFiles, ...reviewed }
+    ? {
+        backend: "docker",
+        image,
+        inputFiles,
+        ...reviewed,
+        ...(r.pidsLimit === undefined ? {} : { pidsLimit: r.pidsLimit as number })
+      }
     : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
 }
 

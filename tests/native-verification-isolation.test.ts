@@ -22,6 +22,32 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 const command = { argv: ["/bin/sh", "-c", "exit 0"], cwd: ".", timeoutSeconds: 5 }
+it.each([0, -1, 63, 4097, 256.5, "1024"])("rejects an unsafe Docker process capacity %s", async (pidsLimit) => {
+  const config = { backend: "docker", image: `sha256:${"a".repeat(64)}`, inputFiles: ["source.txt"], pidsLimit }
+  expect(() => validateNativeVerificationSandbox(config)).toThrow(/pidsLimit/)
+  await expect(
+    executeDockerSandboxedCommand(["/bin/true"], {
+      image: config.image,
+      workspace: "/tmp",
+      cwd: "/work",
+      timeoutMs: 1000,
+      pidsLimit: pidsLimit as number
+    })
+  ).rejects.toThrow(/pidsLimit/)
+})
+it("retains process capacity in validated Docker policy and rejects it for bubblewrap", () => {
+  const config = { backend: "docker", image: `sha256:${"a".repeat(64)}`, inputFiles: ["source.txt"] }
+  expect(validateNativeVerificationSandbox(config)).not.toHaveProperty("pidsLimit")
+  expect(validateNativeVerificationSandbox({ ...config, pidsLimit: 1024 })).toHaveProperty("pidsLimit", 1024)
+  expect(() =>
+    validateNativeVerificationSandbox({
+      backend: "bubblewrap",
+      rootFilesystem: "/opt/root",
+      inputFiles: ["source.txt"],
+      pidsLimit: 1024
+    })
+  ).toThrow(/pidsLimit/)
+})
 it("inherits only allowlisted build variables", () => {
   expect(
     allowlistedEnvironment(BUILD_ENVIRONMENT_ALLOWLIST, {

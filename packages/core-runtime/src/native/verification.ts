@@ -439,7 +439,11 @@ export async function runNativeCommand(
           ...(signal ? { signal } : {})
         }
         return config.backend === "docker"
-          ? executeDockerSandboxedCommand(command.argv, { ...options, image: config.image })
+          ? executeDockerSandboxedCommand(command.argv, {
+              ...options,
+              image: config.image,
+              ...(config.pidsLimit === undefined ? {} : { pidsLimit: config.pidsLimit })
+            })
           : executeSandboxedCommand(command.argv, { ...options, rootFilesystem })
       },
       authority
