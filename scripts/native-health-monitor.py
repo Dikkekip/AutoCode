@@ -34,6 +34,8 @@ def summarize(board, status, cards, jobs, now):
             issues.append(f"schedule has no recent run: {role}")
     active = []
     ready = []
+    waiting = []
+    has_running = any(c.get("status") == "running" for c in cards)
     for card in cards:
         if card.get("status") == "running":
             execution = card.get("execution") or {}
@@ -42,14 +44,18 @@ def summarize(board, status, cards, jobs, now):
                            "sessionKey": execution.get("sessionKey")})
         elif card.get("status") == "ready":
             ready.append(card["id"])
-            if now - card.get("updatedAt", now) > 900_000 and not any(c.get("status") == "running" for c in cards):
+            if now - card.get("updatedAt", now) > 900_000 and not has_running:
                 issues.append(f"ready card has waited over 15 minutes without a running worker: {card['id']}")
+        elif card.get("status") == "todo":
+            waiting.append(card["id"])
+            if now - card.get("updatedAt", now) > 900_000 and not has_running:
+                issues.append(f"todo card has waited over 15 minutes without a running worker: {card['id']}")
     workflows = [{"id": w["id"], "title": w.get("title"), "blocker": w.get("blocker")}
                  for w in status.get("workflows", []) if w.get("blocker")]
     return {"observedAtMs": now, "boardId": board,
             "health": "attention" if issues else "observed",
             "issues": issues, "schedules": schedules, "runningCards": active,
-            "readyCards": ready, "counts": status.get("counts", {}),
+            "readyCards": ready, "waitingCards": waiting, "counts": status.get("counts", {}),
             "blockedWorkflows": workflows,
             "evidenceLimit": "Card running state is not process liveness or proof of successful implementation/release."}
 

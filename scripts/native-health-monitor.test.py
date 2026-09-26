@@ -18,6 +18,20 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["health"], "attention")
         self.assertIn("stalled", result["issues"][0])
 
+    def test_waiting_planner_is_visible_after_interrupted_research(self):
+        now = 2_000_000
+        jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
+                 "state": {"lastRunAtMs": now, "lastRunStatus": "ok"}}
+                for r in ("discover", "dispatch", "reconcile")]
+        cards = [{"id": "planner", "status": "todo", "updatedAt": 1},
+                 {"id": "research", "status": "blocked", "updatedAt": 1}]
+        result = monitor.summarize("demo", {"enabled": True}, cards, jobs, now)
+        self.assertEqual(result["waitingCards"], ["planner"])
+        self.assertEqual(result["health"], "attention")
+        self.assertIn("todo card", result["issues"][0])
+        cards[1]["status"] = "running"
+        self.assertEqual(monitor.summarize("demo", {"enabled": True}, cards, jobs, now)["issues"], [])
+
     def test_long_running_schedule_is_not_failed_due_to_old_error(self):
         jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
                  "state": {"lastRunAtMs": 1, "lastRunStatus": "error", "runningAtMs": 1}}
