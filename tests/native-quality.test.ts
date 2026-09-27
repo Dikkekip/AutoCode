@@ -525,6 +525,40 @@ describe("native quality investigations", () => {
     const c = await prepare(s, raw)
     expect(s.store.get<any>("proposal", c.proposalId).proposal.quality.risk).toBe("high")
   })
+  it.each([
+    "/workspace",
+    "/workspace/"
+  ])("submits sandbox alias %s only for its authenticated managed card", async (alias) => {
+    const s = setup(fixtureSkill, undefined, true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    writeFileSync(join(worktree, "src/view.ts"), "export const navigation = true\n")
+    const card = s.gateway.cards.find((card) => card.id === w.implementationCardId)
+    card.status = "running"
+    card.sessionKey = "coder-session"
+    await expect(s.runtime.submit("coder", "coder-session", workflowId, alias)).rejects.toThrow(/managed worktree/)
+    card.metadata = { automation: { workspace: { path: worktree } } }
+    await expect(s.runtime.submit("reviewer", "coder-session", workflowId, alias)).rejects.toThrow(/assigned coder/)
+    await expect(s.runtime.submit("coder", "other-session", workflowId, alias)).rejects.toThrow(
+      /active Workboard session/
+    )
+    await expect(s.runtime.submit("coder", "coder-session", workflowId, s.root)).rejects.toThrow(/managed worktree/)
+    await expect(s.runtime.submit("coder", "coder-session", workflowId, "/workspace/other")).rejects.toThrow()
+    expect(s.runtime.requireWorkflow(workflowId).candidate).toBeUndefined()
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, alias)).toMatchObject({ accepted: true })
+    const submitted = s.runtime.requireWorkflow(workflowId)
+    expect(submitted.candidate?.cwd).toBe(worktree)
+    expect(submitted.candidate?.files).toEqual(["src/view.ts"])
+    expect(submitted.lifecycle?.state).toBe("design_wait")
+    expect(submitted.verification).toBeUndefined()
+    card.status = "review"
+    await expect(s.runtime.submit("coder", "coder-session", workflowId, alias)).rejects.toThrow(
+      /active Workboard session/
+    )
+  })
   it("gates a routine src proposal when its submitted candidate adds a protected file", async () => {
     const s = setup(fixtureSkill, ["src/auth/**"])
     const raw = proposal()

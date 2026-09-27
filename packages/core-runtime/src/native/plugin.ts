@@ -744,7 +744,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_submit",
-      "Submit scoped edits from the assigned managed worktree. The host broker records a commit without exposing Git metadata to the sandbox, then independently verifies it. Never include agent notes or credentials.",
+      "Submit scoped edits from the assigned managed worktree. Use worktreePath /workspace for the sandbox workspace; the broker resolves only your authenticated card's host worktree. The broker records the commit without exposing Git metadata, then independently verifies it. Never include agent notes or credentials.",
       { workflowId: field, worktreePath: field },
       (p, ctx) => runtime(p.boardId).submit(ctx.agentId, ctx.sessionKey, p.workflowId, p.worktreePath)
     ),

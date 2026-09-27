@@ -1159,13 +1159,17 @@ export class NativeAutonomyRuntime {
     if (card?.agentId !== agentId) throw new Error("Only the assigned coder can submit")
     this.assertSession(card, sessionKey)
     const workspace = card?.metadata?.automation?.workspace?.path
-    if (!workspace || realpathSync(worktreePath) !== realpathSync(workspace))
+    if (!workspace) throw new Error("Candidate must be the card's managed worktree")
+    // The sandbox exposes this alias, not the host Git worktree. Resolve only
+    // after authenticating the assigned card/session; never resolve its children.
+    const candidatePath = ["/workspace", "/workspace/"].includes(worktreePath) ? workspace : worktreePath
+    if (realpathSync(candidatePath) !== realpathSync(workspace))
       throw new Error("Candidate must be the card's managed worktree")
     if (workflow.candidate)
       throw new Error("Candidate already submitted; reconcile existing evidence before resubmission")
     const committed = await commitNativeCandidate(
       this.policy,
-      worktreePath,
+      candidatePath,
       workflow.proposal.allowedPaths,
       workflow.proposal.title,
       () => {
@@ -1174,7 +1178,7 @@ export class NativeAutonomyRuntime {
       }
     )
     if (committed) this.store.event("candidate.committed", workflowId, { headSha: committed, agentId, sessionKey })
-    const candidate = await inspectNativeCandidate(this.policy, worktreePath, workflow.proposal.allowedPaths)
+    const candidate = await inspectNativeCandidate(this.policy, candidatePath, workflow.proposal.allowedPaths)
     await this.quality.classifyCandidate(workflowId, workflow, candidate, "submission")
     // Authentication and commit binding are complete even when independent design review is pending.
     // Retain the submission so an ended coder session does not lose its candidate at this gate.

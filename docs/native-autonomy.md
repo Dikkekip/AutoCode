@@ -474,6 +474,12 @@ those changes. Scripts, CI configuration, dependency manifests and verifier
 harness changes still require explicit blob approval. Executed verification and
 independent final acceptance review remain mandatory.
 
+Sandboxed coders may submit `worktreePath: "/workspace"`. The broker resolves this
+exact alias (or its trailing-slash form) from the authenticated implementation
+card's managed workspace after validating the assigned coder and active session.
+Other paths must still resolve to that same worktree; alias children and paths to
+other cards are not accepted. Coders do not need host Git metadata to submit edits.
+
 GitHub check runs are paginated using ordinary REST requests, including on CLI
 versions without `--slurp`. Branch-protection requirements are still mandatory;
 an unavailable branch-protection API does not silently authorize a release.
