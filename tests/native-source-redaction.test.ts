@@ -1,6 +1,28 @@
 import { describe, expect, it } from "vitest"
 import { redactNativeSourceText } from "../packages/core-runtime/src/native/source-redaction.js"
 
+describe("keyboard comparisons in committed diffs", () => {
+  it.each([
+    "       if (event.key === 'Escape') {",
+    '+ if (event.key === "ArrowRight") focusNext();',
+    '- if (e.key == "Enter") submit();'
+  ])("preserves keyboard logic: %s", (source) => {
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it.each([
+    'event.key = "credential123"',
+    '// event.key === "Escape"; API_KEY="credential123"',
+    'if (event.key === "Escape") API_KEY="credential123"',
+    'const sample = "event.key=credential123"'
+  ])("still filters credentials: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toContain("credential123")
+  })
+  it("does not exempt arbitrary key comparisons", () => {
+    const source = 'event.key === "arbitrary-value"'
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+})
+
 describe("recovery source redaction", () => {
   it.each([
     "<option key={tag.tag_id} value={tag.tag_id}>",

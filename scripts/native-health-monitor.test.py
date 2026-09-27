@@ -8,6 +8,29 @@ spec.loader.exec_module(monitor)
 
 
 class HealthTests(unittest.TestCase):
+    def test_running_research_does_not_hide_a_fully_blocked_pipeline(self):
+        now = 2_000_000
+        jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
+                 "state": {"lastRunAtMs": now, "lastRunStatus": "ok"}}
+                for r in ("discover", "dispatch", "reconcile")]
+        status = {"enabled": True, "workflows": [
+            {"id": "w", "blocker": "stale receipt", "candidateSha": "abc", "verifiedSha": "abc"}]}
+        report = monitor.summarize("demo", status, [{"id": "research", "status": "running"}], jobs, now)
+        self.assertEqual(report["health"], "attention")
+        self.assertIn("all unfinished workflows are blocked", report["issues"][0])
+        self.assertEqual(report["pipeline"], {"candidates": 1, "verified": 1, "merged": 0, "deployed": 0})
+
+    def test_detects_stranded_coding_but_allows_reconciler_verification(self):
+        now = 2_000_000
+        jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
+                 "state": {"lastRunAtMs": now, "lastRunStatus": "ok"}}
+                for r in ("discover", "dispatch", "reconcile")]
+        workflow = {"id": "w", "lifecycle": {"state": "implementation"}}
+        status = {"enabled": True, "workflows": [workflow]}
+        self.assertEqual(monitor.summarize("demo", status, [], jobs, now)["health"], "attention")
+        workflow["lifecycle"]["state"] = "verification"
+        self.assertEqual(monitor.summarize("demo", status, [], jobs, now)["health"], "observed")
+
     def test_runtime_pending_cannot_be_hidden_by_running_cards(self):
         now = 2_000_000
         jobs = [{"name": f"autocode:demo:{r}", "enabled": True,

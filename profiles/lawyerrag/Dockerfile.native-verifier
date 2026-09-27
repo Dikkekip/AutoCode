@@ -1,0 +1,11 @@
+# Supply local references checked against reviewed image IDs for both arguments.
+# Configure the resulting immutable sha256 image ID in the native policy.
+ARG DEPENDENCIES_IMAGE
+ARG VERIFIER_IMAGE
+FROM ${DEPENDENCIES_IMAGE} AS dependencies
+FROM ${VERIFIER_IMAGE}
+USER 0
+COPY --from=dependencies /opt/ui-node_modules /opt/ui-node_modules
+COPY --from=dependencies /opt/deps-source/apps/reports-ui/package-lock.json /opt/openclaw/reports-ui.package-lock.json
+COPY native-ui-component-tests.sh /opt/openclaw/checks/ui-components
+RUN chmod 0555 /opt/openclaw/checks/ui-components

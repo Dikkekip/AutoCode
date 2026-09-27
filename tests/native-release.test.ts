@@ -10,6 +10,7 @@ import {
   nativeRepositoryIdentity,
   nativeVerificationDigest
 } from "../packages/core-runtime/src/native/provenance.js"
+import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
 import * as releaseModule from "../packages/core-runtime/src/native/release.js"
 import {
   type NativeReleaseIO,
@@ -1022,4 +1023,70 @@ it("does not deploy preparation for a different revision or unstaged artifact", 
     await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("exact staged release")
     expect(s.store.get("operation", "workflow:deploy")).toBeNull()
   }
+})
+
+describe("verification refresh after a policy change", () => {
+  function stale() {
+    const s = setup()
+    delete s.workflow.prNumber
+    s.workflow.repairCount = 2
+    s.workflow.reviewCardId = "old-review"
+    s.workflow.stageCards = { Verify: "old-verify", Review: "old-review" }
+    s.store.put("workflow", "workflow", s.workflow)
+    s.runtime.policy.workerConcurrency = 2
+    vi.spyOn(NativeQualityRuntime.prototype, "ensureDesign").mockResolvedValue(false)
+    return s
+  }
+  it("archives intact receipts and keeps the exact candidate, submission and coding budget", async () => {
+    const s = stale()
+    const prior = structuredClone(s.workflow)
+    expect(await s.runtime.advanceWorkflow("workflow")).toBe(0)
+    const w = s.runtime.requireWorkflow("workflow")
+    expect(w.blocker).toBeUndefined()
+    expect(w.candidate).toEqual(prior.candidate)
+    expect(w.submission).toEqual(prior.submission)
+    expect(w.lifecycle).toMatchObject({ state: "design_wait", attemptId: prior.lifecycle!.attemptId })
+    expect(w.repairCount).toBe(2)
+    expect(w.verification).toBeUndefined()
+    expect(w.review).toBeUndefined()
+    expect(w.reviewCardId).toBeUndefined()
+    expect(w.stageCards).toEqual({})
+    expect(s.store.list<any>("verification-history")[0]!.value.verification).toEqual(prior.verification)
+    expect(s.store.list<any>("verification-history")[0]!.value.review).toEqual(prior.review)
+    await s.runtime.advanceWorkflow("workflow")
+    expect(s.store.list("verification-history")).toHaveLength(1)
+  })
+  it.each(["provenance", "check"])("does not retire tampered %s artifacts", async (kind) => {
+    const s = stale()
+    const path =
+      kind === "provenance"
+        ? s.workflow.verification!.provenanceArtifact!.path
+        : s.workflow.verification!.checks[0]!.artifact
+    writeFileSync(path, "{}")
+    await s.runtime.advanceWorkflow("workflow")
+    expect(s.runtime.requireWorkflow("workflow").blocker).toMatch(/artifact/i)
+    expect(s.runtime.requireWorkflow("workflow").verification).toEqual(s.workflow.verification)
+    expect(s.store.list("verification-history")).toHaveLength(0)
+  })
+  it("preserves accepted release operations without replay or invalidation", async () => {
+    const s = stale()
+    s.store.put("operation", "workflow:push", { state: "pending" })
+    await s.runtime.advanceWorkflow("workflow")
+    const w = s.runtime.requireWorkflow("workflow")
+    expect(w.blocker).toBeUndefined()
+    expect(w.verification).toEqual(s.workflow.verification)
+    expect(w.review).toEqual(s.workflow.review)
+    expect(s.store.list("verification-history")).toHaveLength(0)
+  })
+  it("uses distinct verification cards for changed policies and review cards for distinct receipts", async () => {
+    const s = setup()
+    s.runtime.transitionWorkflow("workflow", s.workflow, "design_wait")
+    const first = await s.runtime.stage("workflow", s.workflow, "Verify", "blocked", "Verify")
+    s.runtime.policy.workerConcurrency = 2
+    const second = await s.runtime.stage("workflow", s.workflow, "Verify", "blocked", "Verify")
+    expect(second).not.toBe(first)
+    const review = await s.runtime.stage("workflow", s.workflow, "Review", "ready", "Review")
+    s.workflow.verification!.provenance!.executionId = "fresh-verifier-execution"
+    expect(await s.runtime.stage("workflow", s.workflow, "Review", "ready", "Review")).not.toBe(review)
+  })
 })

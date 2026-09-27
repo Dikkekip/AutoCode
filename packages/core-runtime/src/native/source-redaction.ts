@@ -2,6 +2,11 @@ import { redactCommandText, redactLogText } from "@openclaw/domain"
 
 // Protect only complete, bounded opening tags with attribute-level references.
 const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}$/
+// Equality against a browser keyboard name is not a credential assignment.
+// Keep this source-only and narrow; literals, comments and arbitrary key values
+// still go through the normal credential filters.
+const KEYBOARD_COMPARISON =
+  /^\.key[ \t]*==={0,1}[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -123,6 +128,10 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
     } else if (source.slice(cursor, cursor + 2) === "/*") {
       const end = source.indexOf("*/", cursor + 2)
       cursor = end < 0 ? source.length : end + 2
+    } else if (char === "." && KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80))) {
+      chunks.push(source.slice(copied, cursor + 1), marker)
+      copied = cursor + 4
+      cursor += 4
     } else if (source.startsWith("const", cursor) && !/[\w$]/.test(source[cursor - 1] ?? "")) {
       const query = queryReference(source, cursor)
       if (query) {

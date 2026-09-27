@@ -64,11 +64,25 @@ def summarize(board, status, cards, jobs, now, gateway=None):
                 issues.append(f"todo card has waited over 15 minutes without a running worker: {card['id']}")
     workflows = [{"id": w["id"], "title": w.get("title"), "blocker": w.get("blocker")}
                  for w in status.get("workflows", []) if w.get("blocker")]
+    current = [w for w in status.get("workflows", [])
+               if not w.get("deployedSha") and w.get("lifecycle", {}).get("state") != "cancelled"]
+    if current and all(w.get("blocker") for w in current):
+        issues.append("all unfinished workflows are blocked; schedules or research activity cannot deliver a release")
+    elif current and not active and not ready and not waiting:
+        # Verification and release may run in the reconciler, without a card worker.
+        stranded = [w["id"] for w in current if not w.get("blocker")
+                    and w.get("lifecycle", {}).get("state") in ("implementation", "design_wait", "review")]
+        if stranded:
+            issues.append("workflows are waiting for workers but no work is runnable: " + ", ".join(stranded))
+    pipeline = {name: sum(bool(w.get(field)) for w in status.get("workflows", []))
+                for name, field in (("candidates", "candidateSha"), ("verified", "verifiedSha"),
+                                    ("merged", "mergedSha"), ("deployed", "deployedSha"))}
     return {"observedAtMs": now, "boardId": board,
             "health": "attention" if issues else "observed",
             "issues": issues, "schedules": schedules, "runningCards": active,
             "readyCards": ready, "waitingCards": waiting, "counts": status.get("counts", {}),
             "blockedWorkflows": workflows,
+            "pipeline": pipeline,
             "gateway": gateway_evidence,
             "evidenceLimit": "Card running state is not process liveness or proof of successful implementation/release. Missing modelRuntime is unreported readiness, not proof of health."}
 

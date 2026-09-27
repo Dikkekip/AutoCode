@@ -488,6 +488,29 @@ export function nativeVerificationCommands(policy: NativeAutonomyPolicy, files: 
     plan.ruleIds.includes(nativeVerificationRuleId(command))
   )
 }
+/** Admitted additions and deletions must be reflected in the isolated snapshot.
+ * The baseline allowlist still controls unchanged inputs; normal path and blob
+ * restrictions also apply to every candidate addition. */
+export async function nativeCandidateSandbox(
+  policy: NativeAutonomyPolicy,
+  candidate: { cwd: string; headSha: string; files: string[] }
+): Promise<NativeVerificationSandbox | undefined> {
+  if (!policy.verificationSandbox) return undefined
+  if (!/^[a-f0-9]{40,64}$/.test(candidate.headSha)) throw new Error("Snapshot requires an exact candidate")
+  const present = new Set(
+    (await nativeGit(candidate.cwd, "ls-tree", "-r", "--name-only", "-z", candidate.headSha)).split("\0")
+  )
+  const changed = new Set(candidate.files)
+  return validateNativeVerificationSandbox({
+    ...policy.verificationSandbox,
+    inputFiles: [
+      ...new Set([
+        ...policy.verificationSandbox.inputFiles.filter((path) => !changed.has(path) || present.has(path)),
+        ...candidate.files.filter((path) => present.has(path))
+      ])
+    ]
+  })
+}
 export async function verifyNativeCandidate(
   policy: NativeAutonomyPolicy,
   candidate: { cwd: string; headSha: string; baseSha: string; files: string[] },
@@ -519,6 +542,7 @@ export async function verifyNativeCandidate(
   const commands = nativeVerificationCommands(policy, candidate.files)
   await assertNativeVerificationAuthority(policy, candidate, nativeGit, candidateReview)
   bindings.push(...nativeAcceptanceBindings(policy, acceptance, plan.ruleIds, candidate.headSha, candidateReview))
+  const sandbox = await nativeCandidateSandbox(policy, candidate)
   for (const [i, command] of commands.entries()) {
     if ((await nativeGit(candidate.cwd, "rev-parse", "HEAD")) !== candidate.headSha)
       throw new Error("Candidate changed during verification")
@@ -526,7 +550,7 @@ export async function verifyNativeCandidate(
       command,
       candidate.cwd,
       resolve(artifactRoot, `${i}-${randomUUID()}.json`),
-      policy.verificationSandbox,
+      sandbox,
       signal,
       authority
     )

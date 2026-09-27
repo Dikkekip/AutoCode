@@ -14,6 +14,7 @@ import {
   type NativeVerificationEvidence,
   type NativeWorkflowState,
   nativeCoderAgentIds,
+  nativePolicyDigest,
   nativeProposalKey,
   nextNativeAttempt,
   recoverNativeLifecycle,
@@ -36,7 +37,12 @@ import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
 import { nativeOutcomeReport } from "./outcomes.js"
 import { assertNativeMode, nativeModeAllows } from "./promotion-mode.js"
-import { assertNativeProvenance, nativeContentDigest, nativeVerificationDigest } from "./provenance.js"
+import {
+  assertNativeProvenance,
+  nativeContentDigest,
+  nativeRepositoryIdentity,
+  nativeVerificationDigest
+} from "./provenance.js"
 import { NativeQualityRuntime } from "./quality.js"
 import {
   type NativeRecoveryAction,
@@ -49,6 +55,7 @@ import { NativeReleasePending, releaseNativeWorkflow } from "./release.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
+  assertNativeVerificationEvidence,
   commitNativeCandidate,
   containedDirectory,
   inspectNativeCandidate,
@@ -746,6 +753,13 @@ export class NativeAutonomyRuntime {
           title: value.proposal.title,
           personaId: value.proposal.personaId,
           deployedSha: value.deployedSha ?? null,
+          candidateSha: value.candidate?.headSha ?? null,
+          verifiedSha:
+            value.verification?.checks.length && value.verification.checks.every((check) => check.exitCode === 0)
+              ? value.verification.headSha
+              : null,
+          reviewVerdict: value.review?.verdict ?? null,
+          mergedSha: value.mergedSha ?? null,
           risk: value.riskAssessment?.risk ?? value.proposal.quality?.risk ?? "routine",
           riskAssessment: value.riskAssessment ?? null,
           designApproved: this.quality.designApproved(value),
@@ -1375,7 +1389,13 @@ export class NativeAutonomyRuntime {
         boardId: this.policy.boardId,
         title: `${stage}: ${workflow.proposal.title}`,
         status,
-        idempotencyKey: `workflow:${id}:${stage}:${workflow.candidate?.headSha ?? "none"}`,
+        idempotencyKey: `workflow:${id}:${stage}:${workflow.candidate?.headSha ?? "none"}${
+          stage === "Verify"
+            ? `:${workflow.lifecycle?.attemptId}:${nativePolicyDigest(this.policy)}`
+            : stage === "Review" && workflow.verification
+              ? `:${nativeVerificationDigest(workflow.verification)}`
+              : ""
+        }`,
         notes,
         ...(stage === "Review"
           ? { agentId: this.policy.reviewerAgentId, workspace: { kind: "dir", path: workflow.candidate!.cwd } }
@@ -1406,6 +1426,70 @@ export class NativeAutonomyRuntime {
     if (!lease) return 0
     return this.store.withLease(lease, 120_000, () => this.advanceWorkflowStep(id))
   }
+  private refreshStaleVerification(id: string, w: NativeWorkflow): void {
+    const evidence = w.verification,
+      provenance = evidence?.provenance
+    if (!evidence || !provenance || provenance.policyDigest === nativePolicyDigest(this.policy)) return
+    if (w.prNumber || w.mergedSha || this.store.list("operation").some((op) => op.id.startsWith(`${id}:`)))
+      throw new NativeReleasePending(
+        "Policy changed after release effects began; reconcile accepted release before refreshing evidence"
+      )
+    // Only intact, successful evidence for this exact candidate may be retired.
+    // A changed policy is not permission to discard tampered or foreign receipts.
+    assertNativeProvenance(provenance.policySnapshot, evidence, {
+      workflowId: id,
+      attemptId: w.lifecycle!.attemptId,
+      skillDigest: w.proposal.quality?.skillHash ?? nativeContentDigest(w.proposal.implementationPrompt)
+    })
+    if (provenance.repositoryId !== nativeRepositoryIdentity(this.policy))
+      throw new Error("Stale verification belongs to another repository")
+    assertNativeVerificationEvidence(
+      provenance.policySnapshot,
+      w.candidate!,
+      evidence,
+      w.proposal.acceptance,
+      provenance.policySnapshot.verificationAuthority?.independentCandidateReview
+        ? { headSha: w.candidate!.headSha, reviewedBy: provenance.policySnapshot.reviewerAgentId }
+        : undefined
+    )
+    const receiptDigest = nativeVerificationDigest(evidence)
+    const retired = {
+      verification: evidence,
+      review: w.review,
+      designReview: w.designReview,
+      stageCards: { ...w.stageCards },
+      reviewCardId: w.reviewCardId,
+      designCardId: w.designCardId,
+      reason: "Policy changed; preserve candidate and regenerate verification and independent reviews"
+    }
+    delete w.verification
+    delete w.review
+    delete w.reviewCardId
+    delete w.designReview
+    delete w.designCardId
+    delete w.designCardDigest
+    delete w.designEvidenceComplete
+    delete w.stageCards.Verify
+    delete w.stageCards.Review
+    w.lifecycle = transitionNativeLifecycle(w.lifecycle!, "design_wait", w)
+    this.store.commit(
+      [
+        { kind: "verification-history", id: `${id}:${receiptDigest}`, value: retired },
+        { kind: "workflow", id, value: w }
+      ],
+      {
+        kind: "verification.invalidated",
+        subject: id,
+        value: {
+          receiptDigest,
+          previousPolicyDigest: provenance.policyDigest,
+          policyDigest: nativePolicyDigest(this.policy),
+          attemptId: w.lifecycle.attemptId,
+          headSha: w.candidate!.headSha
+        }
+      }
+    )
+  }
   async advanceWorkflowStep(id: string): Promise<number> {
     let advanced = 0
     const w = this.requireWorkflow(id)
@@ -1428,6 +1512,7 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!nativeModeAllows(this.policy, "verify")) return advanced
+      this.refreshStaleVerification(id, w)
       if (
         this.policy.verificationAuthority?.independentCandidateReview === true &&
         w.designReview?.verdict === "changes_requested" &&
@@ -1449,7 +1534,12 @@ export class NativeAutonomyRuntime {
           throw new Error(
             "Legacy candidate lacks authenticated submission identity; use an explicit retry recovery plan"
           )
-        this.reserveBudget(id, w.lifecycle!.attemptId, "verify", `verify:${id}:${w.lifecycle!.attemptId}`)
+        this.reserveBudget(
+          id,
+          w.lifecycle!.attemptId,
+          "verify",
+          `verify:${id}:${w.lifecycle!.attemptId}:${nativePolicyDigest(this.policy)}`
+        )
         const cardId = await this.stage(id, w, "Verify", "blocked", "Independent commit-bound verification")
         const verification = await this.withCapacity(
           "verification",
@@ -1459,7 +1549,14 @@ export class NativeAutonomyRuntime {
               verifyNativeCandidate(
                 this.policy,
                 w.candidate!,
-                resolve(this.policy.repository, ".openclaw/native-artifacts", id, w.candidate!.headSha),
+                resolve(
+                  this.policy.repository,
+                  ".openclaw/native-artifacts",
+                  id,
+                  w.candidate!.headSha,
+                  nativeContentDigest(w.lifecycle!.attemptId),
+                  nativePolicyDigest(this.policy)
+                ),
                 this.control.signal,
                 {
                   authorize: () => {

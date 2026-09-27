@@ -7,7 +7,6 @@ import {
   nativeHighRiskPaths,
   nativePathAllowed,
   nativeProblemKey,
-  nativeVerificationRuleId,
   qualityText,
   selectNativeImprovements,
   selectNativePersonas,
@@ -27,6 +26,7 @@ import { nativeSkillPolicyDigest, resolveNativeSkill } from "./skills.js"
 import { redactNativeSourceText } from "./source-redaction.js"
 import { nativePolicyTraceDigest, withNativeStageTrace } from "./telemetry.js"
 import { nativeGit, nativeGitRaw, planNativeVerification } from "./verification.js"
+import { nativeVerificationCommandContext } from "./verification-context.js"
 
 export interface Investigation {
   roundId: string
@@ -76,7 +76,7 @@ export class NativeQualityRuntime {
       proposal: w.proposal,
       policy: this.policy,
       changes: w.riskAssessment?.changesDigest,
-      reviewerEvidenceVersion: 4
+      reviewerEvidenceVersion: 5
     })
   }
   requiresDesign(w: NativeWorkflow): boolean {
@@ -197,9 +197,7 @@ export class NativeQualityRuntime {
           ? {
               ...verificationPlan,
               headSha: w.candidate!.headSha,
-              commands: this.policy.verification
-                .filter((command) => verificationPlan.ruleIds.includes(nativeVerificationRuleId(command)))
-                .map((command) => ({ ruleId: nativeVerificationRuleId(command), ...command })),
+              commands: await nativeVerificationCommandContext(this.policy, w.candidate!.files),
               executionEvidence: "pending-independent-verification"
             }
           : null,
