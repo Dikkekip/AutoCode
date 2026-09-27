@@ -20,7 +20,7 @@ Sandboxed roles need Autocode and Workboard tools allowed in both the role tool 
 
 The submission broker rejects outside-scope files and symlinks, snapshots bounded regular source files through checked file descriptors, and uses Git plumbing with hooks and filters disabled. It preserves untracked runtime persona notes locally and excludes them from the candidate. An ended implementation without a submission becomes an explicit recovery blocker; retry preserves the prior attempt and requires an operator recovery decision.
 
-Verification and review rejection allow at most two repair handoffs against the preserved worktree. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
+Verification and review rejection allow at most two repair handoffs against the preserved worktree. With `verificationAuthority.independentCandidateReview` enabled, commit-bound design changes also use this shared repair limit. The repair receives the structured findings, retains the rejected candidate and review receipt, and requires fresh design approval, verification and final acceptance. Reviewers receive the policy-selected commands and per-file coverage as a plan, never as execution evidence. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
 
 ## Optional native coder pool
 

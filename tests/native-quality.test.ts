@@ -59,7 +59,7 @@ class Gateway implements NativeGateway {
   }
 }
 const fixtureSkill = "# Prompt Engineering Expert\nCreate concrete prompts with acceptance criteria and non-goals."
-function setup(skill = fixtureSkill, highRiskPaths?: string[]) {
+function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandidateReview = false) {
   const root = mkdtempSync(join(tmpdir(), "native-quality-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim()
@@ -96,6 +96,9 @@ function setup(skill = fixtureSkill, highRiskPaths?: string[]) {
       ideationPrompt: "Inspect missing source links"
     })),
     verification: [{ argv: [process.execPath, "-e", "process.exit(0)"], cwd: ".", timeoutSeconds: 10 }],
+    ...(independentCandidateReview
+      ? { verificationAuthority: { reviewedRevision: "fixture", independentCandidateReview: true } }
+      : {}),
     deployment: null
   })
   const gateway = new Gateway(),
@@ -574,6 +577,13 @@ describe("native quality investigations", () => {
       subsequentGates: ["commit-bound verification", "independent acceptance review"]
     })
     expect(notes.instructions).toContain("never claim a test ran")
+    expect(notes.plannedVerification).toMatchObject({
+      headSha: held.candidate!.headSha,
+      executionEvidence: "pending-independent-verification",
+      uncoveredPaths: [],
+      coverage: [{ path: "src/auth/login.ts", ruleIds: [expect.any(String)], exemptionIds: [] }],
+      commands: [{ ruleId: expect.any(String), argv: s.policy.verification[0]!.argv }]
+    })
     expect(notes.instructions).toContain("design approval cannot satisfy or bypass those gates")
     const design = s.gateway.cards.find((card) => card.id === held.designCardId)
     design.status = "running"
@@ -628,6 +638,69 @@ describe("native quality investigations", () => {
     const events = s.store.db.prepare("SELECT kind,data FROM native_events WHERE subject=?").all(workflowId)
     expect(events.some((e) => e.kind === "design.invalidated")).toBe(true)
     expect(events.some((e) => e.kind === "risk.classified" && String(e.data).includes("src/auth/login.ts"))).toBe(true)
+  })
+  it.each([
+    0, 2
+  ])("routes candidate design changes through the bounded repair loop (prior repairs %s)", async (repairCount) => {
+    const s = setup(fixtureSkill, undefined, true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    writeFileSync(join(worktree, "src/view.ts"), "export const navigation = true\n")
+    const coder = s.gateway.cards.find((card) => card.id === w.implementationCardId)
+    coder.status = "running"
+    coder.sessionKey = "coder-session"
+    coder.metadata = { automation: { workspace: { path: worktree } } }
+    await s.runtime.submit("coder", coder.sessionKey, workflowId, worktree)
+    coder.status = "done"
+    const submitted = s.runtime.requireWorkflow(workflowId)
+    submitted.repairCount = repairCount
+    s.store.put("workflow", workflowId, submitted)
+    const design = s.gateway.cards.find((card) => card.id === submitted.designCardId)
+    design.status = "running"
+    design.sessionKey = "design-session"
+    const rejected = {
+      criteria: [{ criterion: "User opens source", satisfied: false, evidence: "Regression masks the missing guard" }],
+      findings: [{ blocking: true, description: "Reproduce without the unrelated invalidation" }]
+    }
+    await s.runtime.quality.designReview(
+      "reviewer",
+      design.sessionKey,
+      workflowId,
+      "changes_requested",
+      "Fix isolated reproduction",
+      rejected
+    )
+    design.status = "done"
+    expect(s.runtime.requireWorkflow(workflowId).lifecycle?.state).toBe("design_wait")
+    await s.runtime.reconcile()
+    const result = s.runtime.requireWorkflow(workflowId)
+    const repairs = s.gateway.cards.filter((card) => card.title.startsWith("Repair "))
+    if (repairCount === 2) {
+      expect(repairs).toHaveLength(0)
+      expect(result.blocker).toContain("Repair budget exhausted")
+      expect(result.candidate?.headSha).toBe(submitted.candidate!.headSha)
+      expect(result.designReview?.verdict).toBe("changes_requested")
+    } else {
+      expect(repairs).toHaveLength(1)
+      expect(result.lifecycle?.state).toBe("implementation")
+      expect(result.candidate).toBeUndefined()
+      expect(result.designReview).toBeUndefined()
+      expect(result.designCardId).toBeUndefined()
+      expect(result.verification).toBeUndefined()
+      expect(result.review).toBeUndefined()
+      expect(s.store.list<any>("attempt-evidence")[0]!.value).toMatchObject({
+        candidate: { headSha: submitted.candidate!.headSha },
+        designReview: { verdict: "changes_requested", assessment: rejected }
+      })
+      const pointer = JSON.parse(repairs[0].notes)
+      const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+      expect(notes.designReview.assessment).toEqual(rejected)
+      await s.runtime.reconcile()
+      expect(s.gateway.cards.filter((card) => card.title.startsWith("Repair "))).toHaveLength(1)
+    }
   })
   it("does not accept approval missing acceptance proof or carrying blocking findings", () => {
     expect(() => validateNativeAssessment({ criteria: [], findings: [] }, ["User opens source"], true)).toThrow(/every/)

@@ -7,6 +7,7 @@ import {
   nativeHighRiskPaths,
   nativePathAllowed,
   nativeProblemKey,
+  nativeVerificationRuleId,
   qualityText,
   selectNativeImprovements,
   selectNativePersonas,
@@ -25,7 +26,7 @@ import type { NativeAutonomyRuntime, NativeWorkflow } from "./runtime.js"
 import { nativeSkillPolicyDigest, resolveNativeSkill } from "./skills.js"
 import { redactNativeSourceText } from "./source-redaction.js"
 import { nativePolicyTraceDigest, withNativeStageTrace } from "./telemetry.js"
-import { nativeGit, nativeGitRaw } from "./verification.js"
+import { nativeGit, nativeGitRaw, planNativeVerification } from "./verification.js"
 
 export interface Investigation {
   roundId: string
@@ -75,7 +76,7 @@ export class NativeQualityRuntime {
       proposal: w.proposal,
       policy: this.policy,
       changes: w.riskAssessment?.changesDigest,
-      reviewerEvidenceVersion: 3
+      reviewerEvidenceVersion: 4
     })
   }
   requiresDesign(w: NativeWorkflow): boolean {
@@ -177,6 +178,7 @@ export class NativeQualityRuntime {
       reason: "Classified committed diff is unavailable; additional repository evidence is required before approval."
     }))
     w.designEvidenceComplete = committedDiff?.complete ?? true
+    const verificationPlan = w.candidate ? planNativeVerification(this.policy, w.candidate.files) : null
     const card = await this.runtime.createCard({
       boardId: this.policy.boardId,
       title: `Design review: ${w.proposal.title}`,
@@ -191,6 +193,16 @@ export class NativeQualityRuntime {
         proposal: w.proposal,
         riskAssessment: w.riskAssessment,
         committedDiff,
+        plannedVerification: verificationPlan
+          ? {
+              ...verificationPlan,
+              headSha: w.candidate!.headSha,
+              commands: this.policy.verification
+                .filter((command) => verificationPlan.ruleIds.includes(nativeVerificationRuleId(command)))
+                .map((command) => ({ ruleId: nativeVerificationRuleId(command), ...command })),
+              executionEvidence: "pending-independent-verification"
+            }
+          : null,
         reviewContract: {
           stage: "design",
           criterionMeaning: "The design and planned verification adequately address this acceptance criterion.",
@@ -1122,12 +1134,15 @@ export class NativeQualityRuntime {
       ...(w.proposal.quality ? { skillDigest: w.proposal.quality.skillHash } : {})
     }
     this.store.event("design.reviewed", workflowId, { verdict, digest, sessionKey })
-    if (verdict !== "approved") w.blocker = `Design changes required: ${rationale}`
+    const repairable = !!w.candidate && this.policy.verificationAuthority?.independentCandidateReview === true
+    if (verdict !== "approved" && !repairable) w.blocker = `Design changes required: ${rationale}`
     this.runtime.transitionWorkflow(
       workflowId,
       w,
       verdict !== "approved"
-        ? "blocked"
+        ? repairable
+          ? "design_wait"
+          : "blocked"
         : w.review?.verdict === "approved"
           ? "release"
           : w.verification

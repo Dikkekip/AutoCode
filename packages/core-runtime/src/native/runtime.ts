@@ -1248,6 +1248,7 @@ export class NativeAutonomyRuntime {
       candidate: workflow.candidate,
       verification: workflow.verification,
       review: workflow.review,
+      designReview: workflow.designReview,
       signature,
       reason
     })
@@ -1266,6 +1267,7 @@ export class NativeAutonomyRuntime {
         candidate: workflow.candidate,
         verification: this.verificationForAgent(workflow.verification),
         review: workflow.review,
+        designReview: workflow.designReview,
         instructions:
           "Repair the preserved implementation within its admitted scope. Make a real correction; do not weaken required tests. The submission broker records the scoped commit. Call autocode_submit with workflowId and worktreePath, then workboard_complete. Independent verification and review will run again."
       })
@@ -1276,6 +1278,10 @@ export class NativeAutonomyRuntime {
     delete workflow.verification
     delete workflow.review
     delete workflow.reviewCardId
+    delete workflow.designReview
+    delete workflow.designCardId
+    delete workflow.designCardDigest
+    delete workflow.designEvidenceComplete
     delete workflow.blocker
     workflow.lifecycle = nextNativeAttempt(previousLifecycle, workflow)
     this.store.commit(
@@ -1422,6 +1428,15 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!nativeModeAllows(this.policy, "verify")) return advanced
+      if (
+        this.policy.verificationAuthority?.independentCandidateReview === true &&
+        w.designReview?.verdict === "changes_requested" &&
+        w.designReview.digest === this.quality.designDigest(w)
+      ) {
+        this.control.assert()
+        await this.requestRepair(id, w, `Design changes required: ${w.designReview.rationale}`)
+        return advanced + 1
+      }
       if (!(await this.quality.ensureDesign(id, w))) return advanced
       this.control.assert()
       if (w.review?.verdict === "changes_requested") {
