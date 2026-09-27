@@ -131,9 +131,13 @@ export class NativeCliGateway implements NativeGateway {
     const timeout =
       method === "autocode.reconcile"
         ? 7_200_000
-        : ["autocode.policy.refresh.apply", "autocode.discover", "autocode.dispatch", "autocode.doctor"].includes(
-              method
-            )
+        : [
+              "autocode.policy.refresh.apply",
+              "autocode.discover",
+              "autocode.dispatch",
+              "autocode.doctor",
+              "autocode.resume"
+            ].includes(method)
           ? 180_000
           : 30_000
     return new Promise((resolve, reject) => {

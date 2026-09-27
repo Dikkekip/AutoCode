@@ -20,6 +20,7 @@ it.each([
   ["autocode.dispatch", 180000],
   ["autocode.policy.refresh.plan", 30000],
   ["autocode.doctor", 180000],
+  ["autocode.resume", 180000],
   ["autocode.status", 30000],
   ["autocode.reconcile", 7200000]
 ])("passes the bounded public CLI deadline for %s", async (method, timeout) => {
