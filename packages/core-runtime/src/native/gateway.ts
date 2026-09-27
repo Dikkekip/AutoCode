@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process"
+import { createHash } from "node:crypto"
 import { accessSync, constants, realpathSync, statSync } from "node:fs"
 import { createRequire } from "node:module"
 import { delimiter, isAbsolute, resolve, sep } from "node:path"
@@ -267,6 +268,13 @@ export async function nativeCards(gateway: NativeGateway, boardId: string): Prom
   return cards
 }
 export async function nativeCard(gateway: NativeGateway, input: Record<string, unknown>): Promise<NativeCard> {
-  const result = nativeObject(await gateway.request("workboard.cards.create", input), "Workboard cards.create")
+  // Keep the complete correlation key in the native effect journal. Workboard's
+  // public contract limits its external key to 160 characters.
+  const key = input.idempotencyKey
+  const external =
+    typeof key === "string" && key.length > 160
+      ? { ...input, idempotencyKey: `native-card:${createHash("sha256").update(key).digest("hex")}` }
+      : input
+  const result = nativeObject(await gateway.request("workboard.cards.create", external), "Workboard cards.create")
   return decodeNativeCard(result.card, typeof input.boardId === "string" ? input.boardId : undefined)
 }

@@ -58,6 +58,13 @@ The native CLI allows three minutes for resume readiness and workspace config
 updates, matching the existing doctor deadline. A timed-out caller does not prove
 the server rejected a mutation; inspect live state before retrying it.
 
+Workboard accepts idempotency keys up to 160 characters. Longer native stage
+keys are hashed at the external adapter boundary; the full candidate, attempt
+and policy binding stays in the native effect journal. A lost response replays
+the same external key, and different verification policies or review receipts
+remain distinct. Production-length identities are covered by contract and replay
+tests.
+
 Operational recovery also required restarting a gateway whose own SQLite
 lifecycle lock prevented Workboard access. The restart restored access; it does
 not establish a permanent fix for the upstream lock lifecycle. Dispatch and

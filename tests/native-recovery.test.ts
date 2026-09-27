@@ -75,6 +75,36 @@ it("explains state and produces a deterministic plan without writing records or 
   expect(s.store.db.prepare("SELECT count(*) AS n FROM native_events").get()?.n).toBe(before)
   expect(s.requests.every((request) => request === "workboard.cards.list")).toBe(true)
 })
+it("replays a long card key after a lost response without changing its journal or duplicating the remote card", async () => {
+  const s = setup()
+  const input = {
+    boardId: "board",
+    title: "Verify",
+    status: "blocked",
+    notes: "Independent verification",
+    idempotencyKey: `workflow:${"a".repeat(64)}:Verify:${"b".repeat(40)}:${"a".repeat(64)}:attempt:4:${"c".repeat(64)}`
+  }
+  const request = s.runtime.gateway.request.bind(s.runtime.gateway)
+  let loseResponse = true
+  s.runtime.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.create" && String(params.idempotencyKey).length > 160)
+      throw new Error("Workboard key exceeds 160 characters")
+    const result = await request(method, params)
+    if (method === "workboard.cards.create" && loseResponse) {
+      loseResponse = false
+      throw new Error("Response lost after remote creation")
+    }
+    return result
+  }
+  await expect(s.runtime.createCard(input)).rejects.toThrow(/Response lost/)
+  const journalId = `card:${input.idempotencyKey}`
+  expect(s.store.get<any>("effect-intent", journalId)).toMatchObject({ input, state: "pending" })
+  const created = await s.runtime.createCard(input)
+  expect(s.store.get<any>("effect-intent", journalId)).toMatchObject({ input, card: created, state: "confirmed" })
+  expect(await s.runtime.createCard(input)).toEqual(created)
+  expect(s.cards).toHaveLength(3)
+  expect(s.cards[2].key.length).toBeLessThanOrEqual(160)
+})
 it.each(["running", "ready", "scheduled", "review"])("refuses recovery while owned card is %s", async (status) => {
   const s = setup()
   s.cards[1].status = status
