@@ -76,7 +76,7 @@ export class NativeQualityRuntime {
       proposal: w.proposal,
       policy: this.policy,
       changes: w.riskAssessment?.changesDigest,
-      reviewerEvidenceVersion: 5
+      reviewerEvidenceVersion: 6
     })
   }
   requiresDesign(w: NativeWorkflow): boolean {

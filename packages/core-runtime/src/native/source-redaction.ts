@@ -114,7 +114,26 @@ function queryReference(source: string, start: number): { key: number; end: numb
   return { key, end: cursor }
 }
 
-function protectReferenceNames(source: string, marker: string, queryMarker: string): string {
+// A dotted JavaScript member reference can resemble the command filter's broad
+// JWT pattern. Protect its separators only in source code, never in strings or
+// comments. A base64url JSON header remains credential-shaped even when bare.
+function memberReference(source: string, start: number): string | undefined {
+  const spread = source.slice(start - 3, start) === "..." && !/[\w$.]/.test(source[start - 4] ?? "")
+  if (!spread && /[\w$.-]/.test(source[start - 1] ?? "")) return undefined
+  const reference = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,}/.exec(source.slice(start, start + 4096))?.[0]
+  if (!reference || /[\w$.-]/.test(source[start + reference.length] ?? "")) return undefined
+  const header = reference.slice(0, reference.indexOf("."))
+  if (/^eyJ/.test(header)) return undefined
+  try {
+    const decoded = JSON.parse(Buffer.from(header, "base64url").toString("utf8"))
+    if (decoded && typeof decoded === "object") return undefined
+  } catch {
+    // Ordinary identifiers are not JWT headers.
+  }
+  return reference
+}
+
+function protectReferenceNames(source: string, marker: string, queryMarker: string, dotMarker: string): string {
   const chunks: string[] = []
   let copied = 0
   let cursor = 0
@@ -146,6 +165,13 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
         copied = key + 3
       }
       cursor = tag.end
+    } else if (/[A-Za-z_$]/.test(char ?? "")) {
+      const reference = memberReference(source, cursor)
+      if (reference) {
+        chunks.push(source.slice(copied, cursor), reference.split(".").join(dotMarker))
+        copied = cursor + reference.length
+        cursor = copied
+      } else cursor++
     } else cursor++
   }
   chunks.push(source.slice(copied))
@@ -188,9 +214,14 @@ export function redactNativeSourceText(source: string): string {
   let querySerial = 0
   while (occupiedQueries.has(String(querySerial))) querySerial++
   const queryMarker = `__SOURCE_QUERY_REFERENCE_${querySerial}__`
-  const prepared = protectReferenceNames(source, marker, queryMarker)
+  const occupiedDots = new Set(Array.from(source.matchAll(/__SOURCE_MEMBER_DOT_(\d+)__/g), (match) => match[1]))
+  let dotSerial = 0
+  while (occupiedDots.has(String(dotSerial))) dotSerial++
+  // Non-identifier punctuation keeps adjacent credential-token scanning intact.
+  const dotMarker = `:__SOURCE_MEMBER_DOT_${dotSerial}__:`
+  const prepared = protectReferenceNames(source, marker, queryMarker, dotMarker)
   const literals = redactQuotedAssignments(prepared)
   const pem = literals.replace(PRIVATE_KEY_BLOCK, "$1\n***REDACTED***\n$3")
   const redacted = redactLogText(redactCommandText(pem))
-  return redacted.split(marker).join("key").split(queryMarker).join("Key")
+  return redacted.split(marker).join("key").split(queryMarker).join("Key").split(dotMarker).join(".")
 }

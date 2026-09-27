@@ -447,6 +447,7 @@ describe("native quality investigations", () => {
   it.each([
     ["ordinary", "export const navigation = true\n", true],
     ["query reference", "const detailKey = reportsQueryKeys.bundle({ bundleId });\n", true],
+    ["member reference", "execution.recovery.outcomes = [];\n", true],
     [
       "query with credential",
       'const detailKey = reportsQueryKeys.bundle({ bundleId }); API_KEY="synthetic-review-secret"\n',
@@ -725,8 +726,12 @@ describe("native quality investigations", () => {
       expect(result.designCardId).toBeUndefined()
       expect(result.verification).toBeUndefined()
       expect(result.review).toBeUndefined()
+      expect(result.riskAssessment).toBeUndefined()
+      expect(result.submission).toBeUndefined()
       expect(s.store.list<any>("attempt-evidence")[0]!.value).toMatchObject({
         candidate: { headSha: submitted.candidate!.headSha },
+        riskAssessment: submitted.riskAssessment,
+        submission: submitted.submission,
         designReview: { verdict: "changes_requested", assessment: rejected }
       })
       const pointer = JSON.parse(repairs[0].notes)
@@ -734,6 +739,9 @@ describe("native quality investigations", () => {
       expect(notes.designReview.assessment).toEqual(rejected)
       await s.runtime.reconcile()
       expect(s.gateway.cards.filter((card) => card.title.startsWith("Repair "))).toHaveLength(1)
+      expect(repairs[0].status).toBe("ready")
+      expect(s.runtime.requireWorkflow(workflowId).lifecycle?.state).toBe("implementation")
+      expect(s.gateway.cards.filter((card) => card.title.startsWith("Design review:"))).toHaveLength(1)
     }
   })
   it("does not accept approval missing acceptance proof or carrying blocking findings", () => {

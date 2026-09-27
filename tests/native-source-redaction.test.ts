@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest"
 import { redactNativeSourceText } from "../packages/core-runtime/src/native/source-redaction.js"
 
+describe("member references that resemble command JWTs", () => {
+  it.each([
+    "+        execution.recovery.inspectedTaskCount = 3;",
+    "+        execution.recovery.outcomes = [execution.recovery.outcomes[0]];",
+    "+        const item = { ...execution.recovery.outcomes[0] };",
+    "+        {execution.recovery.outcomes.map((result) => result.taskId)}",
+    "__SOURCE_MEMBER_DOT_0__ execution.recovery.countsByOutcome = {};"
+  ])("preserves source reference %s", (source) => {
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it.each([
+    'const token = "abcdefgh.ijklmnop.qrstuvwx";',
+    "// abcdefgh.ijklmnop.qrstuvwx",
+    "/* abcdefgh.ijklmnop.qrstuvwx */",
+    "const token = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.abcdefghijklmnopqrst;",
+    'execution.recovery.outcomes = []; API_KEY="credential123";',
+    "execution.recovery.ghp_abcdefghijklmnopqrstuvwxyz012345"
+  ])("retains credential filtering: %s", (source) => {
+    const redacted = redactNativeSourceText(source)
+    expect(redacted).not.toBe(source)
+    expect(redacted).not.toContain("abcdefgh.ijklmnop.qrstuvwx")
+    expect(redacted).not.toContain("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.abcdefghijklmnopqrst")
+    expect(redacted).not.toContain("credential123")
+    expect(redacted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz012345")
+  })
+})
+
 describe("keyboard comparisons in committed diffs", () => {
   it.each([
     "       if (event.key === 'Escape') {",

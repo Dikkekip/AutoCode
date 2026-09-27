@@ -170,7 +170,7 @@ it("gives an operator retry two repairs without reusing historical cards or evid
   const s = setup(undefined, 5)
   s.workflow.repairCount = 2
   s.store.put("workflow", "workflow", s.workflow)
-  const oldEvidence = { reason: "Prior repair", candidate: { headSha: "old" } }
+  const oldEvidence = { reason: "Prior interrupted repair without a candidate" }
   s.store.put("attempt-evidence", "workflow:1", oldEvidence)
   s.cards.push({ id: "old-repair", title: "Prior repair", status: "done", key: "workflow:workflow:repair:1" })
   const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Operator repaired the infrastructure")
@@ -277,7 +277,11 @@ it.each(["pending", "running"])("refuses recovery with a %s execution even if th
   await expect(s.runtime.applyWorkflowRecovery(plan, "operator")).rejects.toThrow(/owned Workboard/)
 })
 
-it("carries the operator diagnosis and preserved commit into the fresh recovery context", async () => {
+it.each([
+  "workflow",
+  "attempt-evidence",
+  "legacy-attempt-evidence"
+])("carries the operator diagnosis and preserved %s commit into the fresh recovery context", async (source) => {
   const candidate = {
     cwd: "/preserved/candidate",
     baseSha: "a".repeat(40),
@@ -305,6 +309,14 @@ it("carries the operator diagnosis and preserved commit into the fresh recovery 
   candidate.headSha = git("rev-parse", "HEAD")
   s.workflow.candidate = candidate as any
   s.workflow.lifecycle = transitionNativeLifecycle(s.workflow.lifecycle!, "blocked", s.workflow)
+  if (source !== "workflow") {
+    s.store.put("attempt-evidence", "workflow:1", {
+      candidate,
+      ...(source === "attempt-evidence" ? { lifecycle: s.workflow.lifecycle } : {})
+    })
+    delete s.workflow.candidate
+    s.workflow.lifecycle = upgradeNativeLifecycle("workflow", { blocker: "Repair ended without submission" })
+  }
   s.store.put("workflow", "workflow", s.workflow)
   const reason = "Rebase preserved fix; previous verification failed because the baseline fixture was stale."
   const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
@@ -316,11 +328,13 @@ it("carries the operator diagnosis and preserved commit into the fresh recovery 
     baseSha: candidate.baseSha,
     headSha: candidate.headSha,
     files: candidate.files,
+    attemptId: "workflow:attempt:0",
     complete: true
   })
   expect(notes.previousCandidate.cwd).toBeUndefined()
   expect(notes.previousCandidate.content).toContain("+after")
   expect(intent.input.workspace.sourceBranch).toBe("origin/main")
   expect(s.store.get<any>("workflow", "workflow").candidate).toBeUndefined()
-  expect(s.store.list<any>("attempt-history")[0]!.value.candidate).toEqual(candidate)
+  if (source === "workflow") expect(s.store.list<any>("attempt-history")[0]!.value.candidate).toEqual(candidate)
+  else expect(s.store.get<any>("attempt-evidence", "workflow:1").candidate).toEqual(candidate)
 })

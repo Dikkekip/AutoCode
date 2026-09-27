@@ -600,7 +600,7 @@ export class NativeAutonomyRuntime {
         const workflow = this.store.get<NativeWorkflow>("workflow", workflowId)!
         const previous = workflow.lifecycle ?? upgradeNativeLifecycle(workflowId, workflow)
         const before = structuredClone(workflow)
-        let evidenceArchive: { id: string; version: number } | undefined
+        let evidenceArchive: { kind: string; id: string; version: number } | undefined
         this.store.put("recovery", plan.digest, { state: "prepared", plan, operator })
         if (plan.action === "archive") workflow.archivedAt = new Date().toISOString()
         else {
@@ -616,19 +616,34 @@ export class NativeAutonomyRuntime {
           if (plan.action === "retry") {
             // A failed recovery may have no new candidate. Preserve the most recent
             // candidate-bearing attempt in this workflow rather than losing its work.
-            const archived = this.store
-              .list<NativeWorkflow>("attempt-history")
-              .filter((item) => item.id.startsWith(`${workflowId}:`) && item.value.candidate)
-              .sort(
-                (a, b) =>
-                  (b.value.lifecycle?.attempt ?? -1) - (a.value.lifecycle?.attempt ?? -1) || a.id.localeCompare(b.id)
-              )[0]
+            const archived = ["attempt-history", "attempt-evidence"]
+              .flatMap((kind) =>
+                this.store.list<NativeWorkflow>(kind).flatMap((item) => {
+                  if (!item.id.startsWith(`${workflowId}:`) || !item.value.candidate) return []
+                  // Legacy repair evidence is indexed by the following attempt.
+                  const suffix = item.id.slice(workflowId.length + 1)
+                  const attempt =
+                    item.value.lifecycle?.attempt ??
+                    (kind === "attempt-evidence" && /^\d+$/.test(suffix) ? Number(suffix) - 1 : -1)
+                  if (attempt < 0 || attempt > previous.attempt) return []
+                  return [{ ...item, kind, attempt }]
+                })
+              )
+              .sort((a, b) => b.attempt - a.attempt || a.id.localeCompare(b.id))[0]
             const preserved = before.candidate ? before : archived?.value
             if (!before.candidate && archived)
-              evidenceArchive = { id: archived.id, version: this.store.version("attempt-history", archived.id) }
+              evidenceArchive = {
+                kind: archived.kind,
+                id: archived.id,
+                version: this.store.version(archived.kind, archived.id)
+              }
             const previousCandidate = preserved?.candidate
               ? await nativeRecoveryEvidence(this.policy.repository, workflow.proposal.allowedPaths, {
-                  attemptId: preserved.lifecycle?.attemptId ?? previous.attemptId,
+                  attemptId:
+                    preserved.lifecycle?.attemptId ??
+                    (before.candidate
+                      ? previous.attemptId
+                      : previous.attemptId.replace(/:attempt:\d+$/, `:attempt:${archived!.attempt}`)),
                   archiveRecordId: evidenceArchive?.id ?? `${workflowId}:${previous.attemptId}:${plan.digest}`,
                   archiveRecordVersion: evidenceArchive?.version ?? 1,
                   candidate: preserved.candidate
@@ -718,7 +733,7 @@ export class NativeAutonomyRuntime {
           () => {
             if (
               evidenceArchive &&
-              this.store.version("attempt-history", evidenceArchive.id) !== evidenceArchive.version
+              this.store.version(evidenceArchive.kind, evidenceArchive.id) !== evidenceArchive.version
             )
               throw new Error("Preserved recovery attempt changed during evidence preparation")
             if (this.control.state.revision !== plan.snapshot.control.revision || !this.control.state.paused)
@@ -1266,10 +1281,13 @@ export class NativeAutonomyRuntime {
     const attempt = previousLifecycle.attempt + 1
     const signature = createHash("sha256").update(reason).digest("hex")
     this.store.put("attempt-evidence", `${id}:${attempt}`, {
+      lifecycle: previousLifecycle,
       candidate: workflow.candidate,
       verification: workflow.verification,
       review: workflow.review,
       designReview: workflow.designReview,
+      riskAssessment: workflow.riskAssessment,
+      submission: workflow.submission,
       signature,
       reason
     })
@@ -1303,6 +1321,8 @@ export class NativeAutonomyRuntime {
     delete workflow.designCardId
     delete workflow.designCardDigest
     delete workflow.designEvidenceComplete
+    delete workflow.riskAssessment
+    delete workflow.submission
     delete workflow.blocker
     workflow.lifecycle = nextNativeAttempt(previousLifecycle, workflow)
     this.store.commit(
