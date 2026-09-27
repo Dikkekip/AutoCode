@@ -24,9 +24,24 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["health"], "observed")
         self.assertEqual(result["gateway"]["modelCatalog"]["pendingTasks"], 1)
 
-    def test_unavailable_runtime_readiness_is_reported(self):
-        result = monitor.summarize("demo", {"enabled": True}, [], [], 1, {})
-        self.assertIn("gateway model runtime readiness is unavailable", result["issues"])
+    def test_optional_startup_projection_is_an_evidence_gap(self):
+        now = 2_000_000
+        jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
+                 "state": {"lastRunAtMs": now, "lastRunStatus": "ok"}}
+                for r in ("discover", "dispatch", "reconcile")]
+        # Actual 2026.9.6 status shape after config publication: startup
+        # projection omitted, while worker pool facts remain present.
+        gateway = {"runtimeVersion": "2026.9.6", "workerPools": {
+            "modelCatalog": {"activeTasks": 1, "pendingTasks": 1}}}
+        result = monitor.summarize("demo", {"enabled": True}, [], jobs, now, gateway)
+        self.assertEqual(result["health"], "observed")
+        self.assertFalse(result["gateway"]["modelRuntimeReported"])
+        self.assertIsNone(result["gateway"]["modelRuntime"])
+        self.assertIn("unreported readiness", result["evidenceLimit"])
+        gateway["modelRuntime"] = {"degraded": True, "pendingAgents": []}
+        result = monitor.summarize("demo", {"enabled": True}, [], jobs, now, gateway)
+        self.assertEqual(result["health"], "attention")
+        self.assertTrue(result["gateway"]["modelRuntimeReported"])
 
     def test_green_schedules_do_not_hide_stalled_work(self):
         now = 2_000_000

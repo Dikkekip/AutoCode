@@ -122,6 +122,47 @@ admission root cause: static turn admission and background catalog discovery are
 separate paths. Preserve the profile and correlate accepted run IDs with trajectory
 events and terminal outcomes before changing runtime guards or retrying work.
 
+Built-in timeline tracing narrowed the observed Codex stall to `agent.startup`
+stage `model-selection`; session preparation completed in about 109 ms. Native
+runtimes always request thinking-catalog hydration, and the published owner's
+native lookup can queue behind a pending catalog acquisition. An explicitly
+configured `openclaw` runtime avoided that path: the Luna gateway canary completed
+in 7.6 seconds, with requested/effective/response model `gpt-6-luna`, no fallback,
+and `agentHarnessId: openclaw`. Its model-selection stage took about 10 ms.
+This is an alternative execution runtime, not a repair to Codex catalog loading.
+Validate sandbox tools and framework tool access as well as exact-model text
+receipts before using it for coding. Keep a private configuration backup and
+preserve account order, tool permissions, verification gates, and human review.
+
+```json
+{"agents":{"defaults":{"models":{
+  "openai/gpt-6-luna":{"agentRuntime":{"id":"openclaw"}}
+}}}}
+```
+
+The same built-in runtime subsequently passed Sol and Astra gateway canaries with
+exact response-model identity and no fallback. Sol executed `pwd` through the
+sandbox tool bridge and returned `/workspace`. The active role split uses Sol for
+`coder` and `coder-3`, Luna for `coder-2`, and keeps Astra for planning/review and
+most research roles. Each selected model has an explicit `openclaw` runtime.
+
+After the doctor checks passed, native execution and the three schedules were
+resumed with `implement-human-review` unchanged. A fresh Workboard research
+session completed successfully with 45 tool calls, including authenticated
+context, source inspection, proposal registration, investigation completion, and
+Workboard completion. The controller started the next researcher automatically.
+This proves research/tool handoff through the framework; it does not yet prove a
+new implementation, passed verification, or release. Keep observing the planner
+and coding handoffs and retain previous blocked attempts and review gates.
+
+For targeted timings, use the supported `diagnostics.flags: ["timeline"]` and
+`OPENCLAW_DIAGNOSTICS_TIMELINE_PATH` in a private operator directory. Inspect
+unfinished spans and distinguish CLI processes from the gateway PID. Restore
+the prior flags after diagnosis. Do not use debugger-evaluated dynamic imports
+to clean up an inspector session: an uncaught VM import error can terminate the
+gateway. The observed diagnostic cleanup failure was recovered by systemd while
+native execution was paused; it was not an inference or provider failure.
+
 ## Monitoring
 
 `scripts/native-health-monitor.py` reads native status, board cards, and schedules
@@ -142,8 +183,11 @@ retained for inspection. `observed` means the snapshot checks passed; it does no
 prove worker process liveness, successful implementation, or deployment. An RPC
 failure replaces the snapshot with `unknown`, never a stale healthy report.
 Long-running jobs are not restarted because of an old error or timestamp.
-Reports also flag unavailable, degraded, or pending gateway model preparation and
-include the model-catalog worker's task counts. Active catalog tasks alone do not
+Reports also flag explicitly degraded or pending gateway model preparation and
+include the model-catalog worker's task counts. The optional `modelRuntime` startup
+projection can be absent after configuration publication; record
+`modelRuntimeReported: false` as an evidence gap without inventing a runtime
+failure. Neither `status` nor `health` guarantees this projection is present. Active catalog tasks alone do not
 establish a stalled turn; a ready gateway likewise does not prove inference ran.
 
 Hourly worktree maintenance must use audit mode. Its documented `--apply` contract

@@ -16,11 +16,12 @@ def summarize(board, status, cards, jobs, now, gateway=None):
         runtime = gateway.get("modelRuntime")
         gateway_evidence = {
             "modelRuntime": runtime,
+            "modelRuntimeReported": runtime is not None,
             "modelCatalog": gateway.get("workerPools", {}).get("modelCatalog"),
         }
-        if runtime is None:
-            issues.append("gateway model runtime readiness is unavailable")
-        elif runtime.get("degraded") or runtime.get("pendingAgents"):
+        # OpenClaw clears this optional startup projection on config publication.
+        # Its absence is an evidence gap, not a reported runtime failure.
+        if runtime is not None and (runtime.get("degraded") or runtime.get("pendingAgents")):
             issues.append("gateway model runtime is degraded or agents are pending preparation")
     control = status.get("control", {})
     if not status.get("enabled") or control.get("paused") or control.get("frozen"):
@@ -69,7 +70,7 @@ def summarize(board, status, cards, jobs, now, gateway=None):
             "readyCards": ready, "waitingCards": waiting, "counts": status.get("counts", {}),
             "blockedWorkflows": workflows,
             "gateway": gateway_evidence,
-            "evidenceLimit": "Card running state is not process liveness or proof of successful implementation/release."}
+            "evidenceLimit": "Card running state is not process liveness or proof of successful implementation/release. Missing modelRuntime is unreported readiness, not proof of health."}
 
 
 def collect(command, method, params):
