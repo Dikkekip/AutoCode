@@ -136,7 +136,8 @@ export class NativeCliGateway implements NativeGateway {
               "autocode.discover",
               "autocode.dispatch",
               "autocode.doctor",
-              "autocode.resume"
+              "autocode.resume",
+              "config.patch"
             ].includes(method)
           ? 180_000
           : 30_000
