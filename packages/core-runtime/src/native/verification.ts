@@ -77,8 +77,11 @@ const runtimeNotes = new Set([
   "HEARTBEAT.md",
   "TOOLS.md"
 ])
-function isRuntimeNote(path: string): boolean {
-  return runtimeNotes.has(path) || path.startsWith("memory/dreaming/")
+// Exact private tool artifacts observed when sandbox HOME is the worktree.
+// Exclude only untracked copies; staged/tracked copies must still fail admission.
+const runtimeToolArtifacts = new Set([".local/share/vitest/.vitest-secret-token", ".npm/_update-notifier-last-checked"])
+function isRuntimeArtifact(path: string): boolean {
+  return runtimeNotes.has(path) || path.startsWith("memory/dreaming/") || runtimeToolArtifacts.has(path)
 }
 async function candidateChanges(cwd: string): Promise<string[]> {
   let filters = ""
@@ -129,7 +132,7 @@ async function candidateChanges(cwd: string): Promise<string[]> {
       [
         ...tracked.split("\0"),
         ...staged.split("\0"),
-        ...untracked.split("\0").filter((path) => !isRuntimeNote(path))
+        ...untracked.split("\0").filter((path) => !isRuntimeArtifact(path))
       ].filter(Boolean)
     )
   ]
@@ -158,7 +161,7 @@ export async function commitNativeCandidate(
   const rejected = files.filter(
     (file) =>
       !allowedPaths.some((root) => nativePathAllowed(file, root)) ||
-      isRuntimeNote(file) ||
+      isRuntimeArtifact(file) ||
       file
         .split("/")
         .some((part) =>
