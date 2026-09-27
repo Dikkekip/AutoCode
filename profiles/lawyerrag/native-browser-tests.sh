@@ -9,5 +9,7 @@ cmp package-lock.json /opt/openclaw/reports-ui.package-lock.json
 case "${0##*/}" in
   legacy-004) exec npm run ui:audit -- --workers=1 ;;
   legacy-005) exec /opt/ui-node_modules/.bin/playwright test --project=chromium e2e/navigation.spec.ts e2e/shell-visual.spec.ts --workers=1 ;;
+  legacy-010) exec /opt/ui-node_modules/.bin/playwright test --project=chromium e2e/navigation.spec.ts e2e/timeline-visual.spec.ts --workers=1 ;;
+  legacy-015) exec /opt/ui-node_modules/.bin/playwright test --project=chromium e2e/vedlegg-mobile-workspace.spec.ts e2e/vedlegg-pdf-render.spec.ts --workers=1 ;;
   *) echo "Unknown browser verification rule" >&2; exit 64 ;;
 esac

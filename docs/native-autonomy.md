@@ -459,6 +459,12 @@ remains effective. Check both the systemd unit and drop-ins after upgrades.
 Memory pressure can stall the main event loop beyond the execution lease TTL;
 expired owners correctly lose authority and must never publish late receipts.
 
+The immutable route and workspace critical-suite commands also exercise the
+named bundle export and ingestion batch recovery tests, respectively.
+`test:critical` alone does not select these tests. The additional feature checks
+use one Vitest worker and retain all standing build, critical-suite and browser
+checks. Their explicit test paths are visible in independent reviewer context.
+
 
 ### Standing application release preparation
 
