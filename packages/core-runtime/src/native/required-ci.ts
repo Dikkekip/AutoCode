@@ -12,25 +12,27 @@ export async function assertNativeRequiredCi(
 ) {
   const required = policy.requiredCi
   if (!required?.checks.length) throw new Error("Reviewed required CI policy is missing")
-  const protection = JSON.parse(
-    await github(cwd, [
-      "api",
-      `repos/{owner}/{repo}/branches/${encodeURIComponent(policy.baseBranch)}/protection/required_status_checks`
-    ])
-  )
-  if (!Array.isArray(protection.checks) || !Array.isArray(protection.contexts))
-    throw new Error("GitHub branch protection requirements unavailable or malformed")
-  for (const check of protection.checks) {
-    if (
-      !required.checks.some(
-        (c) => c.name === check.context && (check.app_id === null || check.app_id === -1 || c.appId === check.app_id)
-      )
+  if (required.requireBranchProtection !== false) {
+    const protection = JSON.parse(
+      await github(cwd, [
+        "api",
+        `repos/{owner}/{repo}/branches/${encodeURIComponent(policy.baseBranch)}/protection/required_status_checks`
+      ])
     )
-      throw new Error("Required CI policy does not cover branch protection")
+    if (!Array.isArray(protection.checks) || !Array.isArray(protection.contexts))
+      throw new Error("GitHub branch protection requirements unavailable or malformed")
+    for (const check of protection.checks) {
+      if (
+        !required.checks.some(
+          (c) => c.name === check.context && (check.app_id === null || check.app_id === -1 || c.appId === check.app_id)
+        )
+      )
+        throw new Error("Required CI policy does not cover branch protection")
+    }
+    for (const context of protection.contexts)
+      if (!required.checks.some((c) => c.name === context))
+        throw new Error("Required CI policy does not cover branch protection")
   }
-  for (const context of protection.contexts)
-    if (!required.checks.some((c) => c.name === context))
-      throw new Error("Required CI policy does not cover branch protection")
   const runs: any[] = []
   for (let page = 1; ; page++) {
     if (page > 100) throw new Error("GitHub CI pagination exceeded bounded limit")
@@ -48,6 +50,7 @@ export async function assertNativeRequiredCi(
   }
   for (const expected of required.checks) {
     const matches = runs.filter((run) => run.name === expected.name && run.app?.id === expected.appId)
+    if (matches.length === 0) throw new NativeCiPending(`Waiting for required CI check to appear: ${expected.name}`)
     if (matches.length !== 1) throw new Error(`Missing or ambiguous required CI check: ${expected.name}`)
     const run = matches[0]
     if (run.head_sha === headSha && ["queued", "in_progress", "waiting", "pending"].includes(run.status))

@@ -49,6 +49,13 @@ class Adapter:
         spec.loader.exec_module(self.legacy)
         self.compose = ["docker", "compose", "-f", config["stagingCompose"]]
 
+    @property
+    def minimum_free_gib(self):
+        value = self.c.get("minimumBuildFreeGiB", 30)
+        if type(value) is not int or value < 1:
+            raise RuntimeError("minimumBuildFreeGiB must be a positive integer")
+        return value
+
     def manifest(self, sha, tag):
         images = {}
         for service in ("backend", "reports-ui"):
@@ -190,7 +197,7 @@ print('authenticated-matter-list, readiness, frontend-shell: passed')
             self.legacy.git("fetch", "--no-tags", "origin", "main")
             self.legacy.git("merge-base", "--is-ancestor", sha, "origin/main")
             self.legacy.git("merge-base", "--is-ancestor", self.legacy.live_revision()["sha"], sha)
-            if shutil.disk_usage(self.source).free < self.c.get("minimumBuildFreeGiB",30)*1024**3:
+            if shutil.disk_usage(self.source).free < self.minimum_free_gib*1024**3:
                 raise RuntimeError("Release deferred: insufficient build storage")
             # Reserve a tag locally; publish only after this artifact passes staging.
             releases = json.loads(run(["gh","release","list","--repo",self.legacy.REPO,"--limit","100","--json","tagName,isDraft,isPrerelease"]))
@@ -222,7 +229,15 @@ print('authenticated-matter-list, readiness, frontend-shell: passed')
             staged=json.loads((self.root/"staging"/f"{sha}.json").read_text())
             if not staged["passed"] or staged["artifactSha256"]!=expected:
                 raise RuntimeError("Deployment lacks exact-artifact staging evidence")
-            self.legacy.deploy(sha)
+            previous = os.environ.get("MIN_RELEASE_FREE_GIB")
+            os.environ["MIN_RELEASE_FREE_GIB"] = str(self.minimum_free_gib)
+            try:
+                self.legacy.deploy(sha)
+            finally:
+                if previous is None:
+                    os.environ.pop("MIN_RELEASE_FREE_GIB", None)
+                else:
+                    os.environ["MIN_RELEASE_FREE_GIB"] = previous
         else:
             with Path(self.c["releaseLock"]).open("a") as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

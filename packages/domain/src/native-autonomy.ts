@@ -72,7 +72,11 @@ export interface NativeAutonomyPolicy {
   dedupeWindowHours: number
   discoveryDailyRoundLimit: number
   personas: NativePersonaGoal[]
-  requiredCi?: { checks: Array<{ name: string; appId: number }>; maxAgeSeconds: number }
+  requiredCi?: {
+    checks: Array<{ name: string; appId: number }>
+    maxAgeSeconds: number
+    requireBranchProtection?: boolean
+  }
   verificationAuthority?: {
     reviewedRevision: string
     /** Require authenticated commit-bound independent design review for every candidate. */
@@ -340,6 +344,8 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
 
 export function validateNativeRequiredCi(value: unknown): NonNullable<NativeAutonomyPolicy["requiredCi"]> {
   const r = record(value)
+  if (r.requireBranchProtection !== undefined && typeof r.requireBranchProtection !== "boolean")
+    throw new Error("requireBranchProtection must be a boolean")
   if (!Array.isArray(r.checks) || !r.checks.length) throw new Error("Required CI checks must be non-empty")
   const checks = r.checks.map((entry: unknown) => {
     const c = record(entry)
@@ -347,7 +353,11 @@ export function validateNativeRequiredCi(value: unknown): NonNullable<NativeAuto
   })
   if (new Set(checks.map((c) => `${c.appId}:${c.name}`)).size !== checks.length)
     throw new Error("Duplicate required CI check")
-  return { checks, maxAgeSeconds: integer(r.maxAgeSeconds, 86400, 604800) }
+  return {
+    checks,
+    maxAgeSeconds: integer(r.maxAgeSeconds, 86400, 604800),
+    ...(r.requireBranchProtection === false ? { requireBranchProtection: false } : {})
+  }
 }
 
 export interface NativeProposal {

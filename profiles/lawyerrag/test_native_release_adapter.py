@@ -1,4 +1,5 @@
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -58,6 +59,34 @@ class ReleaseAdapterTests(unittest.TestCase):
             instance.manifest = Mock(return_value={**manifest, "images": {"backend": "replaced"}})
             with self.assertRaisesRegex(RuntimeError, "identity changed"):
                 instance.load("a" * 40)
+
+    def test_configured_build_minimum_reaches_legacy_deployment_and_is_restored(self):
+        instance, manifest = self.fixture()
+        instance.root = Path(instance.c["releaseLock"]).parent
+        instance.c["minimumBuildFreeGiB"] = 5
+        sha = "a" * 40
+        artifact = adapter.digest(manifest)
+        adapter.save(instance.root / "staging" / (sha + ".json"), {"passed": True, "artifactSha256": artifact})
+        before = os.environ.get("MIN_RELEASE_FREE_GIB")
+        seen = []
+        instance.legacy = Mock()
+        instance.legacy.deploy.side_effect = lambda _: seen.append(os.environ.get("MIN_RELEASE_FREE_GIB"))
+        instance.check = Mock(return_value={"healthy": True})
+        self.assertEqual(instance.deploy(sha, artifact), {"healthy": True})
+        self.assertEqual(seen, ["5"])
+        self.assertEqual(os.environ.get("MIN_RELEASE_FREE_GIB"), before)
+        instance.legacy.deploy.side_effect = RuntimeError("deployment failed")
+        with self.assertRaisesRegex(RuntimeError, "deployment failed"):
+            instance.deploy(sha, artifact)
+        self.assertEqual(os.environ.get("MIN_RELEASE_FREE_GIB"), before)
+
+    def test_build_minimum_remains_positive_and_defaults_to_existing_policy(self):
+        instance, _ = self.fixture()
+        self.assertEqual(instance.minimum_free_gib, 30)
+        for value in [0, -1, False, "5"]:
+            instance.c["minimumBuildFreeGiB"] = value
+            with self.assertRaisesRegex(RuntimeError, "positive integer"):
+                _ = instance.minimum_free_gib
 
 
 if __name__ == "__main__":

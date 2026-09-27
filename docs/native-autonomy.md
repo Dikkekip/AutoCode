@@ -278,11 +278,13 @@ Application release also requires `requiredCi: {checks: [{name, appId}],
 maxAgeSeconds}` with reviewed GitHub App identities. The release service queries
 GitHub REST check runs for the exact reviewed commit and requires one completed,
 successful, fresh run for every configured identity. Missing, ambiguous, skipped,
-neutral, malformed and stale checks never authorize merge. Queued checks remain
-pending. Repository branch-protection required checks must be covered by policy;
-unavailable protection metadata fails closed. Repositories using only rulesets
-must configure equivalent supported branch protection before this release path is
-usable. Server-side protection and exact-head merge matching remain enabled.
+neutral, malformed and stale checks never authorize merge. Missing or queued checks
+remain pending until GitHub reports them. By default, repository branch-protection
+required checks must be covered by policy and unavailable protection metadata fails
+closed. An operator may explicitly set `requireBranchProtection: false` when the
+repository cannot expose that metadata. This uses the reviewed list of checks as
+the local requirement; it still requires every configured identity to pass and
+does not disable GitHub's own protections or exact-head merge matching.
 
 ### Protected receipt provenance
 
