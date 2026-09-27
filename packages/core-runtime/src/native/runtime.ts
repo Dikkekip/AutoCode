@@ -31,6 +31,7 @@ import { NativeBudgetLedger } from "./budget-ledger.js"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NativeControl, NativeControlRevoked } from "./control.js"
 import { type NativeCard, type NativeGateway, nativeCard, nativeCards } from "./gateway.js"
+import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
 import { nativeOutcomeReport } from "./outcomes.js"
@@ -101,12 +102,15 @@ export interface NativeWorkflow {
 }
 export class NativeAutonomyRuntime {
   readonly control: NativeControl
+  readonly humanInput?: NativeHumanInput
   constructor(
     readonly policy: NativeAutonomyPolicy,
     readonly gateway: NativeGateway,
-    readonly store: NativeEvidenceStore
+    readonly store: NativeEvidenceStore,
+    humanInput?: NativeHumanInputConfig
   ) {
     this.control = new NativeControl(store, () => policy.enabled)
+    if (humanInput) this.humanInput = new NativeHumanInput(this, humanInput)
     this.gateway = {
       abortOwnedInvestigation: async (input) => {
         store.authorizeEffect()
@@ -385,7 +389,8 @@ export class NativeAutonomyRuntime {
         ...item,
         selection: ranking.find((decision) => decision.id === item.id),
         decision: this.store.get("decision", item.id),
-        scope: this.proposalScope(item.value.proposal)
+        scope: this.proposalScope(item.value.proposal),
+        humanInput: this.humanInput?.snapshot(item.id, item.value.proposal, item.value.roundId)
       }))
   }
   async planWorkflowRecovery(
@@ -955,6 +960,12 @@ export class NativeAutonomyRuntime {
         throw new Error("Runnable backlog is full")
       const conflict = this.proposalScope(entry.proposal).conflicts[0]
       if (conflict) throw new Error(`Artifact scope reserved by ${conflict.workflowId}`)
+      const input = this.humanInput?.gate(proposalId, entry.proposal, entry.roundId)
+      if (input && !input.allowed)
+        return {
+          admitted: false as const,
+          reason: `Human direction ${input.idea.state}: ${input.idea.id}; leave pending ideas undecided and continue routine work`
+        }
       const root = await this.createCard({
         boardId: this.policy.boardId,
         title: entry.proposal.title,

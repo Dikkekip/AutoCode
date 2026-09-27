@@ -16,6 +16,49 @@
       "openclawCommand": {
         "type": "string",
         "description": "Absolute path to the active OpenClaw CLI; required when projects are configured."
+      },
+      "humanInput": {
+        "type": "array",
+        "default": [],
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "boardId",
+            "telegramTarget",
+            "ownerIds",
+            "maxRoutineHours",
+            "maxRoutineCostCents"
+          ],
+          "properties": {
+            "boardId": {
+              "type": "string"
+            },
+            "telegramTarget": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]+$"
+            },
+            "ownerIds": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "pattern": "^[1-9][0-9]+$"
+              }
+            },
+            "accountId": {
+              "type": "string"
+            },
+            "maxRoutineHours": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "maxRoutineCostCents": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
       }
     }
   },

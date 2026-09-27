@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
 import type { NativeGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeHumanInput } from "../packages/core-runtime/src/native/human-input.js"
 import type { Investigation } from "../packages/core-runtime/src/native/quality.js"
 import { createNativeOperatorRequest } from "../packages/core-runtime/src/native/requests.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
@@ -984,4 +985,27 @@ it("resumes a building operator round against its original source after the remo
   const notes = JSON.parse(s.gateway.cards[0].notes)
   expect(notes.revision).toBe(request.brief.expectedBaseSha)
   expect(notes.operatorRequest.evidence[0].blobSha).toBe(request.brief.evidence[0]!.blobSha)
+})
+
+it("holds a selected high-impact idea before creating workflow cards, then rechecks normal admission after approval", async () => {
+  const s = setup()
+  const input = new NativeHumanInput(s.runtime, {
+    boardId: s.policy.boardId,
+    telegramTarget: "12345",
+    ownerIds: ["12345"],
+    maxRoutineHours: 8,
+    maxRoutineCostCents: 5000
+  })
+  Object.defineProperty(s.runtime, "humanInput", { value: input })
+  const { proposalId, roundId } = await prepare(s, proposal("high"))
+  const result = await s.runtime.admit("planner", proposalId, "Evidence supports the change")
+  expect(result.admitted).toBe(false)
+  expect(s.store.list("workflow")).toHaveLength(0)
+  expect(s.store.get("decision", proposalId)).toBeNull()
+  const idea = input.list()[0]!
+  expect(s.runtime.proposals(roundId)[0]!.humanInput?.state).toBe("pending")
+  input.decide(idea.id, "approve", "12345", () => {})
+  const admitted = await s.runtime.admit("planner", proposalId, "Approved direction with current evidence")
+  expect(admitted.workflowId).toBeTruthy()
+  expect(s.store.list("workflow")).toHaveLength(1)
 })

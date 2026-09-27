@@ -24,6 +24,7 @@ import {
   registerNativeSkillEvaluation
 } from "./skills.js"
 import { NativeEvidenceStore } from "./store.js"
+import { deliverNativeIdeas, handleNativeIdeaCommand, sendNativeIdea } from "./telegram-ideas.js"
 import { NativeWorkspaceGateway } from "./workspaces.js"
 
 // Tool catalogs can register the plugin again without starting another service.
@@ -42,6 +43,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
   let stopped = false
   let budgetTimer: ReturnType<typeof setInterval> | undefined
   let budgetCheck: Promise<void> | undefined
+  let ideaTimer: ReturnType<typeof setInterval> | undefined
+  let ideaCheck: Promise<void> | undefined
   const policyFiles = api.pluginConfig?.projects ?? []
   const runtime = (boardId: string): NativeAutonomyRuntime => {
     const item = instances.get(boardId) ?? activeInstances.get(boardId)
@@ -88,7 +91,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
         },
         api.runtime?.worktrees
       ),
-      store
+      store,
+      (api.pluginConfig?.humanInput ?? []).find((item: any) => item.boardId === policy.boardId)
     )
   // Service startup precedes the Gateway accepting authenticated RPCs. Validate
   // before execution instead of waiting on the same Gateway during its startup.
@@ -140,14 +144,37 @@ export function registerNativeAutonomyPlugin(api: any): void {
         })
       }, 15_000)
       budgetTimer.unref()
+      ideaTimer = setInterval(() => {
+        if (ideaCheck) return
+        ideaCheck = (async () => {
+          for (const r of instances.values()) {
+            if (!r.humanInput) continue
+            try {
+              await invoke(r, () =>
+                r.withOwnership(async () => {
+                  if (!r.isPaused()) await r.control.run(() => r.humanInput!.queueApproved())
+                  await deliverNativeIdeas(r, (message) => sendNativeIdea(command, r, message))
+                })
+              )
+            } catch (error) {
+              api.logger.warn(`Idea decisions unavailable: ${String(error)}`)
+            }
+          }
+        })().finally(() => {
+          ideaCheck = undefined
+        })
+      }, 60_000)
+      ideaTimer.unref()
     },
     stop: async () => {
       stopped = true
       ready.clear()
       checking.clear()
       if (budgetTimer) clearInterval(budgetTimer)
+      if (ideaTimer) clearInterval(ideaTimer)
       const drained = [...instances.values()].map(stopNativeRuntimeCalls)
       await budgetCheck
+      await ideaCheck
       await Promise.all(drained)
       for (const value of instances.values()) {
         if (activeInstances.get(value.policy.boardId) === value) activeInstances.delete(value.policy.boardId)
@@ -157,6 +184,22 @@ export function registerNativeAutonomyPlugin(api: any): void {
       configuredFiles.clear()
     }
   })
+  if ((api.pluginConfig?.humanInput ?? []).length) {
+    if (typeof api.registerCommand !== "function")
+      throw new Error("Telegram idea commands require the public command API")
+    for (const name of ["ideas", "idea"])
+      api.registerCommand({
+        name,
+        description:
+          name === "ideas"
+            ? "Show short decisions for high-impact coding ideas"
+            : "Approve or skip an exact coding idea",
+        channels: ["telegram"],
+        acceptsArgs: true,
+        requireAuth: true,
+        handler: (ctx: any) => handleNativeIdeaCommand([...instances.values()], ctx, name === "idea", invoke)
+      })
+  }
   registerMethod(
     "autocode.policy.refresh.plan",
     async ({ params, respond }: any) => {
