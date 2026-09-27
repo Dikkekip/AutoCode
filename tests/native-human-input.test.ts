@@ -34,6 +34,7 @@ function setup() {
   const input = new NativeHumanInput(runtime, {
     boardId: "board",
     telegramTarget: "12345",
+    telegramDelivery: true,
     ownerIds: ["12345"],
     accountId: "default",
     maxRoutineHours: 8,
@@ -169,4 +170,16 @@ it("accepts only explicit owner commands, never prose or elapsed time", async ()
   expect(reply.text).toContain("Approved direction")
   expect(s.input.list()[0]?.decidedBy).toBe("telegram:12345")
   expect(formatNativeIdea(idea).length).toBeLessThan(1600)
+})
+
+it("keeps decisions usable while outbound delivery is disabled", async () => {
+  const s = setup()
+  s.input.config.telegramDelivery = false
+  s.proposal.quality.risk = "high"
+  s.store.put("proposal", "p1", { proposal: s.proposal, roundId: "round" })
+  const idea = s.input.gate("p1", s.proposal, "round").idea
+  const send = vi.fn(async () => {})
+  await deliverNativeIdeas(s.runtime, send)
+  expect(send).not.toHaveBeenCalled()
+  expect((await handleNativeIdeaCommand([s.runtime], context, false, invoke)).text).toContain(idea.id)
 })

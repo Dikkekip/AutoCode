@@ -6,6 +6,7 @@ import type { NativeAutonomyRuntime } from "./runtime.js"
 const exec = promisify(execFile)
 export async function sendNativeIdea(command: string, runtime: NativeAutonomyRuntime, message: string) {
   const config = runtime.humanInput!.config
+  if (config.telegramDelivery !== true) throw new Error("Telegram delivery is not enabled")
   const args = [
     "message",
     "send",
@@ -23,7 +24,7 @@ export async function sendNativeIdea(command: string, runtime: NativeAutonomyRun
 /** A lost delivery response is uncertain: do not repeatedly message the owner. /ideas remains available. */
 export async function deliverNativeIdeas(runtime: NativeAutonomyRuntime, send: (message: string) => Promise<void>) {
   const input = runtime.humanInput
-  if (!input) return
+  if (!input || input.config.telegramDelivery !== true) return
   const lease = runtime.store.acquire("idea-delivery", 60_000)
   if (!lease) return
   await runtime.store.withLease(lease, 60_000, async () => {

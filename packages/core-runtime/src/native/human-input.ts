@@ -7,6 +7,7 @@ export interface NativeHumanInputConfig {
   telegramTarget: string
   ownerIds: string[]
   accountId?: string
+  telegramDelivery?: boolean
   maxRoutineHours: number
   maxRoutineCostCents: number
 }
@@ -32,6 +33,7 @@ const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(valu
 export function validateNativeHumanInput(raw: NativeHumanInputConfig): NativeHumanInputConfig {
   if (
     !raw?.boardId ||
+    (raw.telegramDelivery !== undefined && typeof raw.telegramDelivery !== "boolean") ||
     !/^[1-9][0-9]+$/.test(raw.telegramTarget) ||
     !Array.isArray(raw.ownerIds) ||
     !raw.ownerIds.length ||

@@ -12,10 +12,15 @@ Configure `plugins.entries.autocode.config.humanInput` with one object per board
   "telegramTarget": "123456789",
   "ownerIds": ["123456789"],
   "accountId": "default",
+  "telegramDelivery": false,
   "maxRoutineHours": 8,
   "maxRoutineCostCents": 5000
 }
 ```
+
+Proactive delivery defaults to disabled. Set `telegramDelivery: true` only after
+the operator authorizes that destination and the brief content. Commands and the
+high-impact hold still work with delivery disabled.
 
 Use a paired private Telegram account. Group chats, another account, unpaired
 senders and agent-supplied tool identities cannot approve an idea. The destination
