@@ -151,9 +151,9 @@ resumed with `implement-human-review` unchanged. A fresh Workboard research
 session completed successfully with 45 tool calls, including authenticated
 context, source inspection, proposal registration, investigation completion, and
 Workboard completion. The controller started the next researcher automatically.
-This proves research/tool handoff through the framework; it does not yet prove a
-new implementation, passed verification, or release. Keep observing the planner
-and coding handoffs and retain previous blocked attempts and review gates.
+This established research/tool handoff. Subsequent live runs verified planner
+admission and authenticated Sol candidate submission; verification and release
+remain separate outcomes. Retain previous blocked attempts and review gates.
 
 For targeted timings, use the supported `diagnostics.flags: ["timeline"]` and
 `OPENCLAW_DIAGNOSTICS_TIMELINE_PATH` in a private operator directory. Inspect
@@ -180,6 +180,39 @@ duplicate decisions, test authority and independent review remain enforced.
 Regression tests cover preserved reservations, released scopes, unrelated paths
 and a reservation introduced between listing and admission. Earlier deferrals
 remain recorded; this fix does not silently reopen or approve them.
+
+## Submission and capacity recovery
+
+The repaired planner consumed the scope snapshots, admitted two nonconflicting
+LawyerRAG tasks, and deferred overlapping proposals. Sol produced an authenticated
+WhatsApp evidence candidate, held for independent design review. Luna implemented
+the interrupted-search empty-state fix and passed its 38-test focused suite, but
+its first submission was rejected by two untracked tool files created under the
+sandbox workspace: `.local/share/vitest/.vitest-secret-token` and
+`.npm/_update-notifier-last-checked`.
+
+The broker now leaves those exact untracked paths outside candidate commits,
+without deleting or reading their contents. Staged or tracked copies still fail,
+even with broad admitted scope; adjacent package files remain subject to normal
+scope checks. Regression tests cover preserved bytes, exact committed paths,
+staged files, tracked modifications/deletions and adjacent untracked files. The
+completed Luna card was continued through supported Workboard methods in its
+preserved workspace after its terminal run was confirmed. The previous run stayed
+recorded and the new authenticated submission succeeded, reaching independent
+design review. This verifies the fix live as well as through regression tests.
+
+An exact test-blob approval also correctly rejected formatting-only drift in the
+bundle-recency candidate. Recover using the approved bytes and a fresh scoped
+candidate; do not expand approval or weaken the authority gate for formatting.
+
+Managed worktree allocation requires disk reserve in addition to checkout space.
+The installed allocator reserves 10% of the volume, bounded between 4 and 16 GiB;
+additional setup headroom applies only when its executable setup script exists.
+On this host, losslessly compressing inactive dated backups recovered about 5 GiB.
+Each archive was fully decompressed and SHA-256 verified before removal of its raw
+copy. Canonical databases, source worktrees and accepted evidence were retained.
+Use package-manager cache cleanup for regenerable downloads; keep a private
+archive manifest and restore instructions rather than pruning live state.
 
 ## Monitoring
 
