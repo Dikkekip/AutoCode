@@ -376,8 +376,8 @@
         "cd apps/reports-ui && node scripts/check-component-size.mjs",
         "cd apps/reports-ui && node scripts/check-feature-boundaries.mjs",
         "cd apps/reports-ui && npm run test:critical",
-        "cd apps/reports-ui && npm run ui:audit",
-        "cd apps/reports-ui && npx playwright test --project=chromium e2e/navigation.spec.ts e2e/shell-visual.spec.ts"
+        "cd apps/reports-ui && npm run ui:audit -- --workers=1",
+        "cd apps/reports-ui && npx playwright test --project=chromium e2e/navigation.spec.ts e2e/shell-visual.spec.ts --workers=1"
       ]
     },
     {

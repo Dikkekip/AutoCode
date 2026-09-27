@@ -437,6 +437,15 @@ For a concrete operator-reported defect, use `native requests create --file brie
 
 `verificationConcurrency` optionally limits concurrent native verifier jobs independently of `workerConcurrency` (integer 1–8). When omitted, verification retains the worker limit and the normalized policy omits this field. Three coders can therefore use one verifier without changing admission or dispatch capacity. Apply a changed limit only through the paused, quiescent policy refresh or a fully drained restart; existing verification leases and release capacity remain unchanged.
 
+The LawyerRAG verifier image runs its browser audit and shell browser checks with
+one Playwright worker. Docker's two-CPU quota does not reduce the host CPU count
+seen by Playwright, whose default worker count can exhaust the four-GiB verifier
+allocation and kill the development server. The trusted wrappers retain every
+test, assertion, retry and timeout; only browser concurrency changes. Rebuild the
+immutable verifier image and refresh its policy binding when updating these
+wrappers. Do not patch an active verifier or treat an out-of-memory run as a
+candidate code failure.
+
 
 ### Standing application release preparation
 

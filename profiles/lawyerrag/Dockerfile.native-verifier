@@ -8,4 +8,6 @@ USER 0
 COPY --from=dependencies /opt/ui-node_modules /opt/ui-node_modules
 COPY --from=dependencies /opt/deps-source/apps/reports-ui/package-lock.json /opt/openclaw/reports-ui.package-lock.json
 COPY native-ui-component-tests.sh /opt/openclaw/checks/ui-components
-RUN chmod 0555 /opt/openclaw/checks/ui-components
+COPY native-browser-tests.sh /opt/openclaw/checks/legacy-004
+COPY native-browser-tests.sh /opt/openclaw/checks/legacy-005
+RUN chmod 0555 /opt/openclaw/checks/ui-components /opt/openclaw/checks/legacy-004 /opt/openclaw/checks/legacy-005
