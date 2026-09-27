@@ -201,6 +201,18 @@ export function registerNativeAutonomyPlugin(api: any): void {
       })
   }
   registerMethod(
+    "autocode.ideas.list",
+    async ({ params, respond }: any) => {
+      const input = runtime(params.boardId).humanInput
+      respond(true, {
+        configured: Boolean(input),
+        deliveryEnabled: input?.config.telegramDelivery === true,
+        ideas: input?.list() ?? []
+      })
+    },
+    { scope: "operator.read" }
+  )
+  registerMethod(
     "autocode.policy.refresh.plan",
     async ({ params, respond }: any) => {
       const r = runtime(params.boardId)
