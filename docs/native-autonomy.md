@@ -446,6 +446,19 @@ immutable verifier image and refresh its policy binding when updating these
 wrappers. Do not patch an active verifier or treat an out-of-memory run as a
 candidate code failure.
 
+The image also pins `fonts-dejavu-core` to the Debian Bookworm version used for
+the Linux monospace snapshots. Missing fonts change screenshot text geometry;
+repair the image rather than updating approved snapshots to match a fallback.
+Mocked browser suites must explicitly emulate network state in networkless
+containers and retain coverage for offline and online transitions.
+
+Do not launch the Gateway with a process-wide `--max-old-space-size` override:
+Node applies it ahead of worker `resourceLimits`, defeating OpenClaw's bounded
+catalog worker heap. Keep the main-thread default so the catalog worker's limit
+remains effective. Check both the systemd unit and drop-ins after upgrades.
+Memory pressure can stall the main event loop beyond the execution lease TTL;
+expired owners correctly lose authority and must never publish late receipts.
+
 
 ### Standing application release preparation
 

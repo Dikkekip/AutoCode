@@ -5,6 +5,10 @@ ARG VERIFIER_IMAGE
 FROM ${DEPENDENCIES_IMAGE} AS dependencies
 FROM ${VERIFIER_IMAGE}
 USER 0
+# Match the Linux monospace font used by the reviewed Playwright snapshots.
+# Playwright's minimal browser dependencies otherwise fall back to WenQuanYi.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core=2.37-6 \
+    && rm -rf /var/lib/apt/lists/* && fc-cache -f
 COPY --from=dependencies /opt/ui-node_modules /opt/ui-node_modules
 COPY --from=dependencies /opt/deps-source/apps/reports-ui/package-lock.json /opt/openclaw/reports-ui.package-lock.json
 COPY native-ui-component-tests.sh /opt/openclaw/checks/ui-components
