@@ -31,17 +31,21 @@ export async function assertNativeRequiredCi(
   for (const context of protection.contexts)
     if (!required.checks.some((c) => c.name === context))
       throw new Error("Required CI policy does not cover branch protection")
-  const pages = JSON.parse(
-    await github(cwd, [
-      "api",
-      "--paginate",
-      "--slurp",
-      `repos/{owner}/{repo}/commits/${headSha}/check-runs?per_page=100&filter=latest`
-    ])
-  )
-  if (!Array.isArray(pages) || pages.some((p) => !Array.isArray(p.check_runs)))
-    throw new Error("Malformed GitHub check runs")
-  const runs = pages.flatMap((p) => p.check_runs)
+  const runs: any[] = []
+  for (let page = 1; ; page++) {
+    if (page > 100) throw new Error("GitHub CI pagination exceeded bounded limit")
+    const response = JSON.parse(
+      await github(cwd, [
+        "api",
+        `repos/{owner}/{repo}/commits/${headSha}/check-runs?per_page=100&filter=latest&page=${page}`
+      ])
+    )
+    const pages = Array.isArray(response) ? response : [response]
+    if (!pages.length || pages.some((p) => !Array.isArray(p.check_runs))) throw new Error("Malformed GitHub check runs")
+    const batch = pages.flatMap((p) => p.check_runs)
+    runs.push(...batch)
+    if (batch.length < 100) break
+  }
   for (const expected of required.checks) {
     const matches = runs.filter((run) => run.name === expected.name && run.app?.id === expected.appId)
     if (matches.length !== 1) throw new Error(`Missing or ambiguous required CI check: ${expected.name}`)

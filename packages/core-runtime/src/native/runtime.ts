@@ -1461,7 +1461,10 @@ export class NativeAutonomyRuntime {
                   executionId: w.submission!.executionId,
                   agentId: w.submission!.agentId,
                   sessionKey: w.submission!.sessionKey
-                }
+                },
+                this.quality.designApproved(w)
+                  ? { headSha: w.candidate!.headSha, reviewedBy: this.policy.reviewerAgentId }
+                  : undefined
               )
             )
         )

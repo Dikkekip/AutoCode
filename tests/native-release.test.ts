@@ -968,3 +968,58 @@ describe("seeded accepted-effect fault replay", () => {
     expect(vi.mocked(s.io.command).mock.calls.filter(([c]) => c.argv[0] === "deploy")).toHaveLength(1)
   })
 })
+
+it("prepares one immutable artifact for an exact release and rejects changed preparation evidence", async () => {
+  const s = setup()
+  const p = s.runtime.policy.deployment!
+  delete p.artifactSha256
+  p.prepare = { argv: ["prepare"], cwd: ".", timeoutSeconds: 60 }
+  reseal(s)
+  const original = s.io.command
+  let preparations = 0
+  s.io.command = async (...args) => {
+    const result = await original(...args)
+    if (args[0] === p.prepare) {
+      preparations++
+      result.stdout = JSON.stringify({
+        targetId: p.targetId,
+        revision: s.mergedSha,
+        artifactSha256: "9".repeat(64),
+        staged: true
+      })
+      writeFileSync(result.artifact, JSON.stringify(result))
+    }
+    return result
+  }
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  expect(preparations).toBe(1)
+  expect(s.workflow.deployedSha).toBe(s.mergedSha)
+  const prepared = s.store.get<any>("deployment-artifact", "workflow:workflow:attempt:0:artifact")!
+  expect(prepared.artifactSha256).toBe("9".repeat(64))
+  writeFileSync(prepared.evidence.path, "replaced")
+  await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("evidence changed")
+})
+it("does not deploy preparation for a different revision or unstaged artifact", async () => {
+  for (const staged of [true, false]) {
+    const s = setup(),
+      p = s.runtime.policy.deployment!
+    delete p.artifactSha256
+    p.prepare = { argv: ["prepare"], cwd: ".", timeoutSeconds: 60 }
+    reseal(s)
+    const original = s.io.command
+    s.io.command = async (...args) => {
+      const result = await original(...args)
+      if (args[0] === p.prepare)
+        result.stdout = JSON.stringify({
+          targetId: p.targetId,
+          revision: staged ? "d".repeat(40) : s.mergedSha,
+          artifactSha256: "9".repeat(64),
+          staged
+        })
+      return result
+    }
+    await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("exact staged release")
+    expect(s.store.get("operation", "workflow:deploy")).toBeNull()
+  }
+})

@@ -1019,3 +1019,17 @@ it("holds a selected high-impact idea before creating workflow cards, then reche
   expect(admitted.workflowId).toBeTruthy()
   expect(s.store.list("workflow")).toHaveLength(1)
 })
+
+it("requires a fresh independent design review for routine candidates under standing review policy", () => {
+  const s = setup()
+  s.runtime.policy.verificationAuthority = {
+    reviewedRevision: "a".repeat(40),
+    acceptance: [],
+    independentCandidateReview: true
+  }
+  const w = { proposal: { quality: { risk: "routine" } }, candidate: { headSha: "b".repeat(40) } } as any
+  expect(s.runtime.quality.requiresDesign(w)).toBe(true)
+  expect(s.runtime.quality.designApproved(w)).toBe(false)
+  delete w.candidate
+  expect(s.runtime.quality.requiresDesign(w)).toBe(false)
+})

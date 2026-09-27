@@ -70,3 +70,23 @@ describe("required CI authorization", () => {
     ).rejects.toThrow("403")
   })
 })
+
+it("checks later REST pages without relying on CLI slurp support", async () => {
+  let count = 0
+  await assertNativeRequiredCi(
+    policy,
+    "/tmp",
+    sha,
+    async (_cwd, args) => {
+      expect(args).not.toContain("--slurp")
+      if (args.at(-1)?.includes("protection")) return JSON.stringify({ checks: [], contexts: [] })
+      count++
+      expect(args.at(-1)).toContain(`page=${count}`)
+      return JSON.stringify({
+        check_runs: count === 1 ? Array.from({ length: 100 }, (_, i) => ({ ...run, name: `optional-${i}` })) : [run]
+      })
+    },
+    now
+  )
+  expect(count).toBe(2)
+})

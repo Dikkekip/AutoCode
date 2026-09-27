@@ -75,6 +75,8 @@ export interface NativeAutonomyPolicy {
   requiredCi?: { checks: Array<{ name: string; appId: number }>; maxAgeSeconds: number }
   verificationAuthority?: {
     reviewedRevision: string
+    /** Require authenticated commit-bound independent design review for every candidate. */
+    independentCandidateReview?: boolean
     approvedChanges?: Array<{ path: string; blobSha: string; reviewedBy: string }>
     acceptance: NativeAcceptanceBinding[]
   }
@@ -85,6 +87,8 @@ export interface NativeAutonomyPolicy {
     environment?: "staging" | "production"
     targetId?: string
     artifactSha256?: string
+    /** Trusted host preparation builds and stages the exact merged revision. */
+    prepare?: NativeCommand
     previousKnownGood?: { revision: string; artifactSha256: string }
     observationSeconds?: number
     reconciliationSeconds?: number
@@ -252,6 +256,9 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
       : {
           verificationAuthority: {
             reviewedRevision: text(r.verificationAuthority.reviewedRevision, "reviewed policy revision"),
+            ...(r.verificationAuthority.independentCandidateReview === true
+              ? { independentCandidateReview: true }
+              : {}),
             approvedChanges: (r.verificationAuthority.approvedChanges ?? []).map((a: any) => ({
               path: nativeRelativePath(text(a.path, "approved authority path")),
               blobSha: text(a.blobSha, "approved authority blob"),
@@ -297,6 +304,7 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
           ...(r.deployment.targetId === undefined
             ? {}
             : { targetId: text(r.deployment.targetId, "deployment target") }),
+          ...(r.deployment.prepare ? { prepare: command(r.deployment.prepare) } : {}),
           ...(r.deployment.artifactSha256 === undefined
             ? {}
             : { artifactSha256: text(r.deployment.artifactSha256, "deployment artifact digest") }),

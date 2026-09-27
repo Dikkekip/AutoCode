@@ -434,3 +434,35 @@ Native `dispatch` runs the same admission and Workboard dispatch decisions as `r
 For a concrete operator-reported defect, use `native requests create --file brief.json` and inspect the durable queue with `native requests list`. The administrative RPC is `autocode.requests.create`; its request document contains `idempotencyKey`, configured `personaId`, `title`, `brief`, full `expectedBaseSha`, and `evidence` entries with repository-relative `path` and `observation`. Evidence must be regular files tracked at the current remote base and within the persona scope. Identical keys retry safely; changed content requires a new key. Queueing while paused does not start work. Discovery selects queued requests before random personas, subject to its existing limits, and creates a real investigation followed by planner admission. A moved base defers the request for renewed inspection and a fresh key. A reviewed candidate SHA may be described in the brief as an unverified lead; this version does not import candidate patches. Neither the brief nor the intake record supplies inspections, submissions, test-authority approval, or review evidence. `autocode.workflow.explain` exposes the existing acceptance list for operator review without granting agent context access.
 
 `verificationConcurrency` optionally limits concurrent native verifier jobs independently of `workerConcurrency` (integer 1–8). When omitted, verification retains the worker limit and the normalized policy omits this field. Three coders can therefore use one verifier without changing admission or dispatch capacity. Apply a changed limit only through the paused, quiescent policy refresh or a fully drained restart; existing verification leases and release capacity remain unchanged.
+
+
+### Standing application release preparation
+
+A deployment policy can use `prepare: NativeCommand` instead of a fixed
+`artifactSha256`. The administrator-owned command builds and stages the exact
+`AUTOCODE_SHA`, then returns `{targetId, revision, artifactSha256, staged:true}`.
+The runtime retains that identity and the command receipt per workflow attempt,
+checks receipt integrity on replay, and passes the exact digest to deployment and
+health checks. An already confirmed target becomes the next release's known-good
+baseline. Fixed-artifact policies retain their original behavior.
+
+Preparation must be idempotent and must not deploy production. A failing or
+uncertain preparation cannot produce a deployment operation. It remains subject
+to promotion, ownership, cancellation and budget checks. The project-specific
+`profiles/lawyerrag/native-release-adapter.py` implements immutable image
+manifests, private staging with real migrations and a cross-service Dapr workflow,
+settled health observation, production health receipts and exact-image rollback.
+Its configuration and staging credentials belong outside version control.
+
+`verificationAuthority.independentCandidateReview: true` requires the independent
+reviewer to approve every committed candidate before verification. The approval
+is bound to the full candidate diff, attempt and policy. It can authorize ordinary
+test source changes and bind new acceptance criteria to the path-selected trusted
+checks. Missing, stale, incomplete or self-authored review does not authorize
+those changes. Scripts, CI configuration, dependency manifests and verifier
+harness changes still require explicit blob approval. Executed verification and
+independent final acceptance review remain mandatory.
+
+GitHub check runs are paginated using ordinary REST requests, including on CLI
+versions without `--slurp`. Branch-protection requirements are still mandatory;
+an unavailable branch-protection API does not silently authorize a release.
