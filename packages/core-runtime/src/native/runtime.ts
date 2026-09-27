@@ -924,6 +924,12 @@ export class NativeAutonomyRuntime {
       if (entry.proposal.quality || this.policy.quality) {
         const decision = this.store.get<{ outcome: string }>("decision", proposalId)
         if (decision && decision.outcome !== "admitted") return { admitted: false as const, decision }
+        const held = this.humanInput?.snapshot(proposalId, entry.proposal, entry.roundId)
+        if (held && ["pending", "skipped"].includes(held.state) && this.store.get("idea-decision", held.id))
+          return {
+            admitted: false as const,
+            reason: `Human direction ${held.state}: ${held.id}; continue routine work`
+          }
         if (
           this.store
             .list<{ roundId: string; state: string }>("investigation")

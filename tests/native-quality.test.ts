@@ -1002,6 +1002,16 @@ it("holds a selected high-impact idea before creating workflow cards, then reche
   expect(result.admitted).toBe(false)
   expect(s.store.list("workflow")).toHaveLength(0)
   expect(s.store.get("decision", proposalId)).toBeNull()
+  const routine = structuredClone(s.store.get<any>("proposal", proposalId))
+  routine.proposal.quality.risk = "routine"
+  routine.proposal.quality.riskReasons = []
+  routine.proposal.quality.problem = "A different routine problem"
+  s.store.put("proposal", "routine-alternative", routine)
+  expect(s.runtime.quality.selection(roundId).find((item) => item.id === proposalId)).toBeUndefined()
+  expect(s.runtime.quality.selection(roundId).find((item) => item.id === "routine-alternative")?.outcome).toBe(
+    "selected"
+  )
+  expect((await s.runtime.admit("planner", proposalId, "Still waiting")).admitted).toBe(false)
   const idea = input.list()[0]!
   expect(s.runtime.proposals(roundId)[0]!.humanInput?.state).toBe("pending")
   input.decide(idea.id, "approve", "12345", () => {})

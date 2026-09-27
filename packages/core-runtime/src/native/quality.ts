@@ -718,7 +718,7 @@ export class NativeQualityRuntime {
           notes: JSON.stringify({
             roundId,
             instructions: [
-              "If humanInput is pending, call autocode_admit to register the decision request, then leave it pending without autocode_defer. Continue routine proposals. Human direction approves the idea only; all admission and verification checks remain required.",
+              "If humanInput is pending, call autocode_admit to register the decision request, then leave it pending without autocode_defer and refresh autocode_proposals so routine candidates can use the available capacity. Continue routine proposals. Human direction approves the idea only; all admission and verification checks remain required.",
               "Read autocode_proposals using the roundId supplied in these notes. Compare user value, evidence strength, complexity, dependencies and risk. Admit only useful bounded slices; zero admissions is valid.",
               "These inline notes contain your planner instructions unless an explicit contextId is supplied. Call autocode_context only with that exact assigned contextId; never substitute a card ID or round ID. Use each autocode_proposals scope snapshot for current native reservations, not context lookup or recent summaries. A reserved scope must be deferred; unreserved permits an autocode_admit attempt, whose atomic checks still enforce scope, evidence, risk and budget. Refresh the proposal listing if scope information is missing; do not invent clearance.",
               "Use autocode_admit(proposalId,rationale) for selections. Use autocode_defer(proposalId,reason) for every rejected or deferred alternative, including already implemented or equivalent problems with different titles. Never invent or edit proposals.",
@@ -1016,6 +1016,9 @@ export class NativeQualityRuntime {
       .filter((p) => p.value.roundId === roundId && !this.store.get("decision", p.id))
       .flatMap(({ id, value: { proposal } }) => {
         if (!proposal.quality?.hypothesis) return []
+        const input = this.runtime.humanInput?.snapshot(id, proposal, roundId)
+        if (input && ["pending", "skipped"].includes(input.state) && this.store.get("idea-decision", input.id))
+          return []
         const persona = this.policy.personas.find(
           (p) => p.personaId === proposal.personaId && p.goals.includes(proposal.goal)
         )
