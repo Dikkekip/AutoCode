@@ -645,7 +645,9 @@ export class NativeAutonomyRuntime {
             delete workflow.submission
             delete workflow.blocker
             workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
-            workflow.repairCount = workflow.lifecycle.attempt
+            // An explicit operator retry starts a new bounded repair budget.
+            // Immutable attempt numbers and archived evidence still continue.
+            workflow.repairCount = 0
             const card = await this.createCard({
               boardId: this.policy.boardId,
               title: `Recover: ${workflow.proposal.title}`,
@@ -1255,8 +1257,9 @@ export class NativeAutonomyRuntime {
         `Verification command unavailable (exit ${unavailable.exitCode}): ${unavailable.argv[0]}; inspect ${unavailable.artifact} and repair the verification environment before operator recovery. Candidate and repair budget preserved.`
       )
     const previousLifecycle = workflow.lifecycle ?? upgradeNativeLifecycle(id, workflow)
-    const attempt = (workflow.repairCount ?? 0) + 1
-    if (attempt > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)
+    const repairCount = (workflow.repairCount ?? 0) + 1
+    if (repairCount > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)
+    const attempt = previousLifecycle.attempt + 1
     const signature = createHash("sha256").update(reason).digest("hex")
     this.store.put("attempt-evidence", `${id}:${attempt}`, {
       candidate: workflow.candidate,
@@ -1268,7 +1271,7 @@ export class NativeAutonomyRuntime {
     })
     const card = await this.createCard({
       boardId: this.policy.boardId,
-      title: `Repair ${attempt}: ${workflow.proposal.title}`,
+      title: `Repair ${repairCount}: ${workflow.proposal.title}`,
       status: "blocked",
       agentId: await this.selectCoderAgent(),
       idempotencyKey: `workflow:${id}:repair:${attempt}`,
@@ -1286,7 +1289,7 @@ export class NativeAutonomyRuntime {
           "Repair the preserved implementation within its admitted scope. Make a real correction; do not weaken required tests. The submission broker records the scoped commit. Call autocode_submit with workflowId and worktreePath, then workboard_complete. Independent verification and review will run again."
       })
     })
-    workflow.repairCount = attempt
+    workflow.repairCount = repairCount
     workflow.implementationCardId = card.id
     delete workflow.candidate
     delete workflow.verification
@@ -1310,7 +1313,7 @@ export class NativeAutonomyRuntime {
       {
         kind: "workflow.repair-requested",
         subject: id,
-        value: { attempt, attemptId: workflow.lifecycle.attemptId, reason, signature }
+        value: { attempt, repairCount, attemptId: workflow.lifecycle.attemptId, reason, signature }
       }
     )
   }

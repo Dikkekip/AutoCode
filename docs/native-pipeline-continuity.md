@@ -48,6 +48,16 @@ operator applies the reviewed policy through its governance controls, recover
 blocked work through an exact recovery plan and let fresh verification and
 independent review run normally.
 
+An explicit operator retry receives two fresh coding repair chances. Its immutable
+attempt number keeps increasing, while its repair counter starts at zero. Repair
+cards and archived evidence use the immutable attempt number, so a new budget
+cannot reuse an old card or overwrite earlier evidence. Automatic reconciliation
+does not reset an exhausted budget.
+
+The native CLI allows three minutes for resume readiness and workspace config
+updates, matching the existing doctor deadline. A timed-out caller does not prove
+the server rejected a mutation; inspect live state before retrying it.
+
 Operational recovery also required restarting a gateway whose own SQLite
 lifecycle lock prevented Workboard access. The restart restored access; it does
 not establish a permanent fix for the upstream lock lifecycle. Dispatch and

@@ -12,7 +12,7 @@ const cleanups: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup()
 })
-function setup(candidate?: NativeWorkflow["candidate"]) {
+function setup(candidate?: NativeWorkflow["candidate"], initialAttempt = 0) {
   const root = mkdtempSync(join(tmpdir(), "native-recovery-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const store = new NativeEvidenceStore(join(root, "evidence.db"))
@@ -58,7 +58,10 @@ function setup(candidate?: NativeWorkflow["candidate"]) {
     implementationCardId: "implementation",
     stageCards: {},
     blocker: "Verification infrastructure unavailable",
-    lifecycle: upgradeNativeLifecycle("workflow", { blocker: "Verification infrastructure unavailable" })
+    lifecycle: upgradeNativeLifecycle("workflow", {
+      blocker: "Verification infrastructure unavailable",
+      repairCount: initialAttempt
+    })
   }
   store.put("workflow", "workflow", workflow)
   return { store, runtime, cards, workflow, requests }
@@ -132,6 +135,44 @@ it("retries with a new blocked card and attempt while retaining history and requ
   expect(s.requests).not.toContain("workboard.cards.dispatchWithOptions")
   await s.runtime.applyWorkflowRecovery(plan, "operator-a")
   expect(s.cards).toHaveLength(3)
+})
+it("gives an operator retry two repairs without reusing historical cards or evidence", async () => {
+  const s = setup(undefined, 5)
+  s.workflow.repairCount = 2
+  s.store.put("workflow", "workflow", s.workflow)
+  const oldEvidence = { reason: "Prior repair", candidate: { headSha: "old" } }
+  s.store.put("attempt-evidence", "workflow:1", oldEvidence)
+  s.cards.push({ id: "old-repair", title: "Prior repair", status: "done", key: "workflow:workflow:repair:1" })
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Operator repaired the infrastructure")
+  await s.runtime.applyWorkflowRecovery(plan, "operator")
+  const retried = s.runtime.requireWorkflow("workflow")
+  expect(retried.lifecycle?.attempt).toBe(6)
+  expect(retried.repairCount).toBe(0)
+  expect(s.store.list<any>("attempt-history")[0]!.value.repairCount).toBe(2)
+  s.runtime.policy.enabled = true
+  s.runtime.policy.mode = "implement-human-review"
+  s.runtime.control.change(false)
+  const candidate = {
+    cwd: s.runtime.policy.repository,
+    headSha: "a".repeat(40),
+    baseSha: "b".repeat(40),
+    files: ["src/fix.ts"],
+    branch: "candidate"
+  }
+  for (const attempt of [7, 8]) {
+    retried.candidate = candidate
+    await s.runtime.requestRepair("workflow", retried, "Add the missing acceptance assertion")
+    expect(retried.lifecycle?.attempt).toBe(attempt)
+    expect(retried.repairCount).toBe(attempt - 6)
+    expect(s.cards.find((card) => card.id === retried.implementationCardId).key).toBe(
+      `workflow:workflow:repair:${attempt}`
+    )
+    expect(s.store.get<any>("attempt-evidence", `workflow:${attempt}`).candidate).toEqual(candidate)
+  }
+  retried.candidate = candidate
+  await expect(s.runtime.requestRepair("workflow", retried, "Still failing")).rejects.toThrow(/budget exhausted/)
+  expect(s.store.get("attempt-evidence", "workflow:1")).toEqual(oldEvidence)
+  expect(s.cards.find((card) => card.id === "old-repair").status).toBe("done")
 })
 it("records explicit supersession and binds the successor revision", async () => {
   const s = setup()
