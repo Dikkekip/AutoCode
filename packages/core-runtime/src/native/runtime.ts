@@ -350,6 +350,44 @@ export class NativeAutonomyRuntime {
   reservesScope(workflow: NativeWorkflow): boolean {
     return !workflow.deployedSha && workflow.lifecycle?.state !== "cancelled" && !workflow.archivedAt
   }
+  proposalScope(proposal: NativeProposal) {
+    const conflicts = this.store
+      .list<NativeWorkflow>("workflow")
+      .filter(({ value }) => this.reservesScope(value))
+      .flatMap(({ id, value }) => {
+        const reservedPaths = value.proposal.allowedPaths.filter((reserved) =>
+          proposal.allowedPaths.some((requested) => artifactScopesOverlap(requested, reserved))
+        )
+        return reservedPaths.length
+          ? [
+              {
+                workflowId: id,
+                reservedPaths,
+                state: value.lifecycle?.state ?? "legacy",
+                blocked: Boolean(value.blocker)
+              }
+            ]
+          : []
+      })
+    return {
+      observedAtMs: Date.now(),
+      status: conflicts.length ? "reserved" : "unreserved",
+      conflicts,
+      admissionRechecks: true
+    }
+  }
+  proposals(roundId: string) {
+    const ranking = this.quality.selection(roundId)
+    return this.store
+      .list<{ roundId: string; proposal: NativeProposal }>("proposal")
+      .filter((item) => item.value.roundId === roundId)
+      .map((item) => ({
+        ...item,
+        selection: ranking.find((decision) => decision.id === item.id),
+        decision: this.store.get("decision", item.id),
+        scope: this.proposalScope(item.value.proposal)
+      }))
+  }
   async planWorkflowRecovery(
     workflowId: string,
     action: NativeRecoveryAction,
@@ -915,15 +953,8 @@ export class NativeAutonomyRuntime {
         2 * this.policy.workerConcurrency
       )
         throw new Error("Runnable backlog is full")
-      for (const w of workflows.filter((w) => this.reservesScope(w.value))) {
-        if (
-          entry.proposal.allowedPaths.some((a) =>
-            w.value.proposal.allowedPaths.some((b) => artifactScopesOverlap(a, b))
-          )
-        ) {
-          throw new Error(`Artifact scope reserved by ${w.id}`)
-        }
-      }
+      const conflict = this.proposalScope(entry.proposal).conflicts[0]
+      if (conflict) throw new Error(`Artifact scope reserved by ${conflict.workflowId}`)
       const root = await this.createCard({
         boardId: this.policy.boardId,
         title: entry.proposal.title,

@@ -205,6 +205,71 @@ const assessment = {
 }
 
 describe("native quality investigations", () => {
+  it("exposes current blocked and legacy scope reservations without treating them as approval", async () => {
+    const s = setup()
+    const c = await prepare(s)
+    expect(s.runtime.proposals(c.roundId)[0]).toMatchObject({
+      id: c.proposalId,
+      scope: { status: "unreserved", conflicts: [], admissionRechecks: true }
+    })
+    const reserved = {
+      proposal: { ...proposal(), quality: undefined, allowedPaths: ["src/*.ts"] },
+      rootCardId: "preserved-root",
+      implementationCardId: "preserved-worker",
+      stageCards: {},
+      blocker: "Needs independent review"
+    }
+    s.store.put("workflow", "preserved", reserved)
+    const listing = s.runtime.proposals(c.roundId)
+    expect(listing[0]?.scope).toMatchObject({
+      status: "reserved",
+      conflicts: [{ workflowId: "preserved", reservedPaths: ["src/*.ts"], state: "legacy", blocked: true }]
+    })
+    expect(listing[0]?.scope.observedAtMs).toBeGreaterThan(0)
+    expect(listing[0]?.selection).toBeDefined()
+    expect(s.store.get("decision", c.proposalId)).toBeNull()
+    expect(s.runtime.proposals("another-round")).toEqual([])
+    const archived = s.store.get<any>("workflow", "preserved")
+    archived.archivedAt = new Date().toISOString()
+    s.store.put("workflow", "preserved", archived)
+    expect(s.runtime.proposals(c.roundId)[0]?.scope.status).toBe("unreserved")
+    const terminalEvidence = [
+      { deployedSha: "deployed" },
+      { lifecycle: { version: 1, state: "cancelled", attempt: 0, attemptId: "cancelled:attempt:0" } }
+    ]
+    for (const [index, terminal] of terminalEvidence.entries()) {
+      s.store.put("workflow", `terminal-${index}`, { ...reserved, ...terminal })
+      expect(s.runtime.proposals(c.roundId)[0]?.scope.status).toBe("unreserved")
+    }
+    s.store.put("workflow", "unrelated", {
+      ...reserved,
+      proposal: { ...reserved.proposal, allowedPaths: ["src-other"] }
+    })
+    expect(s.runtime.proposals(c.roundId)[0]?.scope.status).toBe("unreserved")
+  })
+
+  it("rechecks scope at admission when another workflow reserved it after the planner read", async () => {
+    const s = setup()
+    const c = await prepare(s)
+    expect(s.runtime.proposals(c.roundId)[0]?.scope.status).toBe("unreserved")
+    const reserved = {
+      proposal: { ...proposal(), quality: undefined, allowedPaths: ["src"] },
+      rootCardId: "other-root",
+      implementationCardId: "other-worker",
+      stageCards: {},
+      blocker: "Preserved earlier attempt"
+    }
+    s.store.put("workflow", "arrived-after-read", reserved)
+    await expect(s.runtime.admit("planner", c.proposalId, "Supported user benefit")).rejects.toThrow(
+      /Artifact scope reserved by arrived-after-read/
+    )
+    expect(s.store.list("admission")).toHaveLength(0)
+    const archived = s.store.get<any>("workflow", "arrived-after-read")
+    archived.archivedAt = new Date().toISOString()
+    s.store.put("workflow", "arrived-after-read", archived)
+    expect(await s.runtime.admit("planner", c.proposalId, "Supported user benefit")).toHaveProperty("workflowId")
+  })
+
   it("uses bounded native sessions with actual skill content and preserved persona instructions", async () => {
     const s = setup()
     await s.runtime.discover()

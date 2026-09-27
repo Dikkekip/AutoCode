@@ -163,6 +163,24 @@ to clean up an inspector session: an uncaught VM import error can terminate the
 gateway. The observed diagnostic cleanup failure was recovered by systemd while
 native execution was paused; it was not an inference or provider failure.
 
+## Planner scope evidence
+
+A recovered planner deferred every fresh proposal because its instructions required
+scope clearance while its tool response exposed no reservation information. The
+existing admission gate already enforced reservations, but the planner could not
+inspect them. `autocode_proposals` now includes a timestamped `scope` snapshot for
+each proposal, showing `unreserved` or the conflicting workflow IDs and reserved
+paths. Blocked and legacy workflows still reserve scope; archived, cancelled and
+deployed workflows do not.
+
+The snapshot permits an admission attempt, not implementation authority.
+`autocode_admit` rechecks the same overlap predicate under the admission lease,
+including reservations created after the planner read. Evidence, risk, budget,
+duplicate decisions, test authority and independent review remain enforced.
+Regression tests cover preserved reservations, released scopes, unrelated paths
+and a reservation introduced between listing and admission. Earlier deferrals
+remain recorded; this fix does not silently reopen or approve them.
+
 ## Monitoring
 
 `scripts/native-health-monitor.py` reads native status, board cards, and schedules

@@ -677,20 +677,9 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_proposals",
-      "Read persona proposals with budget-aware value rankings for a discovery round.",
+      "Read persona proposals, budget-aware value rankings, and current native scope reservations for a discovery round. An unreserved snapshot permits an admission attempt, not approval; admission rechecks reservations and all quality gates.",
       { roundId: field },
-      (p) => {
-        const r = runtime(p.boardId)
-        const ranking = r.quality.selection(p.roundId)
-        return r.store
-          .list<any>("proposal")
-          .filter((item) => item.value.roundId === p.roundId)
-          .map((item) => ({
-            ...item,
-            selection: ranking.find((d) => d.id === item.id),
-            decision: r.store.get("decision", item.id)
-          }))
-      }
+      (p) => runtime(p.boardId).proposals(p.roundId)
     ),
     tool(
       "autocode_admit",
