@@ -98,6 +98,23 @@ class HealthTests(unittest.TestCase):
         self.assertEqual(result["issues"], [])
         self.assertEqual(result["health"], "observed")
 
+    def test_unfinished_selection_is_visible_even_while_a_candidate_is_running(self):
+        now = 2_000_000
+        jobs = [{"name": f"autocode:demo:{r}", "enabled": True,
+                 "state": {"lastRunAtMs": now, "lastRunStatus": "ok"}}
+                for r in ("discover", "dispatch", "reconcile")]
+        planner = {"id": "planner", "title": "Select persona ideas: round-1",
+                   "status": "review", "updatedAt": 1, "execution": {"status": "review"}}
+        cards = [planner, {"id": "coder", "status": "running"}]
+        result = monitor.summarize("demo", {"enabled": True}, cards, jobs, now)
+        self.assertIn("unfinished persona selection", result["issues"][0])
+        for patch in ({"updatedAt": now}, {"status": "done"},
+                      {"execution": {"status": "running"}}, {"title": "Implementation: example"}):
+            with self.subTest(patch=patch):
+                observed = monitor.summarize("demo", {"enabled": True},
+                                             [{**planner, **patch}, cards[1]], jobs, now)
+                self.assertEqual(observed["issues"], [])
+
     def test_disabled_missing_and_stale_schedules_are_visible(self):
         jobs = [{"name": "autocode:demo:dispatch", "enabled": False},
                 {"name": "autocode:demo:reconcile", "enabled": True, "state": {"lastRunAtMs": 1}}]

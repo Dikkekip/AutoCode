@@ -62,6 +62,11 @@ def summarize(board, status, cards, jobs, now, gateway=None):
             waiting.append(card["id"])
             if now - card.get("updatedAt", now) > 900_000 and not has_running:
                 issues.append(f"todo card has waited over 15 minutes without a running worker: {card['id']}")
+        elif (card.get("status") == "review"
+              and card.get("title", "").startswith("Select persona ideas:")
+              and (card.get("execution") or {}).get("status") != "running"
+              and now - card.get("updatedAt", now) > 900_000):
+            issues.append(f"unfinished persona selection has blocked discovery for over 15 minutes: {card['id']}")
     workflows = [{"id": w["id"], "title": w.get("title"), "blocker": w.get("blocker")}
                  for w in status.get("workflows", []) if w.get("blocker")]
     current = [w for w in status.get("workflows", [])
