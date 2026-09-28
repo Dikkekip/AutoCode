@@ -400,7 +400,8 @@ export async function runNativeCommand(
   artifact: string,
   sandbox?: NativeVerificationSandbox,
   signal?: AbortSignal,
-  authority?: NativeVerificationAuthority
+  authority?: NativeVerificationAuthority,
+  candidateSelection?: { headSha: string; changedFiles: string[] }
 ) {
   authority?.authorize()
   if (!sandbox) throw new Error("Required verification sandbox is not configured")
@@ -426,6 +427,34 @@ export async function runNativeCommand(
       () => authority?.authorize(),
       config.reviewedSourceFiles
     )
+    if (candidateSelection) {
+      if (candidateSelection.headSha !== sha || !candidateSelection.changedFiles.length)
+        throw new Error("Changed-file manifest must match the exact candidate")
+      const changedFiles = [...new Set(candidateSelection.changedFiles)]
+      if (
+        changedFiles.length !== candidateSelection.changedFiles.length ||
+        changedFiles.some(
+          (file) =>
+            !file ||
+            file.includes("\0") ||
+            isAbsolute(file) ||
+            relative(workspace, resolve(workspace, file)) !== file
+        )
+      )
+        throw new Error("Changed-file manifest contains an unsafe path")
+      const dir = resolve(workspace, ".openclaw-verification")
+      const writeManifest = () => {
+        // This directory is reserved for the host, never copied from Git.
+        mkdirSync(dir)
+        writeFileSync(
+          resolve(dir, "changed-files.json"),
+          JSON.stringify({ version: 1, headSha: sha, changedFiles }),
+          { mode: 0o600, flag: "wx" }
+        )
+      }
+      if (authority) authority.mutate(writeManifest)
+      else writeManifest()
+    }
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
     return await recordCommand(
@@ -552,7 +581,8 @@ export async function verifyNativeCandidate(
       resolve(artifactRoot, `${i}-${randomUUID()}.json`),
       sandbox,
       signal,
-      authority
+      authority,
+      { headSha: candidate.headSha, changedFiles: candidate.files }
     )
     checks.push({
       ...check,

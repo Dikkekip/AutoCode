@@ -140,6 +140,30 @@ const executeIsolated = (argv: string[], options: Parameters<typeof executeSandb
     ? executeDockerSandboxedCommand(argv, { ...options, image: dockerImage })
     : executeSandboxedCommand(argv, options)
 integration("Kernel verification isolation", () => {
+  it("passes exact changed paths through a host-owned manifest without exposing Git metadata", async () => {
+    const repo = temp(), evidence = temp()
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString().trim()
+    git("init")
+    git("config", "commit.gpgsign", "false")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test")
+    writeFileSync(join(repo, "source.txt"), "source")
+    git("add", "source.txt")
+    git("commit", "-m", "source")
+    const headSha = git("rev-parse", "HEAD")
+    const result = await runNativeCommand(
+      { ...command, argv: ["/bin/sh", "-c", "test ! -e /work/.git && cat /work/.openclaw-verification/changed-files.json"] },
+      repo,
+      join(evidence, "manifest.json"),
+      sandbox,
+      undefined,
+      undefined,
+      { headSha, changedFiles: ["source.txt"] }
+    )
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual({ version: 1, headSha, changedFiles: ["source.txt"] })
+    expect(existsSync(join(repo, ".openclaw-verification"))).toBe(false)
+  })
   it("hides secrets, blocks host writes and receipt tampering, preserves build variables", async () => {
     const repo = temp(),
       evidence = temp(),

@@ -1,0 +1,7 @@
+# Select committed feature tests using a host-written, exact-head manifest.
+# Verify BASE_VERIFIER_IMAGE's local sha256 ID before building.
+ARG BASE_VERIFIER_IMAGE=native-verifier:current-features-20260928
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-changed-feature-tests.mjs /opt/openclaw/checks/changed-feature-tests
+RUN chmod 0555 /opt/openclaw/checks/changed-feature-tests
