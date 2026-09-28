@@ -21,10 +21,11 @@ No global snapshot inputs or other standing commands were changed.
 The exact WhatsApp attempt 0 commit `8fb71cd918630c982968a9103be0b929b0011fa3`
 passed the new protected command on a disposable no-network snapshot: the
 reviewed base failed the named Enter case and the candidate passed 8/8 tests.
-This is a verifier diagnostic, not candidate acceptance. The TaskMonitor
-suite reported one failure while an automatic repair worker was editing its
-worktree; that in-progress result is not commit-bound evidence. Retest the
-next authenticated candidate in an immutable snapshot.
+The exact ingestion repair commit `47485336ba71004e34c3ae0fdf73e512b2ac65df`
+passed 11/11 TaskMonitor tests through the new protected command on a
+disposable no-network snapshot. These are verifier diagnostics, not candidate
+acceptance. A prior TaskMonitor run against an in-progress worktree failed;
+it was not commit-bound evidence and is superseded by the exact-commit run.
 
 Native doctor passes all checks except `measured-role-capabilities`. The
 separate 22-role capability draft validates artifact hashes and role
