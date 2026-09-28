@@ -76,6 +76,17 @@ describe("keyboard comparisons in committed diffs", () => {
   })
 })
 
+describe("identifier comparisons in committed diffs", () => {
+  it("preserves a storage key comparison without exposing adjacent credentials", () => {
+    const line =
+      "+ expect(removeItem.mock.calls.filter(([key]) => key === RECENT_NOTIFICATIONS_STORAGE_KEY)).toHaveLength(1);"
+    expect(redactNativeSourceText(line)).toBe(line)
+    expect(redactNativeSourceText(`${line}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText("+ key = credential123")).not.toBe("+ key = credential123")
+    expect(redactNativeSourceText('+ key === "credential123"')).not.toContain("credential123")
+  })
+})
+
 describe("recovery source redaction", () => {
   it.each([
     "<option key={tag.tag_id} value={tag.tag_id}>",

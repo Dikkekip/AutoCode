@@ -8,6 +8,10 @@ const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}
 const KEYBOARD_COMPARISON =
   /^\.key[ \t]*==={0,1}[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
 const KEYBOARD_HANDLER = /^onKeyDown[ \t]*=[ \t]*\{[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*\)[ \t]*=>/
+// A strict comparison with another variable has no literal credential value.
+// The broad command filter otherwise mistakes `key === SOME_IDENTIFIER` for
+// an assignment and hides part of a reviewable committed patch.
+const KEY_IDENTIFIER_COMPARISON = /^key[ \t]*===[ \t]*[A-Za-z_$][\w$]*/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -203,6 +207,14 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
         copied = key + 3
       }
       cursor = tag.end
+    } else if (
+      source.startsWith("key", cursor) &&
+      !/[\w$]/.test(source[cursor - 1] ?? "") &&
+      KEY_IDENTIFIER_COMPARISON.test(source.slice(cursor, cursor + 160))
+    ) {
+      chunks.push(source.slice(copied, cursor), marker)
+      copied = cursor + 3
+      cursor += 3
     } else if (/[A-Za-z_$]/.test(char ?? "")) {
       const reference = memberReference(source, cursor)
       if (reference) {
@@ -217,7 +229,7 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
 }
 
 const QUOTED_ASSIGNMENT_START =
-  /(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTHORIZATION|JWT)[A-Za-z0-9_]*\s*=\s*(?:\{\s*)?)(["'])/gi
+  /(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTHORIZATION|JWT)[A-Za-z0-9_]*\s*=+\s*(?:\{\s*)?)(["'])/gi
 
 function redactQuotedAssignments(source: string): string {
   const pattern = new RegExp(QUOTED_ASSIGNMENT_START)
