@@ -837,3 +837,36 @@ it("preserves an explicit future implementation schedule while repairing undated
     store.close()
   }
 })
+
+it("blocks a terminal implementation card without a submitted candidate for recovery", async () => {
+  const p = policy(),
+    gateway = new Gateway(),
+    store = new NativeEvidenceStore(join(p.repository, "missing-submission.db"))
+  try {
+    const runtime = new NativeAutonomyRuntime(p, gateway, store)
+    gateway.cards.push({
+      id: "unsubmitted",
+      agentId: p.coderAgentId,
+      title: "unsubmitted",
+      status: "review",
+      updatedAt: 123,
+      execution: { status: "review" }
+    })
+    store.put("workflow", "unsubmitted", {
+      proposal: proposal(),
+      rootCardId: "root",
+      implementationCardId: "unsubmitted",
+      stageCards: {}
+    })
+    await runtime.reconcile()
+    expect(gateway.cards[0]!.status).toBe("blocked")
+    expect(gateway.calls).toContainEqual({
+      method: "workboard.cards.update",
+      params: { id: "unsubmitted", expectedUpdatedAt: 123, patch: { status: "blocked" } }
+    })
+    expect(runtime.requireWorkflow("unsubmitted").lifecycle?.state).toBe("blocked")
+    expect(runtime.requireWorkflow("unsubmitted").blocker).toMatch(/without an authenticated candidate submission/)
+  } finally {
+    store.close()
+  }
+})

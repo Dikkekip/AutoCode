@@ -1767,6 +1767,17 @@ export class NativeAutonomyRuntime {
                 )
               )
                 return
+              // A terminal execution may leave its card in Workboard review.
+              // Recovery requires a blocked card, so finish that transition
+              // here with the observed revision before recording the blocker.
+              if (card.status !== "blocked") {
+                this.control.assert()
+                await this.gateway.request("workboard.cards.update", {
+                  id: card.id,
+                  ...(card.updatedAt ? { expectedUpdatedAt: card.updatedAt } : {}),
+                  patch: { status: "blocked" }
+                })
+              }
               w.blocker = `Implementation ended (${card.execution.status}) without an authenticated candidate submission; review the attempt and use operator recovery`
               this.transitionWorkflow(id, w, "blocked")
               this.store.event("implementation.ended-without-candidate", id, {
