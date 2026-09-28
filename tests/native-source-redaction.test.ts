@@ -48,6 +48,32 @@ describe("keyboard comparisons in committed diffs", () => {
     const source = 'event.key === "arbitrary-value"'
     expect(redactNativeSourceText(source)).not.toBe(source)
   })
+  it("preserves a JSX keyboard handler while still filtering credentials in its body", () => {
+    const source = [
+      "+ <Dialog",
+      "+   aria-labelledby={confirmingClear ? titleId + '-clear' : titleId}",
+      "+   onKeyDown={(event) => {",
+      "+     if (confirmingClear && event.key === 'Escape') {",
+      "+       event.preventDefault();",
+      "+     }",
+      "+   }}",
+      "+ />"
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('<Dialog onKeyDown="credential123" />')).not.toContain("credential123")
+  })
+  it("keeps added keyboard code after an unmatched removed-line quote", () => {
+    const source = [
+      "- const stale = 'old",
+      "+ <Dialog",
+      "+   onKeyDown={(event) => {",
+      "+     if (event.key === 'Escape') event.preventDefault();",
+      "+   }}",
+      "+ />"
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
 })
 
 describe("recovery source redaction", () => {

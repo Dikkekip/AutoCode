@@ -196,6 +196,10 @@ it("rejects symlink source and nonancestor commit manifests", async () => {
 it("safe JSX stays complete but credential-bearing recovered source remains incomplete", async () => {
   const safe = fixture("<option key={tag.tag_id} value={tag.tag_id}>")
   expect((await nativeRecoveryEvidence(safe.root, ["src"], safe.source)).complete).toBe(true)
+  const keyboard = fixture(
+    "<Dialog onKeyDown={(event) => {\n  if (event.key === 'Escape') event.preventDefault()\n}} />\n"
+  )
+  expect((await nativeRecoveryEvidence(keyboard.root, ["src"], keyboard.source)).complete).toBe(true)
   const secret = fixture('<Item key={tag.id} password="credential123"/>')
   const evidence = await nativeRecoveryEvidence(secret.root, ["src"], secret.source)
   expect(evidence.complete).toBe(false)

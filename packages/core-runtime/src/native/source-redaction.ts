@@ -7,6 +7,7 @@ const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}
 // still go through the normal credential filters.
 const KEYBOARD_COMPARISON =
   /^\.key[ \t]*==={0,1}[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
+const KEYBOARD_HANDLER = /^onKeyDown[ \t]*=[ \t]*\{[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*\)[ \t]*=>/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -16,6 +17,43 @@ function quotedEnd(source: string, start: number, limit: number): number {
     else if (source[cursor++] === quote) return cursor
   }
   return limit
+}
+
+// JSX opening-tag parsing skips nested handler bodies. Shield only the known
+// keyboard handler name and literal keyboard comparisons before that scan.
+function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker: string): string {
+  const chunks: string[] = []
+  let copied = 0
+  let cursor = 0
+  while (cursor < source.length) {
+    const char = source[cursor]
+    if (char === '"' || char === "'" || char === "`") {
+      // Diff hunks can juxtapose removed and added lines, leaving a quote
+      // unmatched in the patch even when each committed file is valid.
+      const newline = source.indexOf("\n", cursor)
+      cursor = quotedEnd(source, cursor, char === "`" || newline < 0 ? source.length : newline)
+    } else if (source.slice(cursor, cursor + 2) === "//") {
+      const end = source.indexOf("\n", cursor + 2)
+      cursor = end < 0 ? source.length : end + 1
+    } else if (source.slice(cursor, cursor + 2) === "/*") {
+      const end = source.indexOf("*/", cursor + 2)
+      cursor = end < 0 ? source.length : end + 2
+    } else if (
+      source.startsWith("onKeyDown", cursor) &&
+      /[\s<]/.test(source[cursor - 1] ?? "") &&
+      KEYBOARD_HANDLER.test(source.slice(cursor, cursor + 160))
+    ) {
+      chunks.push(source.slice(copied, cursor + 2), handlerMarker)
+      copied = cursor + 5
+      cursor += 9
+    } else if (char === "." && KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80))) {
+      chunks.push(source.slice(copied, cursor + 1), keyMarker)
+      copied = cursor + 4
+      cursor += 4
+    } else cursor++
+  }
+  chunks.push(source.slice(copied))
+  return chunks.join("")
 }
 
 function openingTag(source: string, start: number): { end: number; keys: number[] } {
@@ -219,7 +257,12 @@ export function redactNativeSourceText(source: string): string {
   while (occupiedDots.has(String(dotSerial))) dotSerial++
   // Non-identifier punctuation keeps adjacent credential-token scanning intact.
   const dotMarker = `:__SOURCE_MEMBER_DOT_${dotSerial}__:`
-  const prepared = protectReferenceNames(source, marker, queryMarker, dotMarker)
+  const prepared = protectReferenceNames(
+    protectKeyboardSyntax(source, marker, queryMarker),
+    marker,
+    queryMarker,
+    dotMarker
+  )
   const literals = redactQuotedAssignments(prepared)
   const pem = literals.replace(PRIVATE_KEY_BLOCK, "$1\n***REDACTED***\n$3")
   const redacted = redactLogText(redactCommandText(pem))
