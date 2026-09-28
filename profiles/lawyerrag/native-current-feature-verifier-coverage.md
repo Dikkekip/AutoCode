@@ -27,6 +27,21 @@ disposable no-network snapshot. These are verifier diagnostics, not candidate
 acceptance. A prior TaskMonitor run against an in-progress worktree failed;
 it was not commit-bound evidence and is superseded by the exact-commit run.
 
+The later ingestion attempt 2 review asked why the existing reconciliation
+assertion changed and why a dedup API mock was added. The reconciliation panel
+at `apps/reports-ui/src/features/ingestion/components/BarnevernSourceBundleReconciliationPanel.tsx`
+has the same Git blob `0db3305a9b478fff5600c5ef18d426e0ea866caf` at base and candidate.
+Its rendered success text already says “Every reported source document has a
+canonical accounting outcome” (line 239), which is what the revised assertion
+checks. The unchanged panel also calls
+`IngestionAPI.getBarnevernIngestionDedupReport` (line 156); the added mock
+supplies that existing dependency in the TaskMonitor test harness. Independent
+review must still decide whether the candidate preserves the assertion's
+intended behavioral coverage.
+The exact attempt 2 commit `fec3b9443e583371fb2c748928a7603df006aa8b`
+also passed 11/11 TaskMonitor tests through the protected command in a fresh
+disposable no-network snapshot.
+
 Native doctor passes all checks except `measured-role-capabilities`. The
 separate 22-role capability draft validates artifact hashes and role
 eligibility but is unregistered. Its unchanged measurements need independent
