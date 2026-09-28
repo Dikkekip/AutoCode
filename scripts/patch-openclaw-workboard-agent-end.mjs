@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { closeSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { resolve } from "node:path"
 
 // Host repair for OpenClaw 2026.9.6 Workboard's early agent_end lifecycle event.
@@ -34,13 +34,18 @@ if (mode === "--check") {
   process.exit(0)
 }
 const backup = `${target}.pre-native-agent-end-20260928`
-const fd = openSync(backup, "wx", 0o600)
-try {
-  writeFileSync(fd, source)
-} finally {
-  closeSync(fd)
+if (existsSync(backup)) {
+  if (sha256(readFileSync(backup)) !== originalDigest)
+    throw new Error("Existing Workboard backup differs from the reviewed source; refuse patch")
+} else {
+  const fd = openSync(backup, "wx", 0o600)
+  try {
+    writeFileSync(fd, source)
+  } finally {
+    closeSync(fd)
+  }
 }
-const temporary = `${target}.native-agent-end-tmp`
+const temporary = `${target}.native-agent-end-tmp.js`
 const modeBits = statSync(target).mode & 0o777
 const tmpFd = openSync(temporary, "wx", modeBits)
 try {
