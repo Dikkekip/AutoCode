@@ -1,0 +1,10 @@
+# Overlay coverage checks onto the currently reviewed immutable verifier image.
+# Resolve and verify BASE_VERIFIER_IMAGE's local sha256 ID before building.
+ARG BASE_VERIFIER_IMAGE=native-verifier:complete-browser-repair-20260927
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-incident-deadline-tests.sh /opt/openclaw/checks/incident-deadline-handoff
+COPY native-swipe-base-comparison.sh /opt/openclaw/checks/swipe-base-comparison
+COPY baselines/SwipeActionRow.tsx /opt/openclaw/baselines/SwipeActionRow.tsx
+RUN chmod 0555 /opt/openclaw/checks/incident-deadline-handoff /opt/openclaw/checks/swipe-base-comparison \
+    && chmod 0444 /opt/openclaw/baselines/SwipeActionRow.tsx
