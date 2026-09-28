@@ -4,17 +4,20 @@ The live LawyerRAG policy remains unchanged pending independent review of the
 capability evidence and exact policy digest. This proposal extends the staged
 current feature policy; it supersedes that proposal for activation.
 
-- Staged policy: `/tmp/lawyerrag-native-verifier-coverage-changed-features-20260928.json`
-- Policy digest: `411a9ee517f457da7457661247702e63a17464decbd0a5956ad000e916451407`
+- Staged policy: `/tmp/lawyerrag-native-verifier-coverage-changed-tests-20260928.json`
+- Policy digest: `c36c6d174f28e29fa36bd8412d3a4074c4b23abab93a6945ee7c30deecd9abfd`
 - Base image: `sha256:f5cf87b95deec3fec5b9e0b687cd137b4c1ee753ab2de0de2ac50f01fe61717a`
 - New local image: `sha256:bc9b743a0787f257c0e9f0fe304334ddee64cf319c836f7b3e3d6e867797e035`
-- Capability review draft: `/home/dikkekip/LawyerRAG/.openclaw/operator-artifacts/verifier-coverage-20260928/capability-changed-features-draft/plan.json`
+- Capability review draft: `/home/dikkekip/LawyerRAG/.openclaw/operator-artifacts/verifier-coverage-20260928/capability-changed-tests-draft/plan.json`
 
-The 48th protected rule applies to `apps/reports-ui/src/features/**`. The host
+The 48th protected rule applies when a candidate changes a feature `*.test.ts`
+or `*.test.tsx` file. The host
 captures the exact committed candidate head and changed paths, then writes a
 manifest into the disposable verification snapshot. The container selects only
 committed changed test files or existing companion tests for changed TypeScript
-feature sources. It fails closed when no test is selected. The manifest is not
+feature sources. It fails closed when no test is selected. Source-only feature
+changes still use the existing path-selected rules and require independent
+design review. The manifest is not
 accepted from the candidate Git tree, and Git metadata is absent in the
 container. The command verifies the unchanged dependency lockfile and runs
 Vitest with network disabled.
@@ -29,7 +32,9 @@ not candidate acceptance or a design review verdict.
 A broad ingestion directory suite was tested and rejected: it passed 252 tests
 but failed one unrelated preexisting TaskMonitor assertion. Selecting tests
 from exact changed paths avoids making unrelated baseline failures block every
-candidate in that directory. The earlier exact WhatsApp and ingestion rules
+candidate in that directory. Only 142 of 467 current feature `.tsx` sources
+have a same-name companion test, so applying this rule to all feature sources
+would block many source-only candidates. The earlier exact WhatsApp and ingestion rules
 remain in the staged policy and still require independent review.
 
 The 22-role capability draft only rebinds unchanged measurements and role
