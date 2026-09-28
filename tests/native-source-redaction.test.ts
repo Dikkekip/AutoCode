@@ -80,6 +80,12 @@ describe("keyboard comparisons in committed diffs", () => {
     expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
     expect(redactNativeSourceText('const onKeyDown = "credential123"')).not.toContain("credential123")
   })
+  it("preserves the fixed IME keyCode comparison without exposing keyCode credentials", () => {
+    const source = "+ if (event.key === 'Enter' && event.keyCode === 229) event.preventDefault();"
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('event.keyCode === "credential123"')).not.toContain("credential123")
+  })
 })
 
 describe("identifier comparisons in committed diffs", () => {

@@ -7,6 +7,9 @@ const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}
 // still go through the normal credential filters.
 const KEYBOARD_COMPARISON =
   /^\.key[ \t]*==={0,1}[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
+// The numeric 229 browser keyCode marks IME composition. Protect only that
+// fixed comparison; other keyCode values still pass through credential filters.
+const IME_KEYCODE_COMPARISON = /^\.keyCode[ \t]*===[ \t]*229\b/
 const KEYBOARD_HANDLER = /^onKeyDown[ \t]*=[ \t]*\{[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*\)[ \t]*=>/
 const KEYBOARD_CALLBACK = /^onKeyDown[ \t]*=[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*:[ \t]*KeyboardEvent[ \t]*\)[ \t]*=>/
 // A strict comparison with another variable has no literal credential value.
@@ -53,7 +56,11 @@ function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker:
       chunks.push(source.slice(copied, cursor + 2), handlerMarker)
       copied = cursor + 5
       cursor += 9
-    } else if (char === "." && KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80))) {
+    } else if (
+      char === "." &&
+      (KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80)) ||
+        IME_KEYCODE_COMPARISON.test(source.slice(cursor, cursor + 80)))
+    ) {
       chunks.push(source.slice(copied, cursor + 1), keyMarker)
       copied = cursor + 4
       cursor += 4
@@ -192,7 +199,11 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
     } else if (source.slice(cursor, cursor + 2) === "/*") {
       const end = source.indexOf("*/", cursor + 2)
       cursor = end < 0 ? source.length : end + 2
-    } else if (char === "." && KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80))) {
+    } else if (
+      char === "." &&
+      (KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80)) ||
+        IME_KEYCODE_COMPARISON.test(source.slice(cursor, cursor + 80)))
+    ) {
       chunks.push(source.slice(copied, cursor + 1), marker)
       copied = cursor + 4
       cursor += 4
