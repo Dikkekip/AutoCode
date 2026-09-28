@@ -8,6 +8,7 @@ const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}
 const KEYBOARD_COMPARISON =
   /^\.key[ \t]*==={0,1}[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
 const KEYBOARD_HANDLER = /^onKeyDown[ \t]*=[ \t]*\{[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*\)[ \t]*=>/
+const KEYBOARD_CALLBACK = /^onKeyDown[ \t]*=[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*:[ \t]*KeyboardEvent[ \t]*\)[ \t]*=>/
 // A strict comparison with another variable has no literal credential value.
 // The broad command filter otherwise mistakes `key === SOME_IDENTIFIER` for
 // an assignment and hides part of a reviewable committed patch.
@@ -23,8 +24,8 @@ function quotedEnd(source: string, start: number, limit: number): number {
   return limit
 }
 
-// JSX opening-tag parsing skips nested handler bodies. Shield only the known
-// keyboard handler name and literal keyboard comparisons before that scan.
+// JSX opening-tag parsing skips nested handler bodies. Shield only known
+// keyboard callback names and literal keyboard comparisons before that scan.
 function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker: string): string {
   const chunks: string[] = []
   let copied = 0
@@ -45,7 +46,9 @@ function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker:
     } else if (
       source.startsWith("onKeyDown", cursor) &&
       /[\s<]/.test(source[cursor - 1] ?? "") &&
-      KEYBOARD_HANDLER.test(source.slice(cursor, cursor + 160))
+      (KEYBOARD_HANDLER.test(source.slice(cursor, cursor + 160)) ||
+        (/\bconst[ \t]+$/.test(source.slice(Math.max(0, cursor - 16), cursor)) &&
+          KEYBOARD_CALLBACK.test(source.slice(cursor, cursor + 160))))
     ) {
       chunks.push(source.slice(copied, cursor + 2), handlerMarker)
       copied = cursor + 5

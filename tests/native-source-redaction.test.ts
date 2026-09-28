@@ -74,6 +74,12 @@ describe("keyboard comparisons in committed diffs", () => {
     ].join("\n")
     expect(redactNativeSourceText(source)).toBe(source)
   })
+  it("preserves a typed keyboard callback declaration in a committed diff", () => {
+    const source = "+ const onKeyDown = (event: KeyboardEvent) => {"
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('const onKeyDown = "credential123"')).not.toContain("credential123")
+  })
 })
 
 describe("identifier comparisons in committed diffs", () => {
