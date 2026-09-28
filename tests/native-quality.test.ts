@@ -930,6 +930,32 @@ it("defers discovery when unfinished workflows fill admission capacity even with
   expect((await s.runtime.discover()).created).toHaveLength(4)
 })
 
+it("does not let retained review cards exhaust discovery capacity", async () => {
+  const s = setup()
+  s.gateway.cards.push(
+    ...Array.from({ length: 3 }, (_, index) => ({
+      id: `old-review-${index}`,
+      title: `Retained review ${index}`,
+      status: "review",
+      execution: { status: "review" }
+    }))
+  )
+  expect((await s.runtime.discover()).created).toHaveLength(4)
+})
+
+it("counts a review card whose worker is still running toward discovery capacity", async () => {
+  const s = setup()
+  s.gateway.cards.push(
+    ...Array.from({ length: 3 }, (_, index) => ({
+      id: `running-review-${index}`,
+      title: `Running review ${index}`,
+      status: "review",
+      execution: { status: "running" }
+    }))
+  )
+  expect(await s.runtime.discover()).toEqual({ created: [], reason: "downstream backpressure" })
+})
+
 it("journals revision-bound line excerpts and context packs behind the existing session gate", async () => {
   const s = setup()
   await s.runtime.discover()

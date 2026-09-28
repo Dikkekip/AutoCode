@@ -57,6 +57,9 @@ interface QualityRound {
 }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex")
 const active = (c: NativeCard) => ["todo", "ready", "running", "review", "scheduled"].includes(c.status)
+// Review is a terminal worker state unless execution is still running. Retained
+// review cards must not consume discovery capacity indefinitely.
+const inFlight = (c: NativeCard) => active(c) && (c.status !== "review" || c.execution?.status === "running")
 export class NativeQualityRuntime {
   constructor(readonly runtime: NativeAutonomyRuntime) {}
   get policy() {
@@ -538,11 +541,11 @@ export class NativeQualityRuntime {
             this.store.put("operator-request", item.id, { ...item.value, state: "dispatched" })
         }
         const pending = rounds.find((r) => r.value.qualityVersion === 1 && r.value.phase === "building")
-        if (!pending && rounds.some((r) => r.value.cards?.some((id) => cards.some((c) => c.id === id && active(c)))))
+        if (!pending && rounds.some((r) => r.value.cards?.some((id) => cards.some((c) => c.id === id && inFlight(c)))))
           return { created: [], reason: "persona round still active" }
         if (
           !pending &&
-          (cards.filter(active).length > 2 * this.policy.workerConcurrency ||
+          (cards.filter(inFlight).length > 2 * this.policy.workerConcurrency ||
             this.store
               .list<NativeWorkflow>("workflow")
               .filter((w) => this.runtime.reservesScope(w.value) && !w.value.blocker).length >=
