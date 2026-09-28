@@ -930,6 +930,25 @@ it("defers discovery when unfinished workflows fill admission capacity even with
   expect((await s.runtime.discover()).created).toHaveLength(4)
 })
 
+it("shows cross-persona blocked scope reservations to investigators before proposal", async () => {
+  const s = setup()
+  s.store.put("workflow", "other-persona", {
+    proposal: { ...proposal(), personaId: "backend", allowedPaths: ["src/view.ts"] },
+    blocker: "Independent review needed"
+  })
+  expect(s.runtime.quality.feedback("ux").reservedScopes).toContain("src/view.ts")
+  await s.runtime.discover()
+  const card = s.gateway.cards.find((value) => value.title === "Investigate: ux")
+  const pointer = JSON.parse(card.notes)
+  const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+  expect(notes.recentOutcomes.reservedScopes).toContain("src/view.ts")
+  expect(notes.instructions.join(" ")).toContain("Choose allowedPaths that do not overlap")
+  const workflow = s.store.get<any>("workflow", "other-persona")
+  workflow.deployedSha = "released"
+  s.store.put("workflow", "other-persona", workflow)
+  expect(s.runtime.quality.feedback("ux").reservedScopes).not.toContain("src/view.ts")
+})
+
 it("does not let retained review cards exhaust discovery capacity", async () => {
   const s = setup()
   s.gateway.cards.push(

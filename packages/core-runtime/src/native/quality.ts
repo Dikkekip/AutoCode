@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import {
+  artifactScopesOverlap,
   type NativeAssessment,
   type NativeProposal,
   type NativeProposalQuality,
@@ -711,6 +712,7 @@ export class NativeQualityRuntime {
                 "Run a short real investigation for your persona goals. Use the supplied prompt-engineering-expert skill to create at most two bounded implementation prompts for useful features or fixes.",
                 "First write a short persona-specific investigation brief: questions, counterchecks, stopping criteria and expected evidence. Apply it, then include the brief with your implementationPrompt. Self-prompting must retain the fixed evidence, uncertainty and acceptance requirements.",
                 "The proposal goal must exactly copy one of persona.goals. Do not replace it with a newly phrased task goal; put that task-specific outcome in title and quality.expectedBenefit.",
+                "recentOutcomes.reservedScopes lists paths owned by unfinished workflows, including blocked work from other personas. Choose allowedPaths that do not overlap those scopes; admission will recheck them. Investigate another owned area or finish no_op when no disjoint useful work remains.",
                 "Submit via autocode_propose. Include personaId, goal, title, evidence [{path,observation}], allowedPaths, acceptance, alternatives, implementationPrompt, and quality {problem,userWorkflow,expectedBenefit,approach,nonGoals,risk,riskReasons,verification:[{criterion,method}]}. Alternatives must be non-empty strings. quality.risk must be routine or high, and riskReasons must be an array of strings. Every criterion needs a verification method. quality.hypothesis is required: {metric,unit,baseline,target,direction:increase|decrease,baselineEvidence:[inspected evidence paths],evidenceStrength:observed|reproduced|measured,confidence:0..1,uncertainty,effortHours,costCents,measurementPlan,alternatives:[{kind:no_op|change,description,rationale}]}. Include both no_op and change; quantify benefit without inventing measurements.",
 
                 "The prompt must cover approach, constraints, non-goals and acceptance verification. Do not manufacture ideas or claim a template was an inference session.",
@@ -760,7 +762,17 @@ export class NativeQualityRuntime {
   }
   feedback(personaId: string) {
     const memory = this.store.get<NativeMemoryConfig>("native-memory-config", this.policy.boardId)
+    const persona = this.policy.personas.find((value) => value.personaId === personaId)
     return {
+      reservedScopes: [
+        ...new Set(
+          this.store
+            .list<NativeWorkflow>("workflow")
+            .filter(({ value }) => this.runtime.reservesScope(value))
+            .flatMap(({ value }) => value.proposal.allowedPaths)
+            .filter((path) => persona?.allowedPaths.some((root) => artifactScopesOverlap(path, root)))
+        )
+      ].sort(),
       verifiedLessons: memory
         ? verifiedNativeLessons(this.store, memory.projectId, personaId)
             .slice(-5)
