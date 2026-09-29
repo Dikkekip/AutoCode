@@ -78,7 +78,10 @@ test("deprioritizes exhausted short OR weekly windows, recovers after reset, ign
 
 test("omits expired and near-expiry credentials from native worker orders", (t) => {
   const f = fixture(t)
-  for (const [index, expiry] of [[0, now / 1000 - 1], [1, now / 1000 + 240]]) {
+  for (const [index, expiry] of [
+    [0, now / 1000 - 1],
+    [1, now / 1000 + 240]
+  ]) {
     const key = f.accounts[index].account_key
     const path = join(f.dir, `${Buffer.from(key).toString("base64url")}.auth.json`)
     const auth = JSON.parse(readFileSync(path, "utf8"))
@@ -210,8 +213,14 @@ test("retries transient shared and agent store contention without losing a commi
     }
   }
   const result = await synchronize({
-    accounts, orders, stateDir: "/fixture", entries: {}, sdk,
-    retryDelay: async () => { delays++ }
+    accounts,
+    orders,
+    stateDir: "/fixture",
+    entries: {},
+    sdk,
+    retryDelay: async () => {
+      delays++
+    }
   })
   assert.deepEqual(result, { changed: true })
   assert.equal(delays, 2)

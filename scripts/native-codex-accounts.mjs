@@ -125,7 +125,15 @@ export function mergeAccounts(store, accounts, order) {
   return changed
 }
 
-export async function synchronize({ accounts, orders, stateDir, entries, sdk, onChange = () => {}, retryDelay = () => new Promise((resolve) => setTimeout(resolve, 2000)) }) {
+export async function synchronize({
+  accounts,
+  orders,
+  stateDir,
+  entries,
+  sdk,
+  onChange = () => {},
+  retryDelay = () => new Promise((resolve) => setTimeout(resolve, 2000))
+}) {
   let changed = false
   const update = (store, credentials, order) => {
     const updated = mergeAccounts(store, credentials, order)
