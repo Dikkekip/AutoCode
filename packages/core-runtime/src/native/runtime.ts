@@ -1886,6 +1886,8 @@ export class NativeAutonomyRuntime {
       startedCardIds: string[]
       deferredCount: number
       deferred: Array<{ cardId: string; reason: "worktree-capacity" }>
+      failedCount?: number
+      failures?: Array<{ cardId: string; error: string }>
     }
   }> {
     if (!this.hasOwnership) return this.withOwnership(() => this.reconcile(options))
@@ -2023,7 +2025,21 @@ export class NativeAutonomyRuntime {
                   .filter((item: any) => identifier(item?.cardId) && item.reason === "worktree-capacity")
                   .map((item: any) => ({ cardId: item.cardId as string, reason: "worktree-capacity" as const }))
               : []
-            dispatch = { startedCount: result.started.length, startedCardIds, deferredCount: deferred.length, deferred }
+            const failures = Array.isArray(result.startFailures)
+              ? result.startFailures
+                  .filter((item: any) => identifier(item?.cardId) && typeof item.error === "string")
+                  .map((item: any) => ({
+                    cardId: item.cardId as string,
+                    error: redactLogText(redactCommandText(item.error)).slice(0, 2000)
+                  }))
+              : []
+            dispatch = {
+              startedCount: result.started.length,
+              startedCardIds,
+              deferredCount: deferred.length,
+              deferred,
+              ...(failures.length ? { failedCount: failures.length, failures } : {})
+            }
           }
         }
         return options.dispatchOnly ? [] : ordered

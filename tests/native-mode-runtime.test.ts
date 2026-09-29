@@ -64,3 +64,46 @@ it("unknown capped worker cost denies dispatch before execution; stable reservat
   expect(s.store.list("budget-reservation")).toHaveLength(1)
   expect(s.store.list<any>("budget-window").every((row) => row.value.reserved.actions === 1)).toBe(true)
 })
+
+it("reports native Workboard startup failures instead of hiding allocation errors", async () => {
+  const s = setup("implement-human-review")
+  s.gateway.request.mockImplementation(async (...args: any[]) =>
+    args[0] === "workboard.cards.dispatchWithOptions"
+      ? {
+          started: [],
+          startFailures: [{ cardId: "worker-card", error: "Insufficient disk space for worktree allocation" }]
+        }
+      : ({ cards: s.cards } as any)
+  )
+  await expect(s.runtime.reconcile({ dispatchOnly: true })).resolves.toEqual({
+    advanced: 0,
+    dispatch: {
+      startedCount: 0,
+      startedCardIds: [],
+      deferredCount: 0,
+      deferred: [],
+      failedCount: 1,
+      failures: [{ cardId: "worker-card", error: "Insufficient disk space for worktree allocation" }]
+    }
+  })
+})
+
+it("validates startup failure attribution and redacts private error details", async () => {
+  const s = setup("implement-human-review")
+  s.gateway.request.mockImplementation(async (...args: any[]) =>
+    args[0] === "workboard.cards.dispatchWithOptions"
+      ? {
+          started: [],
+          startFailures: [
+            { cardId: "worker-card", error: "Authorization: Bearer private-start-token" },
+            { cardId: "invalid/card", error: "invalid attribution" },
+            { cardId: "other-card", error: { message: "unsupported payload" } }
+          ]
+        }
+      : ({ cards: s.cards } as any)
+  )
+  const result = await s.runtime.reconcile({ dispatchOnly: true })
+  expect(result.dispatch?.failedCount).toBe(1)
+  expect(result.dispatch?.failures?.[0]?.cardId).toBe("worker-card")
+  expect(JSON.stringify(result)).not.toContain("private-start-token")
+})
