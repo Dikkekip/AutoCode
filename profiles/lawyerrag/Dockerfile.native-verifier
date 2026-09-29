@@ -18,6 +18,8 @@ COPY native-browser-tests.sh /opt/openclaw/checks/legacy-010
 COPY native-browser-tests.sh /opt/openclaw/checks/legacy-015
 COPY native-feature-component-tests.sh /opt/openclaw/checks/legacy-009
 COPY native-feature-component-tests.sh /opt/openclaw/checks/legacy-014
+COPY native-critical-oracle-repair.py /opt/openclaw/checks/native-critical-oracle-repair.py
+RUN python3 /opt/openclaw/checks/native-critical-oracle-repair.py
 RUN chmod 0555 /opt/openclaw/checks/ui-components /opt/openclaw/checks/legacy-004 /opt/openclaw/checks/legacy-005 \
     /opt/openclaw/checks/legacy-010 /opt/openclaw/checks/legacy-015 \
     /opt/openclaw/checks/legacy-009 /opt/openclaw/checks/legacy-014

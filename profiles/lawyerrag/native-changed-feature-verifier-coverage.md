@@ -4,6 +4,10 @@ The live LawyerRAG policy remains unchanged pending independent review of the
 capability evidence and exact policy digest. This proposal extends the staged
 current feature policy; it supersedes that proposal for activation.
 
+An additional pinned critical-test oracle timing repair is proposed in
+`native-critical-oracle-repair.md`. Its image change needs the same independent
+verification-authority review before any combined policy can be activated.
+
 - Staged policy: `/tmp/lawyerrag-native-verifier-coverage-changed-tests-20260928.json`
 - Policy digest: `c36c6d174f28e29fa36bd8412d3a4074c4b23abab93a6945ee7c30deecd9abfd`
 - Base image: `sha256:f5cf87b95deec3fec5b9e0b687cd137b4c1ee753ab2de0de2ac50f01fe61717a`
