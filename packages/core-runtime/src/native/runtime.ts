@@ -1529,6 +1529,32 @@ export class NativeAutonomyRuntime {
     }
     if (w.blocker || !w.candidate || !(await this.dependenciesComplete(w))) return advanced
     try {
+      // A reviewer can finish or fail without submitting a design verdict.
+      // The idempotent design-card intent otherwise keeps returning that
+      // terminal card, leaving the candidate in design_wait indefinitely.
+      if (w.lifecycle?.state === "design_wait" && w.designCardId && !w.designReview) {
+        const design = (await nativeCards(this.gateway, this.policy.boardId)).find((card) => card.id === w.designCardId)
+        const ended = design?.execution?.status
+        if (
+          design &&
+          !["ready", "running", "scheduled"].includes(design.status) &&
+          ended &&
+          ["failed", "cancelled", "review", "completed", "done", "blocked", "timed_out", "timeout"].includes(ended)
+        ) {
+          if (design.status !== "blocked") {
+            this.control.assert()
+            await this.gateway.request("workboard.cards.update", {
+              id: design.id,
+              ...(design.updatedAt ? { expectedUpdatedAt: design.updatedAt } : {}),
+              patch: { status: "blocked" }
+            })
+          }
+          w.blocker = `Design review ended (${ended}) without a verdict; inspect the reviewer session and use operator recovery`
+          this.transitionWorkflow(id, w, "blocked")
+          this.store.event("design.ended-without-verdict", id, { cardId: design.id, status: ended })
+          return advanced + 1
+        }
+      }
       if (this.isPaused()) {
         // Observe accepted release effects even while new execution is disabled.
         if (w.review?.verdict === "approved" && this.store.list("operation").some((op) => op.id.startsWith(`${id}:`)))

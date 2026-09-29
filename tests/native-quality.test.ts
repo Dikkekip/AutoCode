@@ -560,6 +560,39 @@ describe("native quality investigations", () => {
       /active Workboard session/
     )
   })
+  it("blocks a terminal design review without a verdict so recovery can act", async () => {
+    const s = setup(fixtureSkill, ["src/auth/**"])
+    const raw = proposal()
+    raw.allowedPaths = ["src"]
+    const c = await prepare(s, raw)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    mkdirSync(join(worktree, "src/auth"))
+    writeFileSync(join(worktree, "src/auth/login.ts"), "export const login = true\n")
+    execFileSync("git", ["-C", worktree, "add", "src"])
+    execFileSync("git", ["-C", worktree, "commit", "-m", "add login"])
+    const implementation = s.gateway.cards.find((card) => card.id === w.implementationCardId)
+    implementation.status = "running"
+    implementation.sessionKey = "coder-session"
+    implementation.metadata = { automation: { workspace: { path: worktree } } }
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
+    implementation.status = "review"
+    implementation.execution = { status: "review" }
+    await s.runtime.reconcile()
+    const waiting = s.runtime.requireWorkflow(workflowId)
+    expect(waiting.lifecycle?.state).toBe("design_wait")
+    const design = s.gateway.cards.find((card) => card.id === waiting.designCardId)
+    design.status = "blocked"
+    design.execution = { status: "blocked" }
+    await s.runtime.reconcile()
+    const blocked = s.runtime.requireWorkflow(workflowId)
+    expect(blocked.lifecycle?.state).toBe("blocked")
+    expect(blocked.blocker).toMatch(/Design review ended \(blocked\) without a verdict/)
+    expect(blocked.candidate?.headSha).toBe(waiting.candidate?.headSha)
+    expect(blocked.verification).toBeUndefined()
+  })
   it("gates a routine src proposal when its submitted candidate adds a protected file", async () => {
     const s = setup(fixtureSkill, ["src/auth/**"])
     const raw = proposal()
