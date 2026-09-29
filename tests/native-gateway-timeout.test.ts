@@ -21,6 +21,7 @@ it.each([
   ["autocode.policy.refresh.plan", 30000],
   ["autocode.doctor", 180000],
   ["autocode.resume", 180000],
+  ["workboard.cards.list", 180000],
   ["config.patch", 180000],
   ["autocode.status", 30000],
   ["autocode.reconcile", 7200000]

@@ -84,7 +84,7 @@ describe("owned investigation administrative abort", () => {
         "workboard.cards.list",
         "--json",
         "--timeout",
-        "30000",
+        "180000",
         "--params",
         JSON.stringify({ boardId: "board" })
       ])
