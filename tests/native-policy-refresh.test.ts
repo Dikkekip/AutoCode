@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
-import { NativeCliGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeCliGateway, NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
 import { nativeLoadedPolicyDigest } from "../packages/core-runtime/src/native/policy-refresh.js"
 import type { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
@@ -64,7 +64,7 @@ async function setup(configure?: (policy: any) => void) {
     logger: { warn: vi.fn() }
   })
   vi.mocked(nativeDoctor).mockResolvedValue({ ok: true, enabled: true, boardId: "refresh-app", checks: [] })
-  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method) => {
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method) => {
     if (method === "workboard.cards.list") return { cards: [] } as any
     if (method === "sessions.list") return { sessions: [], totalCount: 0, hasMore: false, nextOffset: null } as any
     throw new Error("Unexpected gateway method " + method)
@@ -497,7 +497,7 @@ it("CLI submits exact saved plan through the native admin RPC", async () => {
   const { registerNativeAutonomyCommands } = await import("../apps/dispatcher-cli/src/native-autonomy.js")
   const program = new Command()
   registerNativeAutonomyCommands(program, { stdout: vi.fn() })
-  s.request.mockResolvedValue({ accepted: true })
+  const cliRequest = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({ accepted: true })
   await program.parseAsync(
     [
       "native",
@@ -514,7 +514,7 @@ it("CLI submits exact saved plan through the native admin RPC", async () => {
     ],
     { from: "user" }
   )
-  expect(s.request).toHaveBeenLastCalledWith("autocode.policy.refresh.apply", {
+  expect(cliRequest).toHaveBeenLastCalledWith("autocode.policy.refresh.apply", {
     boardId: "refresh-app",
     plan,
     reason: "Reviewed exact candidate"
