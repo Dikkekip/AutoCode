@@ -48,6 +48,39 @@ assistive-technology and narrow-viewport procedure; the candidate remains
 blocked pending those separate design requirements and independent policy
 review.
 
+Head-bound caller inspection for that candidate gives a narrower, inspectable
+claim. `PdfWorkspaceSections.tsx` passes
+`metadataFilter === 'missing_metadata'` to the banner's `isActive` prop.
+`PdfWorkspace.tsx` implements `handleShowMissingMetadata` by clearing the search
+query and calling `updateWorkspaceSort` with `metadataFilter:
+'missing_metadata'`. That helper navigates to `/pdf` with
+`mergePdfWorkspaceSortSearch` and `replace: true`; the component reads
+`metadataFilter` from `parsedWorkspaceSearch` and includes it in
+`serializePdfWorkspaceSortSearch`. The selected state therefore follows the
+URL filter state at this exact head. This is source inspection, not a rendered
+caller regression test or proof that a reviewer can complete the workflow.
+
+Proposed manual review procedure for the exact candidate, still unexecuted:
+
+1. Seed a matter with at least one attachment missing title, date, source, or
+   disclosure metadata and one complete attachment. Open `/pdf`, activate
+   **Review missing metadata**, then confirm the URL filter, visible subset,
+   and button's selected state agree. Reload and use browser back/forward to
+   check state restoration; clear the active filter and verify it resets.
+2. With a screen reader, move to the **Vedlegg incomplete metadata review
+   banner** and its **Review missing metadata** button. Confirm the count and
+   purpose are announced, the button reports pressed before and after
+   activation, and the active subset summary is discoverable. Use Enter and
+   Space from the button, then clear the filter and confirm pressed is false.
+3. Repeat at 320px and 375px CSS viewport widths with 200% browser zoom.
+   Check that both review buttons remain visible, usable by touch and keyboard,
+   and free of horizontal overflow; confirm focus remains visible and the
+   selected state is clear without relying on color alone.
+
+Record browser, screen reader, viewport, observed URL, focused control,
+announcements, screenshots, and any deviations before asking the independent
+reviewer to reconsider. Passing the four component tests alone is insufficient.
+
 A broad ingestion directory suite was tested and rejected: it passed 252 tests
 but failed one unrelated preexisting TaskMonitor assertion. Selecting tests
 from exact changed paths avoids making unrelated baseline failures block every
