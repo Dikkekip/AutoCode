@@ -467,6 +467,21 @@ remains effective. Check both the systemd unit and drop-ins after upgrades.
 Memory pressure can stall the main event loop beyond the execution lease TTL;
 expired owners correctly lose authority and must never publish late receipts.
 
+The optional host supervisor `scripts/native-gateway-recovery.mjs` probes the
+actual `workboard.cards.list` RPC outside the Gateway. With `--apply`, it
+restarts the existing `openclaw-gateway.service` only after three consecutive
+`Agent database cleanup failed` responses from the same active process over
+at least ten minutes, with a one-hour restart cooldown. It stores only the
+process ID, counters and timestamps in the private `--state` file. Use a
+systemd user timer at five-minute intervals and pass the installed OpenClaw
+CLI as `--openclaw` and the project board as `--board`. Without `--apply` it
+reports eligibility without restarting. This recovers a wedged Gateway; it
+does not repair the underlying OpenClaw SQLite worker lifecycle or assert
+that interrupted agent work completed. Confirm a successful Workboard RPC and
+fresh discover, dispatch and reconcile results after any restart.
+The `examples/systemd/openclaw-native-gateway-recovery.*` units are templates;
+replace their paths and board before enabling the timer.
+
 The immutable route and workspace critical-suite commands also exercise the
 named bundle export and ingestion batch recovery tests, respectively.
 `test:critical` alone does not select these tests. The additional feature checks
