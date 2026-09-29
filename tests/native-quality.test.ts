@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
+import { authorizeNativeTool } from "../packages/core-runtime/src/native/broker.js"
 import type { NativeGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { NativeHumanInput } from "../packages/core-runtime/src/native/human-input.js"
 import type { Investigation } from "../packages/core-runtime/src/native/quality.js"
@@ -24,6 +25,7 @@ class Gateway implements NativeGateway {
   cards: any[] = []
   calls: any[] = []
   failCreateAt = -1
+  failResponseAfterCreateAt = -1
   async abortOwnedInvestigation(input: { sessionKey: string }) {
     this.calls.push({ method: "sessions.abort", params: { key: input.sessionKey } })
     return { status: "terminal" as const }
@@ -39,8 +41,17 @@ class Gateway implements NativeGateway {
       }
       let card = this.cards.find((c) => c.idempotencyKey === params.idempotencyKey)
       if (!card) {
-        card = { ...params, id: `card-${this.cards.length}` }
+        const index = this.cards.length
+        card = {
+          ...params,
+          id: `card-${index}`,
+          metadata: { automation: { idempotencyKey: params.idempotencyKey } }
+        }
         this.cards.push(card)
+        if (index === this.failResponseAfterCreateAt) {
+          this.failResponseAfterCreateAt = -1
+          throw new Error("card created but response lost")
+        }
       }
       return { card } as T
     }
@@ -311,6 +322,31 @@ describe("native quality investigations", () => {
     })
     expect(again.id).toBe(c.card.id)
     expect((await s.runtime.readContext(c.agent, c.session, contextId)).notes).toBe(result.notes)
+  })
+  it("delivers a pending context after card creation succeeds but its response is lost", async () => {
+    const s = setup("# Prompt Engineering Expert\n" + "Concrete skill guidance. ".repeat(300))
+    s.gateway.failResponseAfterCreateAt = 0
+    await expect(s.runtime.discover()).rejects.toThrow("card created but response lost")
+    const card = s.gateway.cards[0]
+    const { contextId } = JSON.parse(card.notes)
+    const pending = s.store.get<any>("card-context", contextId)
+    expect(pending.cardId).toBeUndefined()
+    expect(pending.idempotencyKey).toBe(card.metadata.automation.idempotencyKey)
+    card.status = "running"
+    card.sessionKey = "session-ux"
+    card.execution = { status: "running", sessionKey: "session-ux" }
+    const context = { agentId: card.agentId, sessionKey: "session-ux" }
+    const args = { boardId: s.policy.boardId, contextId }
+    expect(
+      s.gateway.cards.map((entry) => ({ agentId: entry.agentId, status: entry.status, sessionKey: entry.sessionKey }))
+    ).toEqual([{ agentId: context.agentId, status: "running", sessionKey: context.sessionKey }])
+    await expect(authorizeNativeTool(s.runtime, "autocode_context", args, context)).resolves.toBeUndefined()
+    expect(
+      JSON.parse((await s.runtime.readContext(context.agentId, context.sessionKey, contextId)).notes).persona.personaId
+    ).toBe(card.agentId.replace("research-", ""))
+    card.metadata.automation.idempotencyKey = "unrelated-card"
+    await expect(authorizeNativeTool(s.runtime, "autocode_context", args, context)).rejects.toThrow(/not assigned/)
+    await expect(s.runtime.readContext(context.agentId, context.sessionKey, contextId)).rejects.toThrow()
   })
   it("resumes partial discovery with the same round and no duplicate completed cards", async () => {
     const s = setup()

@@ -271,10 +271,11 @@ export async function nativeCard(gateway: NativeGateway, input: Record<string, u
   // Keep the complete correlation key in the native effect journal. Workboard's
   // public contract limits its external key to 160 characters.
   const key = input.idempotencyKey
-  const external =
-    typeof key === "string" && key.length > 160
-      ? { ...input, idempotencyKey: `native-card:${createHash("sha256").update(key).digest("hex")}` }
-      : input
+  const external = typeof key === "string" ? { ...input, idempotencyKey: nativeCardIdempotencyKey(key) } : input
   const result = nativeObject(await gateway.request("workboard.cards.create", external), "Workboard cards.create")
   return decodeNativeCard(result.card, typeof input.boardId === "string" ? input.boardId : undefined)
+}
+
+export function nativeCardIdempotencyKey(key: string): string {
+  return key.length > 160 ? `native-card:${createHash("sha256").update(key).digest("hex")}` : key
 }

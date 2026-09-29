@@ -31,7 +31,7 @@ import { assertExecutionOwnership, holdsExecutionOwner, withExecutionOwner } fro
 import { NativeBudgetLedger } from "./budget-ledger.js"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NativeControl, NativeControlRevoked } from "./control.js"
-import { type NativeCard, type NativeGateway, nativeCard, nativeCards } from "./gateway.js"
+import { type NativeCard, type NativeGateway, nativeCard, nativeCardIdempotencyKey, nativeCards } from "./gateway.js"
 import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
@@ -265,7 +265,12 @@ export class NativeAutonomyRuntime {
       .update(JSON.stringify([input.idempotencyKey, notes]))
       .digest("hex")
     const previous = this.store.get<{ notes: string; agentId?: string; cardId?: string }>("card-context", contextId)
-    const context = previous ?? { notes, ...(typeof input.agentId === "string" ? { agentId: input.agentId } : {}) }
+    const context = {
+      ...previous,
+      notes,
+      ...(typeof input.agentId === "string" ? { agentId: input.agentId } : {}),
+      idempotencyKey: nativeCardIdempotencyKey(String(input.idempotencyKey))
+    }
     this.store.put("card-context", contextId, context)
     const card = await nativeCard(this.gateway, {
       ...input,
@@ -280,10 +285,17 @@ export class NativeAutonomyRuntime {
     return card
   }
   async readContext(agentId: string, sessionKey: string, contextId: string) {
-    const context = this.store.get<{ notes: string; agentId?: string; cardId?: string }>("card-context", contextId)
+    const context = this.store.get<{ notes: string; agentId?: string; cardId?: string; idempotencyKey?: string }>(
+      "card-context",
+      contextId
+    )
     if (!context || (context.agentId && context.agentId !== agentId))
       throw new Error("Context is not assigned to this agent")
-    const card = (await nativeCards(this.gateway, this.policy.boardId)).find((c) => c.id === context.cardId)
+    const card = (await nativeCards(this.gateway, this.policy.boardId)).find(
+      (c) =>
+        c.id === context.cardId ||
+        (!context.cardId && context.idempotencyKey && c.metadata?.automation?.idempotencyKey === context.idempotencyKey)
+    )
     this.assertSession(card, sessionKey)
     if (card?.agentId !== agentId) throw new Error("Context is not assigned to this agent")
     this.store.event("context.read", contextId, { agentId, sessionKey, cardId: card.id })
