@@ -687,7 +687,17 @@ describe("native quality investigations", () => {
     const card = s.gateway.cards.find((card) => card.id === w.implementationCardId)
     card.status = "running"
     card.sessionKey = "coder-session"
-    card.metadata = { automation: { workspace: { path: worktree } } }
+    card.startedAt = 100
+    card.metadata = {
+      automation: { workspace: { path: worktree } },
+      comments: [
+        { createdAt: 99, body: "Prior attempt's unrelated note" },
+        {
+          createdAt: 101,
+          body: "Inspect src/auth/login.ts:1; manual browser check at 390px. OPENAI_API_KEY=sk-test12345678901234567890"
+        }
+      ]
+    }
     expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
     const held = s.runtime.requireWorkflow(workflowId)
     expect(held.candidate?.headSha).toBe(held.riskAssessment?.headSha)
@@ -716,6 +726,16 @@ describe("native quality investigations", () => {
     })
     expect(notes.committedDiff.content).toContain("+export const login = true")
     expect(notes.committedDiff.trust).toContain("Untrusted committed source")
+    expect(notes.implementationNotes).toMatchObject({
+      cardId: card.id,
+      headSha: held.candidate!.headSha,
+      redacted: true,
+      truncated: false
+    })
+    expect(notes.implementationNotes.content).toContain("manual browser check at 390px")
+    expect(notes.implementationNotes.content).not.toContain("Prior attempt")
+    expect(notes.implementationNotes.content).not.toContain("sk-test12345678901234567890")
+    expect(notes.instructions).toContain("independently verify their claims")
     expect(notes.reviewContract).toMatchObject({
       stage: "design",
       executionEvidence: "pending-independent-verification",
@@ -797,10 +817,14 @@ describe("native quality investigations", () => {
     const coder = s.gateway.cards.find((card) => card.id === w.implementationCardId)
     coder.status = "running"
     coder.sessionKey = "coder-session"
-    coder.metadata = { automation: { workspace: { path: worktree } } }
+    coder.metadata = {
+      automation: { workspace: { path: worktree } },
+      comments: [{ body: "Check keyboard focus after the source link opens", createdAt: 101 }]
+    }
     await s.runtime.submit("coder", coder.sessionKey, workflowId, worktree)
     coder.status = "done"
     const submitted = s.runtime.requireWorkflow(workflowId)
+    expect(submitted.implementationNotes?.content).toContain("keyboard focus")
     submitted.repairCount = repairCount
     s.store.put("workflow", workflowId, submitted)
     const design = s.gateway.cards.find((card) => card.id === submitted.designCardId)
@@ -838,6 +862,7 @@ describe("native quality investigations", () => {
       expect(result.review).toBeUndefined()
       expect(result.riskAssessment).toBeUndefined()
       expect(result.submission).toBeUndefined()
+      expect(result.implementationNotes).toBeUndefined()
       expect(s.store.list<any>("attempt-evidence")[0]!.value).toMatchObject({
         candidate: { headSha: submitted.candidate!.headSha },
         riskAssessment: submitted.riskAssessment,

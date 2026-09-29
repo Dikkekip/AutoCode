@@ -68,6 +68,7 @@ export interface NativeWorkflow {
   lifecycle?: NativeLifecycle
   archivedAt?: string
   submission?: { agentId: string; sessionKey: string; executionId: string }
+  implementationNotes?: { cardId: string; headSha: string; content: string; redacted: boolean; truncated: boolean }
   recovery?: {
     action: string
     planDigest: string
@@ -690,6 +691,7 @@ export class NativeAutonomyRuntime {
             delete workflow.designCardDigest
             delete workflow.riskAssessment
             delete workflow.submission
+            delete workflow.implementationNotes
             delete workflow.blocker
             workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
             // An explicit operator retry starts a new bounded repair budget.
@@ -1244,6 +1246,33 @@ export class NativeAutonomyRuntime {
     // Retain the submission so an ended coder session does not lose its candidate at this gate.
     workflow.candidate = candidate
     workflow.submission = { agentId, sessionKey, executionId: card?.execution?.runId ?? card?.runId ?? sessionKey }
+    // Capture only this authenticated implementation card's notes at submission.
+    // They are untrusted review leads, never a substitute for commit-bound evidence.
+    const rawNotes = Array.isArray(card?.metadata?.comments)
+      ? card.metadata.comments
+          .filter(
+            (comment) =>
+              typeof comment?.body === "string" &&
+              comment.body.length <= 8_000 &&
+              (!Number.isFinite(card.startedAt) ||
+                !Number.isFinite(comment.createdAt) ||
+                comment.createdAt! >= card.startedAt!)
+          )
+          .map((comment) => comment.body!.trim())
+          .filter(Boolean)
+          .slice(-6)
+          .join("\n")
+      : ""
+    if (rawNotes) {
+      const sanitized = redactLogText(redactCommandText(rawNotes))
+      workflow.implementationNotes = {
+        cardId: card!.id,
+        headSha: candidate.headSha,
+        content: sanitized.slice(-4_000),
+        redacted: sanitized !== rawNotes,
+        truncated: sanitized.length > 4_000
+      }
+    }
     this.transitionWorkflow(
       workflowId,
       workflow,
@@ -1390,6 +1419,7 @@ export class NativeAutonomyRuntime {
     delete workflow.designEvidenceComplete
     delete workflow.riskAssessment
     delete workflow.submission
+    delete workflow.implementationNotes
     delete workflow.blocker
     workflow.lifecycle = nextNativeAttempt(previousLifecycle, workflow)
     this.store.commit(

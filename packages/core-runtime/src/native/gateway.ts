@@ -188,6 +188,7 @@ export interface NativeCard {
   metadata?: {
     claim?: { ownerId?: string; expiresAt?: number }
     links?: Array<{ type: string; targetCardId?: string }>
+    comments?: Array<{ body?: string; createdAt?: number }>
     automation?: { idempotencyKey?: string; scheduledAt?: number; workspace?: { path?: string } }
   }
 }
