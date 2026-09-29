@@ -2,6 +2,7 @@ import { redactCommandText, redactLogText } from "@openclaw/domain"
 
 // Protect only complete, bounded opening tags with attribute-level references.
 const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}$/
+const STANDALONE_REFERENCE_KEY = /^key[ \t]*=[ \t]*(\{[^}\n]*\})/
 // Equality against a browser keyboard name is not a credential assignment.
 // Keep this source-only and narrow; literals, comments and arbitrary key values
 // still go through the normal credential filters.
@@ -225,15 +226,24 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
         copied = key + 3
       }
       cursor = tag.end
-    } else if (
-      source.startsWith("key", cursor) &&
-      !/[\w$]/.test(source[cursor - 1] ?? "") &&
-      (KEY_IDENTIFIER_COMPARISON.test(source.slice(cursor, cursor + 160)) ||
-        KEY_IDENTIFIER_KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 160)))
-    ) {
-      chunks.push(source.slice(copied, cursor), marker)
-      copied = cursor + 3
-      cursor += 3
+    } else if (source.startsWith("key", cursor)) {
+      // A diff hunk can start at a JSX attribute without its opening tag.
+      const lineStart = source.lastIndexOf("\n", cursor - 1) + 1
+      const linePrefix = source.slice(lineStart, cursor)
+      const assignment = STANDALONE_REFERENCE_KEY.exec(source.slice(cursor, cursor + 160))
+      if (/^[+\- ][ \t]*$/.test(linePrefix) && assignment && REFERENCE_EXPRESSION.test(assignment[1]!)) {
+        chunks.push(source.slice(copied, cursor), marker)
+        copied = cursor + 3
+        cursor += 3
+      } else if (
+        !/[\w$]/.test(source[cursor - 1] ?? "") &&
+        (KEY_IDENTIFIER_COMPARISON.test(source.slice(cursor, cursor + 160)) ||
+          KEY_IDENTIFIER_KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 160)))
+      ) {
+        chunks.push(source.slice(copied, cursor), marker)
+        copied = cursor + 3
+        cursor += 3
+      } else cursor++
     } else if (/[A-Za-z_$]/.test(char ?? "")) {
       const reference = memberReference(source, cursor)
       if (reference) {

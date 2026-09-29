@@ -110,6 +110,16 @@ describe("identifier comparisons in committed diffs", () => {
 })
 
 describe("recovery source redaction", () => {
+  it("preserves a complete JSX reference when a diff hunk omits its opening tag", () => {
+    const source = "                                         key={workflow.path}"
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText("+   key={workflow.path}")).toBe("+   key={workflow.path}")
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('+ key={"credential123"}')).not.toContain("credential123")
+    expect(redactNativeSourceText("+ key={ghp_abcdefghijklmnopqrstuvwxyz012345}")).not.toContain(
+      "ghp_abcdefghijklmnopqrstuvwxyz012345"
+    )
+  })
   it.each([
     "<option key={tag.tag_id} value={tag.tag_id}>",
     "<Item key={item.id} />",
