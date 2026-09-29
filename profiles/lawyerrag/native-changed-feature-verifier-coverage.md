@@ -65,8 +65,10 @@ Proposed manual review procedure for the exact candidate, still unexecuted:
 1. Seed a matter with at least one attachment missing title, date, source, or
    disclosure metadata and one complete attachment. Open `/pdf`, activate
    **Review missing metadata**, then confirm the URL filter, visible subset,
-   and button's selected state agree. Reload and use browser back/forward to
-   check state restoration; clear the active filter and verify it resets.
+   and button's selected state agree. Reload, then open the resulting URL in a
+   fresh tab to check state restoration; clear the active filter and verify it
+   resets. The filter update replaces the current history entry, so browser
+   back is not a suitable state-restoration check here.
 2. With a screen reader, move to the **Vedlegg incomplete metadata review
    banner** and its **Review missing metadata** button. Confirm the count and
    purpose are announced, the button reports pressed before and after
