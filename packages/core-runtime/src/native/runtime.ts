@@ -1572,6 +1572,16 @@ export class NativeAutonomyRuntime {
         w.designReview.digest === this.quality.designDigest(w)
       ) {
         this.control.assert()
+        if (w.designEvidenceComplete === false) {
+          this.store.event("design.evidence-blocked", id, {
+            headSha: w.candidate.headSha,
+            cardId: w.designCardId ?? null,
+            reason: "Committed design evidence was incomplete or redacted"
+          })
+          throw new Error(
+            "Committed design evidence was incomplete or redacted; supply independently reviewed evidence and use operator recovery. Candidate and repair budget preserved."
+          )
+        }
         await this.requestRepair(id, w, `Design changes required: ${w.designReview.rationale}`)
         return advanced + 1
       }

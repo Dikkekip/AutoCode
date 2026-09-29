@@ -777,6 +777,47 @@ describe("native quality investigations", () => {
       expect(s.gateway.cards.filter((card) => card.title.startsWith("Design review:"))).toHaveLength(1)
     }
   })
+  it("preserves a candidate and repair budget when committed design evidence is redacted", async () => {
+    const s = setup(fixtureSkill, undefined, true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    writeFileSync(join(worktree, "src/view.ts"), 'export const token = "synthetic-review-secret"\n')
+    const coder = s.gateway.cards.find((card) => card.id === w.implementationCardId)
+    coder.status = "running"
+    coder.sessionKey = "coder-session"
+    coder.metadata = { automation: { workspace: { path: worktree } } }
+    await s.runtime.submit("coder", coder.sessionKey, workflowId, worktree)
+    coder.status = "done"
+    const submitted = s.runtime.requireWorkflow(workflowId)
+    expect(submitted.designEvidenceComplete).toBe(false)
+    const design = s.gateway.cards.find((card) => card.id === submitted.designCardId)
+    design.status = "running"
+    design.sessionKey = "design-session"
+    await s.runtime.quality.designReview(
+      "reviewer",
+      design.sessionKey,
+      workflowId,
+      "changes_requested",
+      "The committed patch is redacted; request complete evidence",
+      {
+        criteria: [{ criterion: "User opens source", satisfied: false, evidence: "Committed diff is incomplete" }],
+        findings: [{ blocking: true, description: "Provide independently reviewed source evidence" }]
+      }
+    )
+    design.status = "done"
+    await s.runtime.reconcile()
+    const blocked = s.runtime.requireWorkflow(workflowId)
+    expect(blocked.lifecycle?.state).toBe("blocked")
+    expect(blocked.blocker).toContain("Candidate and repair budget preserved")
+    expect(blocked.candidate?.headSha).toBe(submitted.candidate?.headSha)
+    expect(blocked.repairCount).toBe(submitted.repairCount)
+    expect(blocked.designReview?.verdict).toBe("changes_requested")
+    expect(s.gateway.cards.filter((card) => card.title.startsWith("Repair "))).toHaveLength(0)
+    expect(s.store.list("attempt-evidence")).toHaveLength(0)
+  })
   it("does not accept approval missing acceptance proof or carrying blocking findings", () => {
     expect(() => validateNativeAssessment({ criteria: [], findings: [] }, ["User opens source"], true)).toThrow(/every/)
     expect(() =>

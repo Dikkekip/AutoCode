@@ -30,6 +30,12 @@ The submission broker rejects outside-scope files and symlinks, snapshots bounde
 
 Verification and review rejection allow at most two repair handoffs against the preserved worktree. With `verificationAuthority.independentCandidateReview` enabled, commit-bound design changes also use this shared repair limit. The repair receives the structured findings, retains the rejected candidate and review receipt, and requires fresh design approval, verification and final acceptance. Reviewers receive the policy-selected commands and per-file coverage as a plan, never as execution evidence. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
 
+If committed design evidence is truncated or redacted and the reviewer requests
+changes, reconciliation blocks for operator recovery without spending a coding
+repair attempt. The candidate commit and review receipt remain available.
+Provide independently reviewed evidence or correct the evidence policy before
+resuming; changing implementation code alone cannot fill a missing review view.
+
 ## Optional native coder pool
 
 Omitting `coderAgentIds` preserves the singular `coderAgentId` behavior. A reviewed pool can distribute implementations among distinct registered coder identities:
