@@ -435,10 +435,7 @@ export async function runNativeCommand(
         changedFiles.length !== candidateSelection.changedFiles.length ||
         changedFiles.some(
           (file) =>
-            !file ||
-            file.includes("\0") ||
-            isAbsolute(file) ||
-            relative(workspace, resolve(workspace, file)) !== file
+            !file || file.includes("\0") || isAbsolute(file) || relative(workspace, resolve(workspace, file)) !== file
         )
       )
         throw new Error("Changed-file manifest contains an unsafe path")
@@ -446,11 +443,10 @@ export async function runNativeCommand(
       const writeManifest = () => {
         // This directory is reserved for the host, never copied from Git.
         mkdirSync(dir)
-        writeFileSync(
-          resolve(dir, "changed-files.json"),
-          JSON.stringify({ version: 1, headSha: sha, changedFiles }),
-          { mode: 0o600, flag: "wx" }
-        )
+        writeFileSync(resolve(dir, "changed-files.json"), JSON.stringify({ version: 1, headSha: sha, changedFiles }), {
+          mode: 0o600,
+          flag: "wx"
+        })
       }
       if (authority) authority.mutate(writeManifest)
       else writeManifest()

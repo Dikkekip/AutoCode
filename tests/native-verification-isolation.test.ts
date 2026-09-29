@@ -141,7 +141,8 @@ const executeIsolated = (argv: string[], options: Parameters<typeof executeSandb
     : executeSandboxedCommand(argv, options)
 integration("Kernel verification isolation", () => {
   it("passes exact changed paths through a host-owned manifest without exposing Git metadata", async () => {
-    const repo = temp(), evidence = temp()
+    const repo = temp(),
+      evidence = temp()
     const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString().trim()
     git("init")
     git("config", "commit.gpgsign", "false")
@@ -152,7 +153,10 @@ integration("Kernel verification isolation", () => {
     git("commit", "-m", "source")
     const headSha = git("rev-parse", "HEAD")
     const result = await runNativeCommand(
-      { ...command, argv: ["/bin/sh", "-c", "test ! -e /work/.git && cat /work/.openclaw-verification/changed-files.json"] },
+      {
+        ...command,
+        argv: ["/bin/sh", "-c", "test ! -e /work/.git && cat /work/.openclaw-verification/changed-files.json"]
+      },
       repo,
       join(evidence, "manifest.json"),
       sandbox,
