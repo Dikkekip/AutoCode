@@ -3886,6 +3886,12 @@ describeDb("DispatcherExecutor", () => {
       blockedReason: "lane_busy_with_active_pr:active",
       lastError: null
     })
+    // Keep unrelated minute-cron jobs quiet when this test crosses a minute boundary.
+    const quietUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    for (const jobId of ["review-sweep", "execution-sweep"]) {
+      const job = store.findJobSpec(project.id, jobId)
+      if (job) store.updateJobSpecRuntime(job.id, { lastTriggeredAt: quietUntil })
+    }
     store.updateJobSpecRuntime(promotionJob.id, {
       lastTriggeredAt: overdue
     })
