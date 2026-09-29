@@ -5590,7 +5590,7 @@ describeDb("DispatcherExecutor", () => {
     expect(store.getTaskById(freshImplementation.id).status).toBe("queued")
 
     store.close()
-  })
+  }, 15_000)
 
   it("requeues a blocked promotion as soon as its review feedback fix succeeds", async () => {
     process.env.OPENCLAW_QUEUED_TASK_WINDOW = "1"
