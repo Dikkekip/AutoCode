@@ -1,0 +1,6 @@
+# Verify the exact local base image ID before assigning BASE_VERIFIER_IMAGE.
+ARG BASE_VERIFIER_IMAGE=native-verifier:api-tests-base-20260929
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-changed-api-tests.mjs /opt/openclaw/checks/changed-api-tests
+RUN chmod 0555 /opt/openclaw/checks/changed-api-tests
