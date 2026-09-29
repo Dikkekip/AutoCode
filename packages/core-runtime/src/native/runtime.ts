@@ -52,6 +52,7 @@ import {
 } from "./recovery.js"
 import { nativeRecoveryEvidence } from "./recovery-evidence.js"
 import { NativeReleasePending, releaseNativeWorkflow } from "./release.js"
+import { type NativeRepairObservation, nativeRepairObservation, planNativeRepair } from "./repair.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
@@ -259,8 +260,26 @@ export class NativeAutonomyRuntime {
     return card
   }
   private async createCardEffect(input: Record<string, unknown>): Promise<NativeCard> {
-    const notes = input.notes
-    if (typeof notes !== "string" || notes.length <= 4000) return nativeCard(this.gateway, input)
+    const responseStyle = {
+      skill: "caveman",
+      level: "full",
+      instructions: [
+        "Respond terse like smart caveman. All technical substance stay. Only fluff die.",
+        "Drop filler, pleasantries and repetition. Fragments are OK when clear. Do not invent abbreviations or add words to sound like caveman.",
+        "Preserve the user's language, negation, requirements, identifiers, commands, paths, exact errors, numbers, units and technical terms.",
+        "Use normal clear prose for code, documentation, commits, PR text, user-facing copy, security warnings and irreversible actions. Preserve required structured output and all evidence and verification requirements. Clarity wins over compression."
+      ]
+    }
+    let taskContext: Record<string, unknown> = { taskNotes: input.notes ?? "" }
+    if (typeof input.notes === "string") {
+      try {
+        const parsed: unknown = JSON.parse(input.notes)
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+          taskContext = parsed as Record<string, unknown>
+      } catch {}
+    }
+    const notes = JSON.stringify({ ...taskContext, responseStyle })
+    if (notes.length <= 4000) return nativeCard(this.gateway, { ...input, notes })
     const contextId = createHash("sha256")
       .update(JSON.stringify([input.idempotencyKey, notes]))
       .digest("hex")
@@ -277,6 +296,7 @@ export class NativeAutonomyRuntime {
       notes: JSON.stringify({
         boardId: this.policy.boardId,
         contextId,
+        responseStyle,
         instructions:
           "Before acting, call autocode_context(boardId, contextId) to retrieve your complete task context, including the prompt skill, scope, acceptance criteria and instructions. Do not proceed without retrieving it."
       })
@@ -1288,9 +1308,29 @@ export class NativeAutonomyRuntime {
         `Verification command unavailable (exit ${unavailable.exitCode}): ${unavailable.argv[0]}; inspect ${unavailable.artifact} and repair the verification environment before operator recovery. Candidate and repair budget preserved.`
       )
     const previousLifecycle = workflow.lifecycle ?? upgradeNativeLifecycle(id, workflow)
-    const repairCount = (workflow.repairCount ?? 0) + 1
+    const previousRepairs = workflow.repairCount ?? 0
+    const repairCount = previousRepairs + 1
     if (repairCount > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)
     const attempt = previousLifecycle.attempt + 1
+    const observation = nativeRepairObservation(workflow, reason)
+    const history = previousRepairs
+      ? this.store
+          .list<{ observation?: NativeRepairObservation }>("attempt-evidence")
+          .filter((entry) => entry.id.startsWith(`${id}:`))
+          .map((entry) => ({
+            attempt: Number(entry.id.slice(id.length + 1)),
+            observation: entry.value.observation
+          }))
+          .filter((entry) => Number.isSafeInteger(entry.attempt) && entry.attempt < attempt && entry.observation)
+          .sort((a, b) => a.attempt - b.attempt)
+          .slice(-Math.min(2, previousRepairs))
+          .map((entry) => entry.observation!)
+      : []
+    const repairPlan = planNativeRepair(observation, history, previousRepairs)
+    if (repairPlan.outcome !== "repair") {
+      this.store.event("workflow.repair-stalled", id, repairPlan)
+      throw new Error(`Repair stalled: ${repairPlan.nextAction}`)
+    }
     const signature = createHash("sha256").update(reason).digest("hex")
     this.store.put("attempt-evidence", `${id}:${attempt}`, {
       lifecycle: previousLifecycle,
@@ -1301,7 +1341,8 @@ export class NativeAutonomyRuntime {
       riskAssessment: workflow.riskAssessment,
       submission: workflow.submission,
       signature,
-      reason
+      reason,
+      observation
     })
     const card = await this.createCard({
       boardId: this.policy.boardId,
@@ -1319,6 +1360,7 @@ export class NativeAutonomyRuntime {
         verification: this.verificationForAgent(workflow.verification),
         review: workflow.review,
         designReview: workflow.designReview,
+        repairPlan,
         instructions:
           "Repair the preserved implementation within its admitted scope. Make a real correction; do not weaken required tests. The submission broker records the scoped commit. Call autocode_submit with workflowId and worktreePath, then workboard_complete. Independent verification and review will run again."
       })

@@ -687,7 +687,6 @@ export class NativeQualityRuntime {
             maxRuntimeSeconds: this.policy.quality!.sessionSeconds,
             maxRetries: 1,
             workspace: { kind: "scratch" },
-            skills: ["prompt-engineering-expert"],
             notes: JSON.stringify({
               roundId,
               persona,
@@ -709,7 +708,7 @@ export class NativeQualityRuntime {
               recentOutcomes: this.feedback(entry.personaId),
               instructions: [
                 "Use autocode_inspect(roundId, personaId, path) to inspect committed repository files. Empty path lists owned files. When truncated, pass the returned nextOffset as offset to continue reading the same committed file. No shell, editing, deployment or release tools are available in this research role.",
-                "Run a short real investigation for your persona goals. Use the supplied prompt-engineering-expert skill to create at most two bounded implementation prompts for useful features or fixes.",
+                "Run a short real investigation for your persona goals. Use the supplied reviewed prompt skill and its bundled resources to create at most two bounded implementation prompts for useful features or fixes.",
                 "First write a short persona-specific investigation brief: questions, counterchecks, stopping criteria and expected evidence. Apply it, then include the brief with your implementationPrompt. Self-prompting must retain the fixed evidence, uncertainty and acceptance requirements.",
                 "The proposal goal must exactly copy one of persona.goals. Do not replace it with a newly phrased task goal; put that task-specific outcome in title and quality.expectedBenefit.",
                 "recentOutcomes.reservedScopes lists paths owned by unfinished workflows, including blocked work from other personas. Choose allowedPaths that do not overlap those scopes; admission will recheck them. Investigate another owned area or finish no_op when no disjoint useful work remains.",

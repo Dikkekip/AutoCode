@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "resources": [
+    "investigate-first/SKILL.md",
+    "focused-context/SKILL.md",
+    "evidence-repair/SKILL.md",
+    "durable-handoff/SKILL.md",
+    "contract-change/SKILL.md",
+    "harness-experiment/SKILL.md"
+  ]
+}

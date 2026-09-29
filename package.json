@@ -8,6 +8,7 @@
   },
   "packageManager": "pnpm@10.30.3",
   "scripts": {
+    "benchmark:context": "pnpm build && node scripts/benchmark-context-selection.mjs",
     "build": "tsc -b tsconfig.build.json",
     "check": "pnpm lint && pnpm typecheck && pnpm test",
     "ci": "pnpm check && pnpm test:node && pnpm build && pnpm runtime:smoke",
@@ -35,6 +36,6 @@
     "@types/node": "^24.10.1",
     "typescript": "^7.0.2",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.6"
+    "vitest": "^4.1.11"
   }
 }

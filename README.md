@@ -98,6 +98,7 @@ Provider authentication and account selection belong to OpenClaw. Configure your
 - [Evidence view](docs/native-evidence-view.md): the embeddable, read-only operator view.
 - [Implementation status and remaining work](docs/native-implementation-status.md): implemented boundaries, validation results, and deferred work.
 - [Framework map](docs/framework-map.md): package responsibilities and project-profile boundaries.
+- [Ideas adapted from sibling repositories](docs/upstream-ideas.md): context selection, repair history, composed skills, and a reproducible comparison.
 
 ## Development
 

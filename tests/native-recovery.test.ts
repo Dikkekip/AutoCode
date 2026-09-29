@@ -190,14 +190,15 @@ it("gives an operator retry two repairs without reusing historical cards or evid
     branch: "candidate"
   }
   for (const attempt of [7, 8]) {
-    retried.candidate = candidate
+    const repairedCandidate = { ...candidate, headSha: (attempt === 7 ? "a" : "c").repeat(40) }
+    retried.candidate = repairedCandidate
     await s.runtime.requestRepair("workflow", retried, "Add the missing acceptance assertion")
     expect(retried.lifecycle?.attempt).toBe(attempt)
     expect(retried.repairCount).toBe(attempt - 6)
     expect(s.cards.find((card) => card.id === retried.implementationCardId).key).toBe(
       `workflow:workflow:repair:${attempt}`
     )
-    expect(s.store.get<any>("attempt-evidence", `workflow:${attempt}`).candidate).toEqual(candidate)
+    expect(s.store.get<any>("attempt-evidence", `workflow:${attempt}`).candidate).toEqual(repairedCandidate)
   }
   retried.candidate = candidate
   await expect(s.runtime.requestRepair("workflow", retried, "Still failing")).rejects.toThrow(/budget exhausted/)

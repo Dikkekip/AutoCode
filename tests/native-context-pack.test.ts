@@ -30,6 +30,16 @@ function fixture() {
   git("commit", "-qm", "fixture")
   return { root, revision: git("rev-parse", "HEAD"), allowedPaths: ["src"] }
 }
+function extend(f: ReturnType<typeof fixture>, files: Record<string, string>) {
+  for (const [path, text] of Object.entries(files)) {
+    mkdirSync(join(f.root, path, ".."), { recursive: true })
+    writeFileSync(join(f.root, path), text)
+  }
+  execFileSync("git", ["add", "."], { cwd: f.root })
+  execFileSync("git", ["commit", "-qm", "extend"], { cwd: f.root })
+  f.revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: f.root, encoding: "utf8" }).trim()
+  return f
+}
 describe("revision-bound native context", () => {
   it("reads later lines with stable content digest despite dirty checkout", async () => {
     const f = fixture()
@@ -60,5 +70,46 @@ describe("revision-bound native context", () => {
     )
     expect(p.excerpts[0]!.truncated).toBe(true)
     expect(p.revision).toBe(f.revision)
+  })
+  it("retrieves dependencies and tests before alphabetical filler under the same file budget", async () => {
+    const f = extend(fixture(), {
+      "src/000-filler.ts": "// unrelated\n".repeat(200),
+      "src/z-entry.ts": 'import { dep } from "./z-dep.js";\n' + "// large entry\n".repeat(500),
+      "src/z-dep.ts": "export const dep = 42\n",
+      "src/z-entry.test.ts": 'import "./z-entry.js"\n'
+    })
+    const pack = await buildNativeContextPack(f, ["src/z-entry.ts"], { maxFiles: 3, maxBytes: 1024 })
+    expect(pack.excerpts.map((excerpt) => excerpt.path)).toEqual([
+      "src/z-entry.ts",
+      "src/z-dep.ts",
+      "src/z-entry.test.ts"
+    ])
+    expect(pack.selection.map((entry) => entry.reason)).toEqual(["requested", "import", "test"])
+    expect(pack.excerpts[1]!.content).toContain("42")
+    expect(pack.budget.usedBytes).toBeLessThanOrEqual(1024)
+    expect(pack.omittedFileCount).toBe(6)
+  })
+  it("keeps explicit paths ahead of inferred neighbors, handles cycles and labels separate test-directory hints", async () => {
+    const f = extend(fixture(), {
+      "src/other.ts": "// explicit\n",
+      "src/b.ts": 'export { a } from "./a.js"; const unrelated = "./other.js";\n',
+      "src/tests/a.spec.ts": 'import "../a.js";\n'
+    })
+    const pack = await buildNativeContextPack(f, ["src/a.ts", "src/other.ts", "src/a.ts"], { maxFiles: 5 })
+    expect(pack.excerpts.slice(0, 2).map((entry) => entry.path)).toEqual(["src/a.ts", "src/other.ts"])
+    expect(new Set(pack.excerpts.map((entry) => entry.path)).size).toBe(pack.excerpts.length)
+    expect(pack.impacts).toContainEqual(expect.objectContaining({ target: "src/tests/a.spec.ts", kind: "test" }))
+    expect(pack.impacts).not.toContainEqual(expect.objectContaining({ source: "src/b.ts", target: "src/other.ts" }))
+  })
+  it("never retrieves imports outside scope and exposes omitted explicit requests", async () => {
+    const f = extend(fixture(), {
+      "outside.ts": "// not authorized",
+      "src/a.ts": 'import "../outside.js"; import "./missing.js";\n'
+    })
+    const pack = await buildNativeContextPack(f, ["src/a.ts", "src/b.ts"], { maxFiles: 1 })
+    expect(pack.excerpts.map((entry) => entry.path)).toEqual(["src/a.ts"])
+    expect(pack.impacts.filter((entry) => entry.kind === "import")).toEqual([])
+    expect(pack.omitted).toContainEqual({ path: "src/b.ts", reason: "file budget" })
+    await expect(buildNativeContextPack(f, Array(129).fill("src/a.ts"))).rejects.toThrow(/file limit/)
   })
 })
