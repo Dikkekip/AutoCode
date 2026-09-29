@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
+import { planNativeRecovery } from "../packages/core-runtime/src/native/recovery.js"
 import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
 import { transitionNativeLifecycle, upgradeNativeLifecycle } from "../packages/domain/src/native-lifecycle.js"
@@ -12,7 +13,7 @@ const cleanups: Array<() => void> = []
 afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup()
 })
-function setup(candidate?: NativeWorkflow["candidate"]) {
+function setup(candidate?: NativeWorkflow["candidate"], enabled = false) {
   const root = mkdtempSync(join(tmpdir(), "native-recovery-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const store = new NativeEvidenceStore(join(root, "evidence.db"))
@@ -23,7 +24,7 @@ function setup(candidate?: NativeWorkflow["candidate"]) {
   ]
   const requests: string[] = []
   const runtime = new NativeAutonomyRuntime(
-    { enabled: false, boardId: "board", repository: root, baseBranch: "main", coderAgentId: "coder" } as any,
+    { enabled, boardId: "board", repository: root, baseBranch: "main", coderAgentId: "coder" } as any,
     {
       request: async (method, params) => {
         requests.push(method)
@@ -73,7 +74,7 @@ it("explains state and produces a deterministic plan without writing records or 
   expect(s.requests.every((request) => request === "workboard.cards.list")).toBe(true)
 })
 it.each(["running", "ready", "scheduled", "review"])("refuses recovery while owned card is %s", async (status) => {
-  const s = setup()
+  const s = setup(undefined, true)
   s.cards[1].status = status
   const plan = await s.runtime.planWorkflowRecovery("workflow", "cancel", "Stop work")
   expect(plan.allowed).toBe(false)
@@ -81,9 +82,9 @@ it.each(["running", "ready", "scheduled", "review"])("refuses recovery while own
   expect(s.store.get<any>("workflow", "workflow").lifecycle.state).toBe("blocked")
 })
 it("refuses unknown remote outcomes without deleting or replaying the operation", async () => {
-  const s = setup()
+  const s = setup(undefined, true)
   s.store.put("operation", "workflow:deploy", { state: "started" })
-  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", "Retry deployment")
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "cancel", "Cancel after unknown deployment")
   expect(plan.allowed).toBe(false)
   await expect(s.runtime.applyWorkflowRecovery(plan, "operator")).rejects.toThrow(/uncertain/)
   expect(s.store.get<any>("operation", "workflow:deploy").state).toBe("started")
@@ -116,6 +117,29 @@ it("safely cancels, releases scope, archives and preserves the full original evi
   await s.runtime.applyWorkflowRecovery(archive, "operator-a")
   expect(s.store.get<any>("workflow", "workflow").archivedAt).toEqual(expect.any(String))
   expect(s.requests.some((request) => request !== "workboard.cards.list")).toBe(false)
+})
+it("cancels a quiescent blocked workflow while native execution stays active", async () => {
+  const s = setup(undefined, true)
+  s.cards.push({ id: "unrelated-running", title: "Other work", status: "running" })
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "cancel", "Replace insufficient scope")
+  expect(plan.allowed).toBe(true)
+  await s.runtime.applyWorkflowRecovery(plan, "operator-a")
+  const cancelled = s.store.get<NativeWorkflow>("workflow", "workflow")!
+  expect(cancelled.lifecycle?.state).toBe("cancelled")
+  expect(s.runtime.reservesScope(cancelled)).toBe(false)
+  expect(s.runtime.control.state.paused).toBe(false)
+  expect(s.cards.find((card) => card.id === "unrelated-running")?.status).toBe("running")
+})
+it("requires a pause for online retry and for cancellation before the workflow is blocked", async () => {
+  const s = setup(undefined, true)
+  const retry = await s.runtime.planWorkflowRecovery("workflow", "retry", "Retry")
+  expect(retry.blockers).toContain("Pause native execution, then generate a fresh recovery plan")
+  const cancel = planNativeRecovery(
+    { ...retry.snapshot, lifecycle: { ...retry.snapshot.lifecycle, state: "implementation" } },
+    "cancel",
+    "Stop implementation"
+  )
+  expect(cancel.blockers).toContain("Pause native execution, then generate a fresh recovery plan")
 })
 it("retries with a new blocked card and attempt while retaining history and requiring fresh authority", async () => {
   const s = setup(),

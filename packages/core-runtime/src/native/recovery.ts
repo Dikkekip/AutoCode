@@ -42,7 +42,13 @@ export function planNativeRecovery(
     throw new Error("Recovery requires a bounded operator reason")
   const blockers: string[] = []
   const terminal = ["completed", "cancelled"].includes(snapshot.lifecycle.state)
-  if (!snapshot.control.paused) blockers.push("Pause native execution, then generate a fresh recovery plan")
+  // Cancelling an already blocked workflow has no new execution effect. Its
+  // owned cards and external operations must still be quiescent below, and
+  // application takes the workflow, reconcile, and admission leases before
+  // checking the same immutable snapshot again.
+  const onlineBlockedCancel = action === "cancel" && snapshot.lifecycle.state === "blocked"
+  if (!snapshot.control.paused && !onlineBlockedCancel)
+    blockers.push("Pause native execution, then generate a fresh recovery plan")
   if (snapshot.missingCards.length) blockers.push(`Resolve missing owned cards: ${snapshot.missingCards.join(", ")}`)
   if (
     snapshot.cards.some(

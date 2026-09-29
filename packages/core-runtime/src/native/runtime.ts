@@ -689,7 +689,8 @@ export class NativeAutonomyRuntime {
               this.store.version("attempt-history", evidenceArchive.id) !== evidenceArchive.version
             )
               throw new Error("Preserved recovery attempt changed during evidence preparation")
-            if (this.control.state.revision !== plan.snapshot.control.revision || !this.control.state.paused)
+            const control = this.control.state
+            if (control.revision !== plan.snapshot.control.revision || control.paused !== plan.snapshot.control.paused)
               throw new Error("Control changed during recovery")
             if (
               plan.snapshot.successor &&

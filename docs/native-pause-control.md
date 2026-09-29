@@ -14,6 +14,14 @@ Paused reconciliation can observe existing release operations and record their o
 
 OpenClaw remains authoritative for accepted native cards and runs. A card made runnable before pause may still be started by native Automations, and a dispatch request already submitted may still start workers. Pause does not call abort on native subagents or attempt to implement a second scheduler. Existing independent investigation budget enforcement is unchanged.
 
+An operator may cancel an already blocked workflow while the board remains
+active. The exact recovery plan still requires all of that workflow's cards to
+be nonrunnable, its accepted executions to be terminal, and all external
+effects to be confirmed. Application takes workflow, reconciliation, and
+admission leases, then checks the immutable plan again. This only releases
+the blocked workflow's local scope reservation and preserves its cards and
+attempt history; retry, supersede, abandon, and archive still require pause.
+
 ## Emergency freeze and owned command cancellation
 
 `autocode.freeze` / `dispatcher native freeze` pauses new work and advances a separate persistent freeze revision. This aborts owned local commands in the current process; other processes observe the revision on a 100 ms poll. The freeze revision survives resume, so a freeze/resume between polls still cancels the old command. Plain pause drains accepted work and does not abort its process signal.
