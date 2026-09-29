@@ -604,7 +604,10 @@ describe("native quality investigations", () => {
       /active Workboard session/
     )
   })
-  it("retries a lost submission lease once with a fresh fenced lease", async () => {
+  it.each([
+    "before",
+    "after"
+  ] as const)("retries a submission lease lost %s candidate persistence", async (lossPoint) => {
     const s = setup(fixtureSkill, undefined, true)
     const c = await prepare(s)
     const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
@@ -622,9 +625,11 @@ describe("native quality investigations", () => {
       if (id === workflowId) {
         calls++
         expect(ttlMs).toBe(300_000)
-        if (calls === 1) throw new NativeLeaseLost(`workflow:${id}`)
+        if (calls === 1 && lossPoint === "before") throw new NativeLeaseLost(`workflow:${id}`)
       }
-      return original(id, action, ttlMs)
+      const result = await original(id, action, ttlMs)
+      if (id === workflowId && calls === 1 && lossPoint === "after") throw new NativeLeaseLost(`workflow:${id}`)
+      return result
     }
     expect(await s.runtime.submit("coder", "coder-session", workflowId, "/workspace")).toMatchObject({
       accepted: true
