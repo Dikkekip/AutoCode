@@ -672,7 +672,10 @@ describe("native quality investigations", () => {
     expect(blocked.candidate?.headSha).toBe(waiting.candidate?.headSha)
     expect(blocked.verification).toBeUndefined()
   })
-  it("retries one failed reviewer session against the same candidate without accepting a verdict", async () => {
+  it.each([
+    "failed",
+    "done"
+  ])("retries one terminal %s reviewer session against the same candidate without accepting a verdict", async (reviewerEndStatus) => {
     const s = setup(fixtureSkill, ["src/auth/**"])
     const raw = proposal()
     raw.allowedPaths = ["src"]
@@ -714,7 +717,7 @@ describe("native quality investigations", () => {
     await s.runtime.reconcile()
     expect(s.runtime.requireWorkflow(workflowId).designCardId).toBe(design.id)
     expect(s.runtime.requireWorkflow(workflowId).lifecycle?.state).toBe("design_wait")
-    reviewerSession.status = "failed"
+    reviewerSession.status = reviewerEndStatus
     reviewerSession.hasActiveRun = false
     reviewerSession.activeRunIds = []
     await s.runtime.reconcile()

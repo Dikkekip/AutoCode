@@ -1642,7 +1642,7 @@ export class NativeAutonomyRuntime {
           ended &&
           ["failed", "cancelled", "review", "completed", "done", "blocked", "timed_out", "timeout"].includes(ended)
         ) {
-          // A reviewer process can fail without a verdict. Retry that exact
+          // A reviewer process can end without a verdict. Retry that exact
           // candidate once after the owned session is confirmed terminal;
           // never infer a verdict from the Workboard card's terminal state.
           const digest = this.quality.designDigest(w)
@@ -1668,7 +1668,7 @@ export class NativeAutonomyRuntime {
           if (retried < 1 && ["blocked", "review"].includes(design.status) && session) {
             const startedAt = design.execution?.startedAt ?? design.startedAt
             if (
-              session?.status === "failed" &&
+              ["failed", "done"].includes(session.status) &&
               session.hasActiveRun === false &&
               session.hasActiveSubagentRun === false &&
               Array.isArray(session.activeRunIds) &&
@@ -1698,6 +1698,7 @@ export class NativeAutonomyRuntime {
                   cardId: design.id,
                   runId: design.runId,
                   headSha: w.candidate.headSha,
+                  sessionStatus: session.status,
                   digest,
                   retry: retried + 1
                 }
