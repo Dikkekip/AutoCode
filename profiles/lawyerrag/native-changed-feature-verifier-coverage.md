@@ -29,6 +29,15 @@ no-network snapshot. The exact desktop shortcut candidate
 `WorkflowQuickActions.test.tsx` and passed 28/28. These are diagnostic runs,
 not candidate acceptance or a design review verdict.
 
+On 2026-09-29, the exact blocked intake candidate
+`4ffebc4900968b58008509ef9c57473662c4c1f5` selected its changed
+`IngestionIntakePausePanel.test.tsx` and passed 15/15 tests in a disposable
+no-network snapshot. The live `legacy-014` rule does not select that changed
+test. Compared with the live policy, this staged policy changes only the
+verifier image and adds eight rules; all 40 existing rules are identical. This
+diagnostic run does not resolve the candidate's separate design evidence and
+accessibility review objections.
+
 A broad ingestion directory suite was tested and rejected: it passed 252 tests
 but failed one unrelated preexisting TaskMonitor assertion. Selecting tests
 from exact changed paths avoids making unrelated baseline failures block every
