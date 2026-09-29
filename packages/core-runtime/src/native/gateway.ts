@@ -21,6 +21,12 @@ export type NativeAdminAbortCall = (
   params: { key: string; agentId: string; runId: string },
   extra: { scopes: ["operator.admin"]; progress: false }
 ) => Promise<unknown>
+export type NativeGatewaySdkCall = (
+  method: string,
+  options: { json: true; timeout: string },
+  params: Record<string, unknown>,
+  extra: { progress: false }
+) => Promise<unknown>
 export function resolveNativeGatewaySdkPath(command: string, searchPath = process.env.PATH ?? ""): string {
   const candidates =
     isAbsolute(command) || command.includes(sep)
@@ -45,6 +51,26 @@ async function loadAdminAbortCall(command: string): Promise<NativeAdminAbortCall
   const sdk = await import(pathToFileURL(resolveNativeGatewaySdkPath(command)).href)
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
   return sdk.callGatewayFromCli
+}
+async function loadGatewaySdkCall(command: string): Promise<NativeGatewaySdkCall> {
+  const sdk = await import(pathToFileURL(resolveNativeGatewaySdkPath(command)).href)
+  if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
+  return sdk.callGatewayFromCli
+}
+function nativeGatewayTimeout(method: string): number {
+  return method === "autocode.reconcile"
+    ? 7_200_000
+    : [
+          "autocode.policy.refresh.apply",
+          "autocode.discover",
+          "autocode.dispatch",
+          "autocode.doctor",
+          "autocode.resume",
+          "workboard.cards.list",
+          "config.patch"
+        ].includes(method)
+      ? 180_000
+      : 30_000
 }
 export interface NativeGateway {
   request<T = any>(method: string, params: Record<string, unknown>): Promise<T>
@@ -129,20 +155,7 @@ export class NativeCliGateway implements NativeGateway {
     })
   }
   request<T = any>(method: string, params: Record<string, unknown>): Promise<T> {
-    const timeout =
-      method === "autocode.reconcile"
-        ? 7_200_000
-        : [
-              "autocode.policy.refresh.apply",
-              "autocode.discover",
-              "autocode.dispatch",
-              "autocode.doctor",
-              "autocode.resume",
-              "workboard.cards.list",
-              "config.patch"
-            ].includes(method)
-          ? 180_000
-          : 30_000
+    const timeout = nativeGatewayTimeout(method)
     return new Promise((resolve, reject) => {
       execFile(
         this.command,
@@ -173,6 +186,26 @@ export class NativeCliGateway implements NativeGateway {
         }
       )
     })
+  }
+}
+/** Public OpenClaw Gateway transport for calls already running in the plugin process. */
+export class NativeSdkGateway extends NativeCliGateway {
+  constructor(
+    command = "openclaw",
+    private readonly loadCall: (command: string) => Promise<NativeGatewaySdkCall> = loadGatewaySdkCall
+  ) {
+    super(command)
+  }
+  override async request<T = any>(method: string, params: Record<string, unknown>): Promise<T> {
+    try {
+      const call = await this.loadCall(this.command)
+      return (await call(method, { json: true, timeout: String(nativeGatewayTimeout(method)) }, params, {
+        progress: false
+      })) as T
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new Error(`Native RPC ${method} failed: ${detail.slice(0, 2000)}`, { cause: error })
+    }
   }
 }
 export interface NativeCard {

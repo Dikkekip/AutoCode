@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
-import { NativeCliGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
@@ -128,7 +128,7 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
   await server.service.start()
   const client = setup(server.root)
   vi.mocked(nativeDoctor).mockResolvedValue(report(true))
-  vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method, params) => {
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method, params) => {
     if (method === "workboard.cards.list")
       return {
         cards: [

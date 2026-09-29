@@ -3,7 +3,7 @@ import type { NativeAutonomyPolicy, NativeReviewEvidence } from "@openclaw/domai
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { authorizeNativeTool, resolveNativeToolRuntime } from "./broker.js"
 import { loadNativePolicy, nativeDoctor } from "./doctor.js"
-import { NativeCliGateway } from "./gateway.js"
+import { NativeSdkGateway } from "./gateway.js"
 import {
   applyNativePolicyRefresh,
   assertNativeSkillBinding,
@@ -67,15 +67,16 @@ export function registerNativeAutonomyPlugin(api: any): void {
       options
     )
   }
-  // OpenClaw reserves runtime.gateway.request for bundled/official plugins. Use its
-  // authenticated public CLI instead; never import private RPC/auth internals.
+  // OpenClaw reserves runtime.gateway.request for bundled/official plugins. Use
+  // its authenticated public Gateway SDK within this process; never import
+  // private RPC/auth internals or launch a child CLI for each nested call.
   const command = api.pluginConfig?.openclawCommand
   if (policyFiles.length && (typeof command !== "string" || !isAbsolute(command))) {
     throw new Error(
       "Configure autocode.openclawCommand as the absolute active OpenClaw executable; Gateway PATH may select a legacy CLI"
     )
   }
-  const gateway = new NativeCliGateway(command ?? "openclaw")
+  const gateway = new NativeSdkGateway(command ?? "openclaw")
   const makeRuntime = (policy: NativeAutonomyPolicy, store: NativeEvidenceStore) =>
     new NativeAutonomyRuntime(
       policy,
