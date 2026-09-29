@@ -38,6 +38,16 @@ verifier image and adds eight rules; all 40 existing rules are identical. This
 diagnostic run does not resolve the candidate's separate design evidence and
 accessibility review objections.
 
+The exact missing-metadata filter candidate
+`cf4fd504c973f0e4289a00a553bd649b2c0ea503` selected its changed
+`PdfWorkspaceMissingMetadataReview.test.tsx` and passed 4/4 tests in a
+disposable no-network snapshot on 2026-09-29. This addresses only the
+reviewer's concern that the changed test was absent from the live standing
+selection. It does not establish persistent caller behavior or an actionable
+assistive-technology and narrow-viewport procedure; the candidate remains
+blocked pending those separate design requirements and independent policy
+review.
+
 A broad ingestion directory suite was tested and rejected: it passed 252 tests
 but failed one unrelated preexisting TaskMonitor assertion. Selecting tests
 from exact changed paths avoids making unrelated baseline failures block every
