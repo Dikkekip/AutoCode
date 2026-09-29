@@ -190,7 +190,7 @@ export class NativeQualityRuntime {
       agentId: this.policy.reviewerAgentId,
       status: "ready",
       maxRuntimeSeconds: 600,
-      idempotencyKey: `workflow:${id}:design:${digest}`,
+      idempotencyKey: `workflow:${id}:design:${digest}${w.designRunRetry?.digest === digest ? `:retry:${w.designRunRetry.count}` : ""}`,
       workspace: { kind: "scratch" },
       notes: JSON.stringify({
         workflowId: id,

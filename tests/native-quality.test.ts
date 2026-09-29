@@ -23,6 +23,7 @@ afterEach(() => {
 })
 class Gateway implements NativeGateway {
   cards: any[] = []
+  sessions: any[] = []
   calls: any[] = []
   failCreateAt = -1
   failResponseAfterCreateAt = -1
@@ -33,6 +34,7 @@ class Gateway implements NativeGateway {
   async request<T = any>(method: string, params: any): Promise<T> {
     this.calls.push({ method, params })
     if (method === "workboard.cards.list") return { cards: this.cards } as T
+    if (method === "sessions.list") return { sessions: this.sessions } as T
     if (method === "workboard.cards.create") {
       if (String(params.notes ?? "").length > 4000) throw new Error("notes must be 4000 characters or fewer")
       if (this.cards.length === this.failCreateAt) {
@@ -668,6 +670,84 @@ describe("native quality investigations", () => {
     expect(blocked.lifecycle?.state).toBe("blocked")
     expect(blocked.blocker).toMatch(/Design review ended \(blocked\) without a verdict/)
     expect(blocked.candidate?.headSha).toBe(waiting.candidate?.headSha)
+    expect(blocked.verification).toBeUndefined()
+  })
+  it("retries one failed reviewer session against the same candidate without accepting a verdict", async () => {
+    const s = setup(fixtureSkill, ["src/auth/**"])
+    const raw = proposal()
+    raw.allowedPaths = ["src"]
+    const c = await prepare(s, raw)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    mkdirSync(join(worktree, "src/auth"))
+    writeFileSync(join(worktree, "src/auth/login.ts"), "export const login = true\n")
+    execFileSync("git", ["-C", worktree, "add", "src"])
+    execFileSync("git", ["-C", worktree, "commit", "-m", "add login"])
+    const implementation = s.gateway.cards.find((card) => card.id === w.implementationCardId)
+    implementation.status = "running"
+    implementation.sessionKey = "coder-session"
+    implementation.metadata = { automation: { workspace: { path: worktree } } }
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, worktree)).toMatchObject({ accepted: true })
+    implementation.status = "review"
+    implementation.execution = { status: "review" }
+    await s.runtime.reconcile()
+    const original = s.runtime.requireWorkflow(workflowId)
+    const candidateHead = original.candidate!.headSha
+    const design = s.gateway.cards.find((card) => card.id === original.designCardId)
+    design.status = "review"
+    design.execution = { status: "review", startedAt: 100 }
+    design.updatedAt = 150
+    design.sessionKey = "reviewer-session"
+    design.runId = "reviewer-run"
+    const reviewerSession = {
+      key: "reviewer-session",
+      agentId: "reviewer",
+      status: "running",
+      hasActiveRun: true,
+      hasActiveSubagentRun: false,
+      activeRunIds: ["reviewer-run"],
+      endedAt: 200
+    }
+    s.gateway.sessions.push(reviewerSession)
+    await s.runtime.reconcile()
+    expect(s.runtime.requireWorkflow(workflowId).designCardId).toBe(design.id)
+    expect(s.runtime.requireWorkflow(workflowId).lifecycle?.state).toBe("design_wait")
+    reviewerSession.status = "failed"
+    reviewerSession.hasActiveRun = false
+    reviewerSession.activeRunIds = []
+    await s.runtime.reconcile()
+    const retrying = s.runtime.requireWorkflow(workflowId)
+    expect(retrying.lifecycle?.state).toBe("design_wait")
+    expect(retrying.designCardId).toBeUndefined()
+    expect(retrying.designRunRetry?.count).toBe(1)
+    expect(retrying.candidate?.headSha).toBe(candidateHead)
+    expect(retrying.verification).toBeUndefined()
+    await s.runtime.reconcile()
+    const retried = s.runtime.requireWorkflow(workflowId)
+    expect(retried.designCardId).toBeTruthy()
+    expect(retried.designCardId).not.toBe(design.id)
+    expect(s.gateway.cards.find((card) => card.id === retried.designCardId)?.idempotencyKey).toMatch(/:retry:1$/)
+    expect(s.gateway.cards.find((card) => card.id === design.id)?.status).toBe("blocked")
+    const second = s.gateway.cards.find((card) => card.id === retried.designCardId)
+    second.status = "blocked"
+    second.execution = { status: "blocked", startedAt: 300 }
+    second.sessionKey = "reviewer-session-2"
+    second.runId = "reviewer-run-2"
+    s.gateway.sessions.push({
+      key: "reviewer-session-2",
+      agentId: "reviewer",
+      status: "failed",
+      hasActiveRun: false,
+      hasActiveSubagentRun: false,
+      activeRunIds: [],
+      endedAt: 400
+    })
+    await s.runtime.reconcile()
+    const blocked = s.runtime.requireWorkflow(workflowId)
+    expect(blocked.lifecycle?.state).toBe("blocked")
+    expect(blocked.candidate?.headSha).toBe(candidateHead)
     expect(blocked.verification).toBeUndefined()
   })
   it("gates a routine src proposal when its submitted candidate adds a protected file", async () => {

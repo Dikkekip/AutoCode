@@ -95,6 +95,7 @@ export interface NativeWorkflow {
   designCardId?: string
   designEvidenceComplete?: boolean
   designCardDigest?: string
+  designRunRetry?: { digest: string; count: number }
   riskAssessment?: NativeRiskAssessment
   designReview?: {
     receiptVersion?: 1
@@ -689,6 +690,7 @@ export class NativeAutonomyRuntime {
             delete workflow.designReview
             delete workflow.designCardId
             delete workflow.designCardDigest
+            delete workflow.designRunRetry
             delete workflow.riskAssessment
             delete workflow.submission
             delete workflow.implementationNotes
@@ -1416,6 +1418,7 @@ export class NativeAutonomyRuntime {
     delete workflow.designReview
     delete workflow.designCardId
     delete workflow.designCardDigest
+    delete workflow.designRunRetry
     delete workflow.designEvidenceComplete
     delete workflow.riskAssessment
     delete workflow.submission
@@ -1592,6 +1595,7 @@ export class NativeAutonomyRuntime {
     delete w.designReview
     delete w.designCardId
     delete w.designCardDigest
+    delete w.designRunRetry
     delete w.designEvidenceComplete
     delete w.stageCards.Verify
     delete w.stageCards.Review
@@ -1638,6 +1642,69 @@ export class NativeAutonomyRuntime {
           ended &&
           ["failed", "cancelled", "review", "completed", "done", "blocked", "timed_out", "timeout"].includes(ended)
         ) {
+          // A reviewer process can fail without a verdict. Retry that exact
+          // candidate once after the owned session is confirmed terminal;
+          // never infer a verdict from the Workboard card's terminal state.
+          const digest = this.quality.designDigest(w)
+          const retried = w.designRunRetry?.digest === digest ? w.designRunRetry.count : 0
+          const session =
+            design.sessionKey && design.runId && design.agentId === this.policy.reviewerAgentId
+              ? (
+                  await this.gateway.request<{ sessions?: any[] }>("sessions.list", {
+                    search: design.sessionKey,
+                    limit: 10
+                  })
+                ).sessions?.find(
+                  (item) => item.key === design.sessionKey && item.agentId === this.policy.reviewerAgentId
+                )
+              : undefined
+          if (
+            session &&
+            (session.hasActiveRun === true ||
+              session.hasActiveSubagentRun === true ||
+              (Array.isArray(session.activeRunIds) && session.activeRunIds.length > 0))
+          )
+            return advanced
+          if (retried < 1 && ["blocked", "review"].includes(design.status) && session) {
+            const startedAt = design.execution?.startedAt ?? design.startedAt
+            if (
+              session?.status === "failed" &&
+              session.hasActiveRun === false &&
+              session.hasActiveSubagentRun === false &&
+              Array.isArray(session.activeRunIds) &&
+              session.activeRunIds.length === 0 &&
+              typeof session.endedAt === "number" &&
+              Number.isFinite(session.endedAt) &&
+              typeof startedAt === "number" &&
+              Number.isFinite(startedAt) &&
+              session.endedAt >= startedAt
+            ) {
+              this.control.assert()
+              if (design.status === "review") {
+                if (!design.updatedAt) throw new Error("Failed design review retry requires card revision")
+                await this.gateway.request("workboard.cards.update", {
+                  id: design.id,
+                  expectedUpdatedAt: design.updatedAt,
+                  patch: { status: "blocked" }
+                })
+              }
+              w.designRunRetry = { digest, count: retried + 1 }
+              delete w.designCardId
+              delete w.designCardDigest
+              this.store.commit([{ kind: "workflow", id, value: w }], {
+                kind: "design.reviewer-run-retry",
+                subject: id,
+                value: {
+                  cardId: design.id,
+                  runId: design.runId,
+                  headSha: w.candidate.headSha,
+                  digest,
+                  retry: retried + 1
+                }
+              })
+              return advanced + 1
+            }
+          }
           if (design.status !== "blocked") {
             this.control.assert()
             await this.gateway.request("workboard.cards.update", {
