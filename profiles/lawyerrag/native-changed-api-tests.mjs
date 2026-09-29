@@ -27,6 +27,8 @@ export function selectApiTests(manifest, snapshotRoot = "/work") {
   }
   if (!selected.size) throw new Error("API candidate has no committed test in the protected snapshot")
   const apiRoot = realpathSync(resolve(snapshotRoot, prefix))
+  if (apiRoot !== resolve(realpathSync(snapshotRoot), prefix))
+    throw new Error("API root must be the committed directory inside the protected snapshot")
   return [...selected].sort().map((path) => {
     const file = resolve(snapshotRoot, path)
     if (!lstatSync(file).isFile() || !realpathSync(file).startsWith(`${apiRoot}/`))
