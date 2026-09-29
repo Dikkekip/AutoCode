@@ -64,6 +64,14 @@ export interface NativeAutonomyPolicy {
   coderAgentId: string
   /** Optional reviewed pool, including coderAgentId. Each coder retains an isolated workspace. */
   coderAgentIds?: string[]
+  /** Reviewed role pools. Load balancing never crosses a task's selected tier. */
+  coderRouting?: {
+    simple: string[]
+    routine: string[]
+    veryComplex: string[]
+    simplePaths: string[]
+    veryComplexPaths: string[]
+  }
   reviewerAgentId: string
   workerConcurrency: number
   verificationConcurrency?: number
@@ -195,6 +203,33 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
   )
     throw new Error("Coder pool requires independent planner, reviewer and research identities")
   if (coderAgentId === reviewerAgentId) throw new Error("Reviewer must be independent of coder")
+  let coderRouting: NativeAutonomyPolicy["coderRouting"]
+  if (r.coderRouting !== undefined) {
+    const routing = record(r.coderRouting)
+    const pool = coderAgentIds ?? [coderAgentId]
+    const simple = strings(routing.simple, "simple coder pool")
+    const routine = strings(routing.routine, "routine coder pool")
+    const veryComplex = strings(routing.veryComplex, "very complex coder pool")
+    const assigned = [...simple, ...routine, ...veryComplex]
+    if (
+      new Set(assigned).size !== assigned.length ||
+      assigned.some((id) => !pool.includes(id)) ||
+      pool.some((id) => !assigned.includes(id)) ||
+      !routine.includes(coderAgentId)
+    )
+      throw new Error("Coder routing must partition the reviewed pool and keep the primary coder in routine")
+    coderRouting = {
+      simple,
+      routine,
+      veryComplex,
+      simplePaths:
+        routing.simplePaths?.length === 0 ? [] : strings(routing.simplePaths, "simple paths").map(nativeRelativePath),
+      veryComplexPaths:
+        routing.veryComplexPaths?.length === 0
+          ? []
+          : strings(routing.veryComplexPaths, "very complex paths").map(nativeRelativePath)
+    }
+  }
   const verification = (Array.isArray(r.verification) ? r.verification : []).map(command)
   if (!verification.length) throw new Error("Native autonomy requires verification commands")
   const ids = verification.map(nativeVerificationRuleId)
@@ -243,6 +278,7 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     plannerAgentId: text(r.plannerAgentId, "plannerAgentId"),
     coderAgentId,
     ...(coderAgentIds ? { coderAgentIds } : {}),
+    ...(coderRouting ? { coderRouting } : {}),
     reviewerAgentId,
     workerConcurrency: integer(r.workerConcurrency, 1, 8),
     ...(r.verificationConcurrency === undefined
@@ -369,6 +405,7 @@ export interface NativeProposal {
   acceptance: string[]
   alternatives: string[]
   implementationPrompt: string
+  complexity?: { tier: "simple" | "routine" | "very-complex"; rationale: string }
   quality?: import("./native-quality.js").NativeProposalQuality
 }
 export function validateNativeProposal(value: unknown, policy: NativeAutonomyPolicy): NativeProposal {
@@ -380,6 +417,12 @@ export function validateNativeProposal(value: unknown, policy: NativeAutonomyPol
     throw new Error("Proposal exceeds persona path authority")
   }
   if (!Array.isArray(r.evidence) || !r.evidence.length) throw new Error("Proposal needs repository evidence")
+  let complexity: NativeProposal["complexity"]
+  if (r.complexity !== undefined) {
+    const value = record(r.complexity)
+    if (!["simple", "routine", "very-complex"].includes(value.tier)) throw new Error("Invalid task complexity tier")
+    complexity = { tier: value.tier, rationale: text(value.rationale, "complexity rationale") }
+  }
   return {
     personaId: persona.personaId,
     goal: r.goal,
@@ -394,7 +437,8 @@ export function validateNativeProposal(value: unknown, policy: NativeAutonomyPol
     allowedPaths,
     acceptance: strings(r.acceptance, "acceptance"),
     alternatives: strings(r.alternatives, "alternatives"),
-    implementationPrompt: text(r.implementationPrompt, "implementationPrompt")
+    implementationPrompt: text(r.implementationPrompt, "implementationPrompt"),
+    ...(complexity ? { complexity } : {})
   }
 }
 export function nativeProposalKey(proposal: NativeProposal): string {

@@ -294,7 +294,12 @@ describe("native quality investigations", () => {
     expect(c.maxRuntimeSeconds).toBe(300)
     expect(c.maxRetries).toBe(1)
     expect(c.workspace.kind).toBe("scratch")
-    const notes = JSON.parse(c.notes)
+    const pointer = JSON.parse(c.notes)
+    c.status = "running"
+    c.sessionKey = "bounded-context-session"
+    const notes = pointer.contextId
+      ? JSON.parse((await s.runtime.readContext(c.agentId, c.sessionKey, pointer.contextId)).notes)
+      : pointer
     expect(notes.promptSkill).toContain("Prompt Engineering Expert")
     expect(notes.persona.ideationPrompt).toBe("Inspect missing source links")
     expect(notes.responseStyle).toMatchObject({ skill: "caveman", level: "full" })

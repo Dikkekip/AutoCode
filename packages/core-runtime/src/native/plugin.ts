@@ -678,6 +678,16 @@ export function registerNativeAutonomyPlugin(api: any): void {
               description: "Strings describing alternatives and why they were rejected or deferred."
             },
             implementationPrompt: field,
+            complexity: {
+              type: "object",
+              required: ["tier", "rationale"],
+              properties: {
+                tier: { type: "string", enum: ["simple", "routine", "very-complex"] },
+                rationale: field
+              },
+              description:
+                "Default routine. Simple requires a small bounded change; very-complex covers difficult architecture or multi-system reasoning. Operator scope constraints can raise this tier."
+            },
             quality: {
               type: "object",
               description: "Required for persona quality investigations.",

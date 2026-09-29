@@ -14,6 +14,7 @@ import {
   type NativeVerificationEvidence,
   type NativeWorkflowState,
   nativeCoderAgentIds,
+  nativeCoderRoute,
   nativePolicyDigest,
   nativeProposalKey,
   nextNativeAttempt,
@@ -165,8 +166,8 @@ export class NativeAutonomyRuntime {
       safety
     })
   }
-  private async selectCoderAgent(): Promise<string> {
-    const pool = nativeCoderAgentIds(this.policy)
+  private async selectCoderAgent(proposal: NativeProposal, repairCount = 0, highRisk = false): Promise<string> {
+    const pool = nativeCoderRoute(this.policy, proposal, { repairCount, highRisk }).agentIds
     if (pool.length === 1) return pool[0]!
     const cards = await nativeCards(this.gateway, this.policy.boardId)
     const current = new Set(
@@ -703,7 +704,7 @@ export class NativeAutonomyRuntime {
               boardId: this.policy.boardId,
               title: `Recover: ${workflow.proposal.title}`,
               status: "blocked",
-              agentId: await this.selectCoderAgent(),
+              agentId: await this.selectCoderAgent(workflow.proposal),
               idempotencyKey: `recovery:${workflowId}:attempt:${workflow.lifecycle.attempt}`,
               maxRetries: 1,
               workspace: {
@@ -1051,7 +1052,7 @@ export class NativeAutonomyRuntime {
         boardId: this.policy.boardId,
         title: `Implement: ${entry.proposal.title}`,
         status: "blocked",
-        agentId: await this.selectCoderAgent(),
+        agentId: await this.selectCoderAgent(entry.proposal),
         idempotencyKey: `workflow:${id}:implement`,
         maxRetries: 2,
         workspace: {
@@ -1144,7 +1145,7 @@ export class NativeAutonomyRuntime {
       title: `Implement: ${task.title}`,
       status: "blocked",
       parents,
-      agentId: await this.selectCoderAgent(),
+      agentId: await this.selectCoderAgent(proposal),
       idempotencyKey: `workflow:${workflowId}:implement`,
       workspace: {
         kind: "worktree",
@@ -1392,7 +1393,7 @@ export class NativeAutonomyRuntime {
       boardId: this.policy.boardId,
       title: `Repair ${repairCount}: ${workflow.proposal.title}`,
       status: "blocked",
-      agentId: await this.selectCoderAgent(),
+      agentId: await this.selectCoderAgent(workflow.proposal, repairCount, workflow.riskAssessment?.risk === "high"),
       idempotencyKey: `workflow:${id}:repair:${attempt}`,
       maxRetries: 1,
       workspace: { kind: "dir", path: workflow.candidate.cwd },
