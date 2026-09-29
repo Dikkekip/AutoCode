@@ -61,6 +61,9 @@ export function readAccounts(accountsDir, now = Date.now()) {
               })
             )
           : 100
+      // An expired CLI credential cannot be a native fallback until codex-auth
+      // refreshes it. Keep it out of every worker order, including the tail.
+      if (jwt.exp * 1000 <= now + 5 * 60_000) return null
       return {
         profileId: `${prefix}${encoded}`,
         remaining,
@@ -78,6 +81,7 @@ export function readAccounts(accountsDir, now = Date.now()) {
         }
       }
     })
+    .filter(Boolean)
 }
 
 // Weighted allocation is stable between probes; native cooldown handling still
@@ -174,7 +178,7 @@ async function main() {
   const accountsDir =
     process.env.OPENCLAW_CODEX_ACCOUNTS_DIR ?? join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "accounts")
   if (args.includes("--refresh")) {
-    execFileSync(process.env.CODEX_AUTH_COMMAND ?? "codex-auth", ["list"], {
+    execFileSync(process.env.CODEX_AUTH_COMMAND ?? "codex-auth", ["list", "--api"], {
       timeout: 60_000,
       stdio: ["ignore", "ignore", "pipe"],
       maxBuffer: 1024 * 1024

@@ -76,6 +76,27 @@ test("deprioritizes exhausted short OR weekly windows, recovers after reset, ign
   )
 })
 
+test("omits expired and near-expiry credentials from native worker orders", (t) => {
+  const f = fixture(t)
+  for (const [index, expiry] of [[0, now / 1000 - 1], [1, now / 1000 + 240]]) {
+    const key = f.accounts[index].account_key
+    const path = join(f.dir, `${Buffer.from(key).toString("base64url")}.auth.json`)
+    const auth = JSON.parse(readFileSync(path, "utf8"))
+    auth.tokens.access_token = token({
+      exp: expiry,
+      "https://api.openai.com/auth": {
+        chatgpt_user_id: f.accounts[index].chatgpt_user_id,
+        chatgpt_account_id: f.accounts[index].chatgpt_account_id
+      }
+    })
+    writeFileSync(path, JSON.stringify(auth))
+  }
+  const accounts = readAccounts(f.dir, now)
+  assert.equal(accounts.length, 1)
+  assert.equal(accounts[0].credential.accountId, "personal")
+  assert.ok(planOrders(accounts, ["coder", "reviewer"]).every((entry) => entry.order.length === 1))
+})
+
 test("allocation is deterministic and weighted by remaining quota", () => {
   const accounts = [
     { profileId: "a", remaining: 100 },
