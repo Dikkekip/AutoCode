@@ -1,0 +1,10 @@
+{
+  "id": "changed-api-tests",
+  "argv": ["/opt/openclaw/checks/changed-api-tests"],
+  "cwd": ".",
+  "timeoutSeconds": 1800,
+  "paths": [
+    "apps/reports-ui/src/lib/api/**/*.ts",
+    "apps/reports-ui/src/lib/api/**/*.tsx"
+  ]
+}

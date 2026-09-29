@@ -28,6 +28,10 @@ test("selects the changed API regression and deduplicates its source companion",
     "src/lib/api/client.test.ts"
   ])
 })
+test("selects an existing companion when only API source changes", () => {
+  const { root } = setup()
+  assert.deepEqual(selectApiTests(manifest([prefix + "client.ts"]), root), ["src/lib/api/client.test.ts"])
+})
 test("selects nested API tests in deterministic order without selecting feature tests", () => {
   const { root, write } = setup()
   write(prefix + "nested/a.test.tsx")
