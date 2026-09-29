@@ -482,6 +482,13 @@ catalog worker heap. Keep the main-thread default so the catalog worker's limit
 remains effective. Check both the systemd unit and drop-ins after upgrades.
 Memory pressure can stall the main event loop beyond the execution lease TTL;
 expired owners correctly lose authority and must never publish late receipts.
+Candidate submission therefore uses a five-minute workflow lease and permits
+one fresh fenced retry if that lease expires. The assigned coder and live
+Workboard session are checked again; if the first call already persisted the
+candidate, the same session receives its original commit SHA. This does not
+restore an expired owner's authority or retry a different workflow lease.
+Longer stalls can still block submission and require preserved-worktree
+recovery.
 
 The optional host supervisor `scripts/native-gateway-recovery.mjs` probes the
 actual `workboard.cards.list` RPC outside the Gateway. With `--apply`, it
