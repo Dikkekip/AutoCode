@@ -14,7 +14,7 @@ import {
   nativeSkillPolicyDigest,
   registerNativeSkill
 } from "../packages/core-runtime/src/native/skills.js"
-import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
+import { NativeEvidenceStore, NativeLeaseLost } from "../packages/core-runtime/src/native/store.js"
 import { validateNativeAssessment, validateNativeAutonomyPolicy } from "../packages/domain/src/index.js"
 
 const cleanups: Array<() => void> = []
@@ -595,10 +595,42 @@ describe("native quality investigations", () => {
     expect(submitted.candidate?.files).toEqual(["src/view.ts"])
     expect(submitted.lifecycle?.state).toBe("design_wait")
     expect(submitted.verification).toBeUndefined()
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, alias)).toEqual({
+      accepted: true,
+      headSha: submitted.candidate?.headSha
+    })
     card.status = "review"
     await expect(s.runtime.submit("coder", "coder-session", workflowId, alias)).rejects.toThrow(
       /active Workboard session/
     )
+  })
+  it("retries a lost submission lease once with a fresh fenced lease", async () => {
+    const s = setup(fixtureSkill, undefined, true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const workflow = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    writeFileSync(join(worktree, "src/view.ts"), "export const navigation = true\n")
+    const card = s.gateway.cards.find((item) => item.id === workflow.implementationCardId)
+    card.status = "running"
+    card.sessionKey = "coder-session"
+    card.metadata = { automation: { workspace: { path: worktree } } }
+    const original = s.runtime.withWorkflowLease.bind(s.runtime)
+    let calls = 0
+    s.runtime.withWorkflowLease = async (id, action, ttlMs) => {
+      if (id === workflowId) {
+        calls++
+        expect(ttlMs).toBe(300_000)
+        if (calls === 1) throw new NativeLeaseLost(`workflow:${id}`)
+      }
+      return original(id, action, ttlMs)
+    }
+    expect(await s.runtime.submit("coder", "coder-session", workflowId, "/workspace")).toMatchObject({
+      accepted: true
+    })
+    expect(calls).toBe(2)
+    expect(s.runtime.requireWorkflow(workflowId).candidate?.files).toEqual(["src/view.ts"])
   })
   it("blocks a terminal design review without a verdict so recovery can act", async () => {
     const s = setup(fixtureSkill, ["src/auth/**"])

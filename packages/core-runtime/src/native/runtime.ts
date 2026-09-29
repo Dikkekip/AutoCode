@@ -1194,8 +1194,18 @@ export class NativeAutonomyRuntime {
     assertNativeMode(this.policy, "implement")
     if (!this.hasOwnership) return this.withOwnership(() => this.submit(agentId, sessionKey, workflowId, worktreePath))
     if (!this.control.active) return this.control.run(() => this.submit(agentId, sessionKey, workflowId, worktreePath))
-    if (!this.store.holdsLease(`workflow:${workflowId}`))
-      return this.withWorkflowLease(workflowId, () => this.submit(agentId, sessionKey, workflowId, worktreePath))
+    if (!this.store.holdsLease(`workflow:${workflowId}`)) {
+      const submitWithLease = () =>
+        this.withWorkflowLease(workflowId, () => this.submit(agentId, sessionKey, workflowId, worktreePath), 300_000)
+      try {
+        return await submitWithLease()
+      } catch (error) {
+        // A loaded Gateway can miss timer renewal during a long event-loop gap.
+        // A fresh fenced lease permits one replay of this idempotent submission.
+        if (!(error instanceof NativeLeaseLost) || error.id !== `workflow:${workflowId}`) throw error
+        return submitWithLease()
+      }
+    }
     this.assertEnabled()
     if (!nativeCoderAgentIds(this.policy).includes(agentId) || !sessionKey)
       throw new Error("Only the assigned coder can submit")
@@ -1212,8 +1222,11 @@ export class NativeAutonomyRuntime {
     const candidatePath = ["/workspace", "/workspace/"].includes(worktreePath) ? workspace : worktreePath
     if (realpathSync(candidatePath) !== realpathSync(workspace))
       throw new Error("Candidate must be the card's managed worktree")
-    if (workflow.candidate)
+    if (workflow.candidate) {
+      if (workflow.submission?.agentId === agentId && workflow.submission.sessionKey === sessionKey)
+        return { accepted: true, headSha: workflow.candidate.headSha }
       throw new Error("Candidate already submitted; reconcile existing evidence before resubmission")
+    }
     const committed = await commitNativeCandidate(
       this.policy,
       candidatePath,
@@ -1488,12 +1501,12 @@ export class NativeAutonomyRuntime {
     this.store.put("workflow", id, workflow)
     return card.id
   }
-  async withWorkflowLease<T>(id: string, action: () => Promise<T>): Promise<T> {
+  async withWorkflowLease<T>(id: string, action: () => Promise<T>, ttlMs = 120_000): Promise<T> {
     const key = `workflow:${id}`
     if (this.store.holdsLease(key)) return action()
-    const lease = this.store.acquire(key, 120_000)
+    const lease = this.store.acquire(key, ttlMs)
     if (!lease) throw new Error("Workflow is advancing; retry against fresh evidence")
-    return this.store.withLease(lease, 120_000, action)
+    return this.store.withLease(lease, ttlMs, action)
   }
   async withCapacity<T>(pool: "verification" | "release", limit: number, action: () => Promise<T>): Promise<T | null> {
     for (let slot = 0; slot < limit; slot++) {

@@ -19,7 +19,7 @@ export interface NativeLease {
   readonly expiresAt: number
 }
 export class NativeLeaseLost extends Error {
-  constructor(id: string) {
+  constructor(readonly id: string) {
     super(`Native lease lost: ${id}`)
   }
 }
