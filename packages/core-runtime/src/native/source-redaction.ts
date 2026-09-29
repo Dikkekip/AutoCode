@@ -11,11 +11,14 @@ const KEYBOARD_COMPARISON =
 // fixed comparison; other keyCode values still pass through credential filters.
 const IME_KEYCODE_COMPARISON = /^\.keyCode[ \t]*===[ \t]*229\b/
 const KEYBOARD_HANDLER = /^onKeyDown[ \t]*=[ \t]*\{[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*\)[ \t]*=>/
-const KEYBOARD_CALLBACK = /^onKeyDown[ \t]*=[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*:[ \t]*KeyboardEvent[ \t]*\)[ \t]*=>/
+const KEYBOARD_CALLBACK =
+  /^(?:onKeyDown|handleKeyDown)[ \t]*=[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*:[ \t]*KeyboardEvent[ \t]*\)[ \t]*=>/
 // A strict comparison with another variable has no literal credential value.
 // The broad command filter otherwise mistakes `key === SOME_IDENTIFIER` for
 // an assignment and hides part of a reviewable committed patch.
 const KEY_IDENTIFIER_COMPARISON = /^key[ \t]*===[ \t]*[A-Za-z_$][\w$]*/
+const KEY_IDENTIFIER_KEYBOARD_COMPARISON =
+  /^key[ \t]*===[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -47,15 +50,16 @@ function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker:
       const end = source.indexOf("*/", cursor + 2)
       cursor = end < 0 ? source.length : end + 2
     } else if (
-      source.startsWith("onKeyDown", cursor) &&
+      (source.startsWith("onKeyDown", cursor) || source.startsWith("handleKeyDown", cursor)) &&
       /[\s<]/.test(source[cursor - 1] ?? "") &&
       (KEYBOARD_HANDLER.test(source.slice(cursor, cursor + 160)) ||
         (/\bconst[ \t]+$/.test(source.slice(Math.max(0, cursor - 16), cursor)) &&
           KEYBOARD_CALLBACK.test(source.slice(cursor, cursor + 160))))
     ) {
-      chunks.push(source.slice(copied, cursor + 2), handlerMarker)
-      copied = cursor + 5
-      cursor += 9
+      const prefixLength = source.startsWith("handleKeyDown", cursor) ? 6 : 2
+      chunks.push(source.slice(copied, cursor + prefixLength), handlerMarker)
+      copied = cursor + prefixLength + 3
+      cursor += prefixLength + 7
     } else if (
       char === "." &&
       (KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80)) ||
@@ -224,7 +228,8 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
     } else if (
       source.startsWith("key", cursor) &&
       !/[\w$]/.test(source[cursor - 1] ?? "") &&
-      KEY_IDENTIFIER_COMPARISON.test(source.slice(cursor, cursor + 160))
+      (KEY_IDENTIFIER_COMPARISON.test(source.slice(cursor, cursor + 160)) ||
+        KEY_IDENTIFIER_KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 160)))
     ) {
       chunks.push(source.slice(copied, cursor), marker)
       copied = cursor + 3
