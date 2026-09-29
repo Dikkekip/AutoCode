@@ -12,6 +12,7 @@ import {
 } from "@openclaw/core-runtime"
 import { validateProjectProfile } from "@openclaw/project-profiles"
 import type { Command } from "commander"
+import { retryContendedDiscovery } from "./native-discovery-retry.js"
 
 export function registerNativeAutonomyCommands(program: Command, io: { stdout: (message: string) => void }): void {
   const root = program
@@ -61,7 +62,9 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
       .option("--json", "JSON output", true)
       .action(async () => {
         const { policy, gateway } = settings()
-        output(await gateway.request(`autocode.${name}`, { boardId: policy.boardId }))
+        const request = () =>
+          gateway.request<{ created: string[]; reason?: string }>(`autocode.${name}`, { boardId: policy.boardId })
+        output(name === "discover" ? await retryContendedDiscovery(request) : await request())
       })
   const policyRefresh = root
     .command("policy-refresh")
