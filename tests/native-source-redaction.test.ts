@@ -109,6 +109,36 @@ describe("identifier comparisons in committed diffs", () => {
   })
 })
 
+describe("structural key derivations in committed diffs", () => {
+  it("preserves the complete intake review derivation and synthetic JSX matter fixture", () => {
+    const source = [
+      "     const key = pauseKey(state);",
+      "     const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '-');",
+      "+    const reasonKey = JSON.stringify([key, state.revision]);",
+      "+    const reviewKey = JSON.stringify([key, state.revision, state.rejectedAttemptCount]);",
+      '+    rerender(<IngestionIntakePausePanel {...props} actingKey="matter:MATTER-002:document" />);'
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+
+  it.each([
+    "const key = credential123;",
+    "const key = tokenKey(credential123);",
+    "const reasonKey = JSON.stringify([key, credential123]);",
+    'const safeKey = "credential123";',
+    'const reviewKey = JSON.stringify([key, "credential123"]);',
+    '<Panel {...props} actingKey="credential123" />',
+    '<Panel {...props} actingKey="matter:MATTER-002:credential123" />'
+  ])("keeps credential masking for unsupported key values: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toContain("credential123")
+  })
+
+  it("does not shield a quoted fixture outside a complete JSX opening tag", () => {
+    const source = "const sample = '<Panel {...props} actingKey=\"matter:MATTER-002:document\" />'"
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+})
+
 describe("recovery source redaction", () => {
   it("preserves a complete JSX reference when a diff hunk omits its opening tag", () => {
     const source = "                                         key={workflow.path}"

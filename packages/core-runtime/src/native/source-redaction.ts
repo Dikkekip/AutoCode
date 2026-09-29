@@ -75,16 +75,24 @@ function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker:
   return chunks.join("")
 }
 
-function openingTag(source: string, start: number): { end: number; keys: number[] } {
+function openingTag(source: string, start: number): { end: number; keys: number[]; syntheticKeys: number[] } {
   const limit = Math.min(source.length, start + 4096)
   let cursor = start + 1
   const keys: number[] = []
+  const syntheticKeys: number[] = []
   while (cursor < limit && /[\w.:-]/.test(source[cursor]!)) cursor++
   while (cursor < limit) {
     const beforeSpace = cursor
     while (cursor < limit && /\s/.test(source[cursor]!)) cursor++
-    if (source[cursor] === ">") return { end: cursor + 1, keys }
-    if (source.slice(cursor, cursor + 2) === "/>") return { end: cursor + 2, keys }
+    if (source[cursor] === ">") return { end: cursor + 1, keys, syntheticKeys }
+    if (source.slice(cursor, cursor + 2) === "/>") return { end: cursor + 2, keys, syntheticKeys }
+    // A common JSX spread is a complete reference, so scanning can continue
+    // to subsequent attributes without shielding the spread itself.
+    const spread = /^\{\.\.\.[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\}/.exec(source.slice(cursor, limit))?.[0]
+    if (spread) {
+      cursor += spread.length
+      continue
+    }
     if (cursor === beforeSpace || !/[A-Za-z_:]/.test(source[cursor] ?? "")) break
     const nameStart = cursor++
     while (cursor < limit && /[\w.:-]/.test(source[cursor]!)) cursor++
@@ -98,7 +106,12 @@ function openingTag(source: string, start: number): { end: number; keys: number[
     cursor++
     while (cursor < limit && /\s/.test(source[cursor]!)) cursor++
     if (source[cursor] === '"' || source[cursor] === "'") {
+      const valueStart = cursor
       cursor = quotedEnd(source, cursor, limit)
+      // This fixture-shaped matter identity carries no credential value. Keep
+      // the exemption on the JSX attribute name; other quoted keys are masked.
+      if (name === "actingKey" && /^(["'])matter:MATTER-[0-9]{3}:document\1$/.test(source.slice(valueStart, cursor)))
+        syntheticKeys.push(nameStart + 6)
       continue
     }
     if (source[cursor] !== "{") break
@@ -125,7 +138,29 @@ function openingTag(source: string, start: number): { end: number; keys: number[
       keys.push(nameStart)
     }
   }
-  return { end: Math.max(start + 1, cursor), keys: [] }
+  return { end: Math.max(start + 1, cursor), keys: [], syntheticKeys: [] }
+}
+
+// Shield only key names whose complete RHS is composed of source references.
+// Credential-shaped literals and unsupported expressions keep normal masking.
+function derivedKeyDeclaration(source: string, start: number): { key: number; name: string; end: number } | undefined {
+  const lineEnd = source.indexOf("\n", start)
+  const line = source.slice(start, lineEnd < 0 ? source.length : lineEnd)
+  const match = /^const[ \t]+(key|[A-Za-z_$][\w$]*Key)[ \t]*=[ \t]*(.*);[ \t]*\r?$/.exec(line)
+  if (!match) return undefined
+  const rhs = match[2]!
+  const reference = "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*"
+  const safeCall = new RegExp(`^[A-Za-z_$][\\w$]*Key\\(${reference}\\)$`).test(rhs)
+  const safeArray = new RegExp(
+    `^JSON\\.stringify\\(\\[[ \\t]*${reference}(?:[ \\t]*,[ \\t]*${reference})*[ \\t]*\\]\\)$`
+  ).test(rhs)
+  const safeReplace = /^key\.replace\(\/\[\^a-zA-Z0-9_-\]\/g,[ \t]*'-'\)$/.test(rhs)
+  if (
+    (!safeCall && !safeArray && !safeReplace) ||
+    /credential|secret|token|password|authorization|bearer|ghp_/i.test(rhs)
+  )
+    return undefined
+  return { key: start + match[0].indexOf(match[1]!), name: match[1]!, end: start + line.length }
 }
 
 // A cache-key factory reference carries no literal value. Recognize only this
@@ -218,12 +253,25 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
         chunks.push(source.slice(copied, query.key), queryMarker)
         copied = query.key + 3
         cursor = query.end
-      } else cursor++
+      } else {
+        const derived = derivedKeyDeclaration(source, cursor)
+        if (derived) {
+          const suffix = derived.name === "key" ? marker : queryMarker
+          const at = derived.name === "key" ? derived.key : derived.key + derived.name.length - 3
+          chunks.push(source.slice(copied, at), suffix)
+          copied = at + 3
+          cursor = derived.end
+        } else cursor++
+      }
     } else if (char === "<" && /[A-Za-z]/.test(source[cursor + 1] ?? "")) {
       const tag = openingTag(source, cursor)
-      for (const key of tag.keys) {
-        chunks.push(source.slice(copied, key), marker)
-        copied = key + 3
+      const keys = [
+        ...tag.keys.map((at) => ({ at, replacement: marker })),
+        ...tag.syntheticKeys.map((at) => ({ at, replacement: queryMarker }))
+      ].sort((left, right) => left.at - right.at)
+      for (const key of keys) {
+        chunks.push(source.slice(copied, key.at), key.replacement)
+        copied = key.at + 3
       }
       cursor = tag.end
     } else if (source.startsWith("key", cursor)) {
@@ -278,6 +326,13 @@ function redactQuotedAssignments(source: string): string {
   }
   return output + source.slice(cursor)
 }
+function redactSuspiciousKeyDeclarations(source: string): string {
+  return source.replace(
+    /^([+\- ]?[ \t]*const[ \t]+(?:key|[A-Za-z_$][\w$]*Key)[ \t]*=[ \t]*)([^\n]*)$/gm,
+    (line, prefix: string, rhs: string) =>
+      /credential|secret|token|password|authorization|bearer|ghp_/i.test(rhs) ? `${prefix}***REDACTED***` : line
+  )
+}
 const PRIVATE_KEY_BLOCK =
   /(-----BEGIN ((?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----)[\s\S]*?(-----END \2-----|$)/g
 
@@ -304,7 +359,7 @@ export function redactNativeSourceText(source: string): string {
     queryMarker,
     dotMarker
   )
-  const literals = redactQuotedAssignments(prepared)
+  const literals = redactQuotedAssignments(redactSuspiciousKeyDeclarations(prepared))
   const pem = literals.replace(PRIVATE_KEY_BLOCK, "$1\n***REDACTED***\n$3")
   const redacted = redactLogText(redactCommandText(pem))
   return redacted.split(marker).join("key").split(queryMarker).join("Key").split(dotMarker).join(".")
