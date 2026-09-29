@@ -12,6 +12,37 @@ The doctor checks this evidence for staging-canary and application-release modes
 
 Configure the routine role with `openai/gpt-6.1-sol`, the simple role with `openai/gpt-5.6-terra`, and the very complex role with `openai/gpt-6-astra`. Verify exact provider availability before changing active roles. A local Codex model catalog alone does not certify the OpenClaw provider route.
 
+### Registering a model newer than OpenClaw's bundled catalog
+
+OpenClaw 2026.9.6 can reject `openai/gpt-6.1-sol` as unknown even when the native Codex client can execute it. An isolated configuration with the following observed model metadata successfully passed `models status --agent main --probe --probe-provider openai` on that exact model:
+
+```json
+{
+  "models": {
+    "providers": {
+      "openai": {
+        "baseUrl": "https://chatgpt.com/backend-api/codex",
+        "auth": "oauth",
+        "api": "openai-chatgpt-responses",
+        "models": [{
+          "id": "gpt-6.1-sol",
+          "name": "GPT-6.1-Sol",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 272000
+        }]
+      }
+    }
+  }
+}
+```
+
+This is a tested subscription-route canary configuration. Review existing provider endpoints, adapters and auth settings before applying model metadata to a live configuration; provider settings also affect other consumers. Preserve their intended routes. The matching agent model policy selects `agentRuntime.id: "codex"` under its `models["openai/gpt-6.1-sol"]` entry, with no fallback.
+
+Install the official `@openclaw/codex` package through OpenClaw's supported installer in the isolated state directory. Pointing `plugins.load.paths` at another installation does not establish trusted package provenance or register privileged harness features. In the tested isolated configuration, explicit `plugins.load.paths: []` prevented default paths from overriding the official isolated installation. Use `plugins registry --refresh` to rebuild its managed registry.
+
+The successful auth probe establishes route availability. It does not replace role-specific capability measurements, independent skill review, promotion approval or live deployment verification.
+
 Example policy fragment for three already-reviewed isolated coder identities:
 
 ```json
