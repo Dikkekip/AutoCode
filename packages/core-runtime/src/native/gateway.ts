@@ -25,7 +25,7 @@ export type NativeGatewaySdkCall = (
   method: string,
   options: { json: true; timeout: string },
   params: Record<string, unknown>,
-  extra: { progress: false }
+  extra: { scopes: ["operator.read" | "operator.write" | "operator.admin"]; progress: false }
 ) => Promise<unknown>
 export function resolveNativeGatewaySdkPath(command: string, searchPath = process.env.PATH ?? ""): string {
   const candidates =
@@ -188,6 +188,65 @@ export class NativeCliGateway implements NativeGateway {
     })
   }
 }
+// Match the native Workboard declarations. Admin grants stamp unrestricted workspace
+// authority onto cards; routine broker calls must request only their declared scope.
+const nativeWorkboardReadMethods = new Set([
+  "workboard.cards.list",
+  "workboard.cards.diagnostics",
+  "workboard.boards.list",
+  "workboard.cards.stats",
+  "workboard.cards.runs",
+  "workboard.notifications.list",
+  "workboard.notifications.events",
+  "workboard.cards.attachments.list",
+  "workboard.cards.attachments.get",
+  "workboard.cards.export"
+])
+const nativeWorkboardWriteMethods = new Set([
+  "workboard.cards.start",
+  "workboard.cards.move",
+  "workboard.cards.delete",
+  "workboard.cards.comment",
+  "workboard.cards.link",
+  "workboard.cards.linkDependency",
+  "workboard.cards.proof",
+  "workboard.cards.artifact",
+  "workboard.cards.claim",
+  "workboard.cards.heartbeat",
+  "workboard.cards.release",
+  "workboard.cards.promote",
+  "workboard.cards.reassign",
+  "workboard.cards.reclaim",
+  "workboard.cards.complete",
+  "workboard.cards.block",
+  "workboard.cards.unblock",
+  "workboard.cards.diagnostics.refresh",
+  "workboard.cards.dispatch",
+  "workboard.cards.dispatchWithOptions",
+  "workboard.boards.archive",
+  "workboard.boards.delete",
+  "workboard.notifications.subscribe",
+  "workboard.notifications.delete",
+  "workboard.notifications.advance",
+  "workboard.cards.attachments.add",
+  "workboard.cards.attachments.delete",
+  "workboard.cards.workerLog",
+  "workboard.cards.protocolViolation",
+  "workboard.cards.archive",
+  "workboard.cards.create",
+  "workboard.cards.captureSession",
+  "workboard.cards.update",
+  "workboard.cards.bulk",
+  "workboard.boards.upsert",
+  "workboard.cards.specify",
+  "workboard.cards.decompose"
+])
+function nativeGatewayScope(method: string): "operator.read" | "operator.write" | "operator.admin" {
+  if (nativeWorkboardReadMethods.has(method)) return "operator.read"
+  if (nativeWorkboardWriteMethods.has(method)) return "operator.write"
+  if (method.startsWith("workboard.")) throw new Error("Unclassified native Workboard method")
+  return "operator.admin"
+}
 /** Public OpenClaw Gateway transport for calls already running in the plugin process. */
 export class NativeSdkGateway extends NativeCliGateway {
   constructor(
@@ -198,8 +257,10 @@ export class NativeSdkGateway extends NativeCliGateway {
   }
   override async request<T = any>(method: string, params: Record<string, unknown>): Promise<T> {
     try {
+      const scope = nativeGatewayScope(method)
       const call = await this.loadCall(this.command)
       return (await call(method, { json: true, timeout: String(nativeGatewayTimeout(method)) }, params, {
+        scopes: [scope],
         progress: false
       })) as T
     } catch (error) {
