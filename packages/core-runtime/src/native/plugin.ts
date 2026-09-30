@@ -797,31 +797,40 @@ export function registerNativeAutonomyPlugin(api: any): void {
     { scope: "operator.admin" }
   )
   api.registerTool(
-    (ctx: any) =>
-      tools.map((definition) => ({
-        ...definition,
-        execute: async (_id: string, params: any) => {
-          if (!activeInstances.has(params.boardId))
-            throw new Error("Native remote tool broker unavailable: trusted local plugin factory context required")
-          return invoke(runtime(params.boardId), async () => {
-            // Sandboxed sessions can call the narrow broker: identity comes from
-            // the host factory closure, while board/card ownership is resolved server-side.
+    {
+      contextVersion: 2,
+      create: (ctx: any) =>
+        tools.map((definition) => ({
+          ...definition,
+          execute: async (_id: string, params: any) => {
+            ctx.assertInvocationCurrent()
             if (!activeInstances.has(params.boardId))
               throw new Error("Native remote tool broker unavailable: trusted local plugin factory context required")
-            await ensureReady(runtime(params.boardId))
-            const assigned = await resolveNativeToolRuntime(activeInstances.values(), ctx)
-            if (assigned.policy.boardId !== params.boardId) {
-              assigned.store.event("tool.denied", assigned.policy.boardId, {
-                reason: "board selector differs from live assignment"
+            return runtime(params.boardId).store.withEffectAuthority(ctx.assertInvocationCurrent, () =>
+              invoke(runtime(params.boardId), async () => {
+                // Sandboxed sessions can call the narrow broker: identity comes from
+                // the host factory closure, while board/card ownership is resolved server-side.
+                if (!activeInstances.has(params.boardId))
+                  throw new Error(
+                    "Native remote tool broker unavailable: trusted local plugin factory context required"
+                  )
+                await ensureReady(runtime(params.boardId))
+                const assigned = await resolveNativeToolRuntime(activeInstances.values(), ctx)
+                if (assigned.policy.boardId !== params.boardId) {
+                  assigned.store.event("tool.denied", assigned.policy.boardId, {
+                    reason: "board selector differs from live assignment"
+                  })
+                  throw new Error("Native tool denied: board is not assigned to this session")
+                }
+                ctx.assertInvocationCurrent()
+                const result = await definition.execute(params, ctx)
+                return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }
               })
-              throw new Error("Native tool denied: board is not assigned to this session")
-            }
-            const result = await definition.execute(params, ctx)
-            return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }
-          })
-        }
-      })),
-    { names: tools.map((t) => t.name), optional: true }
+            )
+          }
+        }))
+    },
+    { names: tools.map((t) => t.name), optional: true, confinement: "session-bound" }
   )
   api.on("subagent_ended", async () => {
     for (const r of instances.values()) {

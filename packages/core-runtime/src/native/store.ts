@@ -35,12 +35,18 @@ interface NativeLeaseScope {
   finished: boolean
   parent: NativeLeaseScope | undefined
 }
+interface NativeEffectAuthorityScope {
+  assertCurrent: () => void
+  finished: boolean
+  parent: NativeEffectAuthorityScope | undefined
+}
 /** Evidence and reconciliation journal only. Workboard remains the task queue. */
 export class NativeEvidenceStore {
   readonly db: DatabaseSync
   readonly owner = randomUUID()
   private readonly versions = new WeakMap<object, number>()
   private readonly context = new AsyncLocalStorage<NativeLeaseScope>()
+  private readonly effectAuthority = new AsyncLocalStorage<NativeEffectAuthorityScope>()
   constructor(
     readonly path: string,
     private readonly clock: () => number = Date.now
@@ -309,8 +315,26 @@ export class NativeEvidenceStore {
   get activeLease(): NativeLease | undefined {
     return this.context.getStore()?.lease
   }
+  /** Carry the host invocation authority through asynchronous native effects. */
+  async withEffectAuthority<T>(assertCurrent: () => void, action: () => Promise<T>): Promise<T> {
+    assertCurrent()
+    const scope = { assertCurrent, finished: false, parent: this.effectAuthority.getStore() }
+    return this.effectAuthority.run(scope, async () => {
+      try {
+        return await action()
+      } finally {
+        scope.finished = true
+      }
+    })
+  }
   /** Check immediately before initiating an effect; in-flight remote work cannot be revoked. */
   authorizeEffect(): void {
+    let authority = this.effectAuthority.getStore()
+    while (authority) {
+      if (authority.finished) throw new Error("Native host invocation has closed")
+      authority.assertCurrent()
+      authority = authority.parent
+    }
     let scope = this.context.getStore()
     while (scope) {
       if (scope.finished) throw new NativeLeaseLost(scope.lease.id)
