@@ -71,6 +71,28 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
       .option("--json", "JSON output", true)
       .action(async () => {
         const { policy, gateway } = settings()
+        if (["discover", "dispatch", "reconcile"].includes(name)) {
+          const status = await gateway.request<{
+            boardId: string
+            control: { paused: boolean; frozen: boolean; revision?: string; freezeRevision?: string }
+          }>("autocode.status", { boardId: policy.boardId })
+          if (
+            status.boardId !== policy.boardId ||
+            typeof status.control?.paused !== "boolean" ||
+            typeof status.control?.frozen !== "boolean"
+          )
+            throw new Error("Native scheduled-action status contract unavailable")
+          if (status.control.paused === true || status.control.frozen === true) {
+            output({
+              skipped: true,
+              boardId: policy.boardId,
+              action: name,
+              reason: status.control.frozen === true ? "Native autonomy is frozen" : "Native autonomy is paused",
+              control: status.control
+            })
+            return
+          }
+        }
         const request = () =>
           gateway.request<{ created: string[]; reason?: string }>(`autocode.${name}`, { boardId: policy.boardId })
         output(name === "discover" ? await retryContendedDiscovery(request) : await request())

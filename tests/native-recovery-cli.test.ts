@@ -132,7 +132,11 @@ it("repoints existing automation commands after relocation without changing oper
 
 it("routes dispatch through the independent native administrative RPC", async () => {
   const s = fixture()
-  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ advanced: 0 })
+  const request = vi
+    .spyOn(NativeSdkGateway.prototype, "request")
+    .mockImplementation(async (method) =>
+      method === "autocode.status" ? { boardId: "board", control: { paused: false, frozen: false } } : { advanced: 0 }
+    )
   await s.run("dispatch")
   expect(request).toHaveBeenCalledWith("autocode.dispatch", { boardId: "board" })
 })
@@ -152,7 +156,11 @@ for (const kind of ["discover", "dispatch", "reconcile"]) {
   it(`routes the registered ${kind} command through the authenticated SDK transport`, async () => {
     const s = fixture()
     const legacy = vi.spyOn(NativeCliGateway.prototype, "request").mockRejectedValue(new Error("Child CLI forbidden"))
-    const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ ok: true })
+    const request = vi
+      .spyOn(NativeSdkGateway.prototype, "request")
+      .mockImplementation(async (method) =>
+        method === "autocode.status" ? { boardId: "board", control: { paused: false, frozen: false } } : { ok: true }
+      )
     await s.run("--openclaw", "/active/openclaw", kind)
     expect(request).toHaveBeenCalledWith(`autocode.${kind}`, { boardId: "board" })
     expect((request.mock.instances[0] as NativeSdkGateway).command).toBe("/active/openclaw")
@@ -166,4 +174,61 @@ it("does not fall back to a child CLI when the registered SDK request fails", as
   vi.spyOn(NativeSdkGateway.prototype, "request").mockRejectedValue(new Error("SDK authorization unavailable"))
   await expect(s.run("dispatch")).rejects.toThrow("SDK authorization unavailable")
   expect(legacy).not.toHaveBeenCalled()
+})
+
+for (const action of ["discover", "dispatch", "reconcile"]) {
+  for (const control of [
+    { paused: true, frozen: false, revision: "owned-pause" },
+    { paused: false, frozen: true, freezeRevision: "owned-freeze" }
+  ]) {
+    it(`skips the registered ${action} command successfully while ${control.frozen ? "frozen" : "paused"}`, async () => {
+      const s = fixture()
+      const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ boardId: "board", control })
+      await s.run(action)
+      expect(request.mock.calls).toEqual([["autocode.status", { boardId: "board" }]])
+      expect(JSON.parse(s.output.at(-1)!)).toEqual({
+        skipped: true,
+        boardId: "board",
+        action,
+        reason: control.frozen ? "Native autonomy is frozen" : "Native autonomy is paused",
+        control
+      })
+    })
+  }
+}
+
+it("propagates an active action failure even if the error mentions a pause race", async () => {
+  const s = fixture()
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method) => {
+    if (method === "autocode.status") return { boardId: "board", control: { paused: false, frozen: false } }
+    throw new Error("Native autonomy is paused or authorization was revoked")
+  })
+  await expect(s.run("dispatch")).rejects.toThrow("paused or authorization was revoked")
+  expect(request.mock.calls.map(([method]) => method)).toEqual(["autocode.status", "autocode.dispatch"])
+  expect(s.output).toEqual([])
+})
+
+for (const status of [
+  { boardId: "other", control: { paused: true, frozen: false } },
+  { boardId: "board", control: { paused: "true", frozen: false } },
+  { boardId: "board" }
+]) {
+  it("rejects malformed or foreign-board scheduled status before mutation", async () => {
+    const s = fixture()
+    const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue(status)
+    await expect(s.run("dispatch")).rejects.toThrow("status contract unavailable")
+    expect(request.mock.calls).toEqual([["autocode.status", { boardId: "board" }]])
+  })
+}
+
+it("keeps pause, resume, freeze and status commands available without scheduled preflight", async () => {
+  const s = fixture()
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({})
+  for (const action of ["pause", "resume", "freeze", "status"]) await s.run(action)
+  expect(request.mock.calls.map(([method]) => method)).toEqual([
+    "autocode.pause",
+    "autocode.resume",
+    "autocode.freeze",
+    "autocode.status"
+  ])
 })
