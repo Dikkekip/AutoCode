@@ -77,7 +77,8 @@ export async function nativeDoctor(
         "autocode_propose",
         "autocode_investigation_finish",
         "workboard_complete",
-        "workboard_heartbeat"
+        "workboard_heartbeat",
+        "workboard_block"
       ])
       for (const persona of policy.personas) {
         const id = persona.investigationAgentId
@@ -101,7 +102,9 @@ export async function nativeDoctor(
           "autocode_inspect",
           "autocode_propose",
           "autocode_investigation_finish",
-          "workboard_complete"
+          "workboard_complete",
+          "workboard_heartbeat",
+          "workboard_block"
         ])
           if (!tools.allow.includes(tool)) throw new Error(`Research agent ${id} is missing ${tool}`)
       }
@@ -231,7 +234,7 @@ export async function nativeDoctor(
 /** Local operator/plugin code remains trusted; these checks prevent delegated tool authority expansion. */
 export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value: unknown): void {
   const config = nativeObject(value, "Role config")
-  const completion = ["workboard_complete", "workboard_heartbeat"]
+  const completion = ["workboard_complete", "workboard_heartbeat", "workboard_block"]
   const roles = [
     {
       id: policy.plannerAgentId,
@@ -283,10 +286,10 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
       throw new Error(`Role ${role.id} cannot add host mounts or sandbox escape overrides`)
     if (nativeCoderAgentIds(policy).includes(role.id) && tools.exec?.host !== "sandbox")
       throw new Error(`Role ${role.id} requires exec.host sandbox`)
-    for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || tool === "workboard_complete"))
+    for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || completion.includes(tool)))
       if (!tools.allow.includes(tool)) throw new Error(`Role ${role.id} is missing ${tool}`)
     const sandboxTools = tools.sandbox?.tools ?? config.tools?.sandbox?.tools
-    for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || tool === "workboard_complete")) {
+    for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || completion.includes(tool))) {
       const plugin = tool.startsWith("autocode_") ? "autocode" : "workboard"
       if (
         ![...(sandboxTools?.allow ?? []), ...(sandboxTools?.alsoAllow ?? [])].some((v) => v === tool || v === plugin) ||

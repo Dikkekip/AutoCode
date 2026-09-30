@@ -14,7 +14,7 @@ const policy = {
   boardId: "app"
 } as unknown as NativeAutonomyPolicy
 function roles() {
-  const completion = ["workboard_complete", "workboard_heartbeat"]
+  const completion = ["workboard_complete", "workboard_heartbeat", "workboard_block"]
   return {
     agents: {
       entries: Object.fromEntries(
@@ -35,6 +35,23 @@ function roles() {
 }
 it("accepts explicit confined independent role authority", () => {
   expect(() => validateNativeRoleAuthority(policy, roles())).not.toThrow()
+})
+it.each(["planner", "coder", "reviewer"])("requires worker lifecycle tools for %s", (role) => {
+  for (const tool of ["workboard_complete", "workboard_heartbeat", "workboard_block"]) {
+    const config = roles()
+    config.agents.entries[role]!.tools.allow = config.agents.entries[role]!.tools.allow.filter((v) => v !== tool)
+    expect(() => validateNativeRoleAuthority(policy, config)).toThrow(`Role ${role} is missing ${tool}`)
+  }
+})
+it.each([
+  "workboard_complete",
+  "workboard_heartbeat",
+  "workboard_block"
+])("rejects a worker lifecycle tool hidden in the sandbox: %s", (tool) => {
+  const config = roles()
+  config.agents.entries.reviewer!.tools.sandbox.tools.allow =
+    config.agents.entries.reviewer!.tools.sandbox.tools.allow.filter((v) => v !== tool)
+  expect(() => validateNativeRoleAuthority(policy, config)).toThrow(`sandbox tool policy hides ${tool}`)
 })
 it("rejects broker tools hidden by the additional sandbox tool policy", () => {
   const config = roles()
