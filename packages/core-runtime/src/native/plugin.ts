@@ -2,6 +2,8 @@ import { isAbsolute, resolve } from "node:path"
 import type { NativeAutonomyPolicy, NativeReviewEvidence } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { authorizeNativeTool, resolveNativeToolRuntime } from "./broker.js"
+import { configuredNativeModels } from "./capabilities.js"
+import { registerNativeCapabilityOperatorMethods } from "./capability-operator.js"
 import { loadNativePolicy, nativeDoctor } from "./doctor.js"
 import { NativeSdkGateway } from "./gateway.js"
 import {
@@ -213,6 +215,36 @@ export function registerNativeAutonomyPlugin(api: any): void {
     },
     { scope: "operator.read" }
   )
+  registerNativeCapabilityOperatorMethods({
+    registerMethod: (name, handler, options) =>
+      api.registerGatewayMethod(
+        name,
+        async (input: any) => {
+          try {
+            if (!input.client?.connect?.scopes?.includes("operator.admin"))
+              throw new Error("Operator admin scope required")
+            const operatorId = input.client.connect.device?.id ?? input.client.connect.client?.id
+            if (typeof operatorId !== "string" || !operatorId.trim())
+              throw new Error("Verified operator identity required")
+            const r = runtime(input.params?.boardId)
+            await invoke(r, () => handler(input))
+          } catch (error) {
+            input.respond(false, undefined, { code: "autocode_error", message: String(error) })
+          }
+        },
+        options
+      ),
+    runtime,
+    candidatePolicy: (boardId) => {
+      const file = configuredFiles.get(boardId)
+      if (!file) throw new Error("Capability administration requires the owning service registration")
+      return loadNativePolicy(file)
+    },
+    configuredModels: async (policy) => {
+      const response = await gateway.request("config.get", {})
+      return configuredNativeModels(response.config ?? response.parsed, policy)
+    }
+  })
   registerMethod(
     "autocode.policy.refresh.plan",
     async ({ params, respond }: any) => {
