@@ -71,43 +71,7 @@ export async function nativeDoctor(
       const response = await gateway.request("config.get", {})
       const config = response.config ?? response.parsed
       if (!config) throw new Error("Cannot verify research tool permissions")
-      const allowed = new Set([
-        "autocode_context",
-        "autocode_inspect",
-        "autocode_propose",
-        "autocode_investigation_finish",
-        "workboard_complete",
-        "workboard_heartbeat",
-        "workboard_block"
-      ])
-      for (const persona of policy.personas) {
-        const id = persona.investigationAgentId
-        if (!id || [...nativeCoderAgentIds(policy), policy.reviewerAgentId, policy.plannerAgentId].includes(id))
-          throw new Error(`Dedicated research agent required for ${persona.personaId}`)
-        const agent = config.agents?.entries?.[id] ?? config.agents?.list?.find((a: any) => a.id === id)
-        const tools = agent?.tools
-        if (
-          !Array.isArray(tools?.allow) ||
-          !tools.allow.length ||
-          tools.allow.some((t: string) => !allowed.has(t)) ||
-          tools.alsoAllow?.length ||
-          tools.byProvider ||
-          agent?.subagents?.allowAgents?.length
-        )
-          throw new Error(
-            `Research agent ${id} must allow only native inspection, proposal, outcome and completion tools`
-          )
-        for (const tool of [
-          "autocode_context",
-          "autocode_inspect",
-          "autocode_propose",
-          "autocode_investigation_finish",
-          "workboard_complete",
-          "workboard_heartbeat",
-          "workboard_block"
-        ])
-          if (!tools.allow.includes(tool)) throw new Error(`Research agent ${id} is missing ${tool}`)
-      }
+      validateNativeResearchAuthority(policy, config)
       return "Dedicated research roles restrict execution to read-only inspection and investigation records"
     })
   }
@@ -232,6 +196,67 @@ export async function nativeDoctor(
 }
 
 /** Local operator/plugin code remains trusted; these checks prevent delegated tool authority expansion. */
+export function validateNativeResearchAuthority(policy: NativeAutonomyPolicy, value: unknown): void {
+  const config = nativeObject(value, "Research config")
+  const allowed = new Set([
+    "autocode_context",
+    "autocode_inspect",
+    "autocode_propose",
+    "autocode_investigation_finish",
+    "workboard_complete",
+    "workboard_heartbeat",
+    "workboard_block"
+  ])
+  for (const persona of policy.personas) {
+    const id = persona.investigationAgentId
+    if (!id || [...nativeCoderAgentIds(policy), policy.reviewerAgentId, policy.plannerAgentId].includes(id))
+      throw new Error(`Dedicated research agent required for ${persona.personaId}`)
+    const agent = config.agents?.entries?.[id] ?? config.agents?.list?.find((a: any) => a.id === id)
+    const defaults = config.agents?.defaults?.sandbox ?? {}
+    const sandbox = { ...defaults, ...agent?.sandbox }
+    const docker = { ...defaults.docker, ...agent?.sandbox?.docker }
+    const browser = { ...defaults.browser, ...agent?.sandbox?.browser }
+    if (
+      sandbox.mode !== "all" ||
+      sandbox.scope !== "session" ||
+      sandbox.workspaceAccess !== "ro" ||
+      !["docker", "podman"].includes(sandbox.backend ?? "docker") ||
+      docker.network !== "none"
+    )
+      throw new Error(
+        `Research agent ${id} requires an exclusive read-only sandbox: mode all, scope session, workspaceAccess ro and network none`
+      )
+    if (
+      docker.binds?.length ||
+      docker.dangerouslyAllowReservedContainerTargets ||
+      docker.dangerouslyAllowExternalBindSources ||
+      docker.dangerouslyAllowContainerNamespaceJoin ||
+      browser.allowHostControl
+    )
+      throw new Error(`Research agent ${id} cannot add host mounts or sandbox escape overrides`)
+    const tools = agent?.tools
+    if (
+      !Array.isArray(tools?.allow) ||
+      !tools.allow.length ||
+      tools.allow.some((t: string) => !allowed.has(t)) ||
+      tools.alsoAllow?.length ||
+      tools.byProvider ||
+      agent?.subagents?.allowAgents?.length
+    )
+      throw new Error(`Research agent ${id} must allow only native inspection, proposal, outcome and completion tools`)
+    for (const tool of [
+      "autocode_context",
+      "autocode_inspect",
+      "autocode_propose",
+      "autocode_investigation_finish",
+      "workboard_complete",
+      "workboard_heartbeat",
+      "workboard_block"
+    ])
+      if (!tools.allow.includes(tool)) throw new Error(`Research agent ${id} is missing ${tool}`)
+  }
+}
+
 export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value: unknown): void {
   const config = nativeObject(value, "Role config")
   const completion = ["workboard_complete", "workboard_heartbeat", "workboard_block"]
