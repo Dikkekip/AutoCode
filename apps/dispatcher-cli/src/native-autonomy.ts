@@ -4,9 +4,9 @@ import {
   applyNativeMigration,
   inspectNativeSkill,
   loadNativePolicy,
-  NativeCliGateway,
   NativeEvidenceStore,
   type NativeMigrationPlan,
+  NativeSdkGateway,
   nativeDoctor,
   nativePolicyFromProfile,
   planNativeMigration
@@ -23,7 +23,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
     .option("--openclaw <command>", "OpenClaw executable", "openclaw")
   const settings = () => ({
     policy: loadNativePolicy(resolve(root.opts().policy)),
-    gateway: new NativeCliGateway(root.opts().openclaw)
+    gateway: new NativeSdkGateway(root.opts().openclaw)
   })
   const output = (value: unknown) => io.stdout(`${JSON.stringify(value, null, 2)}\n`)
   root
