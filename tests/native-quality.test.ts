@@ -6,16 +6,28 @@ import { afterEach, describe, expect, it } from "vitest"
 import { authorizeNativeTool } from "../packages/core-runtime/src/native/broker.js"
 import type { NativeGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { NativeHumanInput } from "../packages/core-runtime/src/native/human-input.js"
+import {
+  nativeContentDigest,
+  nativeRepositoryIdentity,
+  nativeVerificationDigest
+} from "../packages/core-runtime/src/native/provenance.js"
 import type { Investigation } from "../packages/core-runtime/src/native/quality.js"
+import { nativeRepairObservation, planNativeRepair } from "../packages/core-runtime/src/native/repair.js"
 import { createNativeOperatorRequest } from "../packages/core-runtime/src/native/requests.js"
-import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
+import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 import {
   bootstrapNativeSkill,
   nativeSkillPolicyDigest,
   registerNativeSkill
 } from "../packages/core-runtime/src/native/skills.js"
 import { NativeEvidenceStore, NativeLeaseLost } from "../packages/core-runtime/src/native/store.js"
-import { validateNativeAssessment, validateNativeAutonomyPolicy } from "../packages/domain/src/index.js"
+import { nativeAcceptanceBindings, planNativeVerification } from "../packages/core-runtime/src/native/verification.js"
+import {
+  nativePolicyDigest,
+  nativeVerificationRuleId,
+  validateNativeAssessment,
+  validateNativeAutonomyPolicy
+} from "../packages/domain/src/index.js"
 
 const cleanups: Array<() => void> = []
 afterEach(() => {
@@ -110,7 +122,7 @@ function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandid
     })),
     verification: [{ argv: [process.execPath, "-e", "process.exit(0)"], cwd: ".", timeoutSeconds: 10 }],
     ...(independentCandidateReview
-      ? { verificationAuthority: { reviewedRevision: "fixture", independentCandidateReview: true } }
+      ? { verificationAuthority: { reviewedRevision: git("rev-parse", "HEAD"), independentCandidateReview: true } }
       : {}),
     deployment: null
   })
@@ -221,7 +233,291 @@ const assessment = {
   findings: []
 }
 
+function fixtureVerification(
+  s: ReturnType<typeof setup>,
+  workflow: NativeWorkflow,
+  workflowId: string,
+  worktree: string,
+  exitCode = 0
+) {
+  const candidate = workflow.candidate!
+  const command = s.policy.verification[0]!
+  // Synthetic verifier input for this stage-owner test; no verification execution is claimed.
+  const artifactRoot = join(
+    s.policy.repository,
+    ".openclaw/native-artifacts",
+    workflowId,
+    candidate.headSha,
+    nativeContentDigest(workflow.lifecycle!.attemptId),
+    nativePolicyDigest(s.policy)
+  )
+  mkdirSync(artifactRoot, { recursive: true })
+  const artifact = join(artifactRoot, "verified-fixture.json")
+  const artifactRaw = JSON.stringify({
+    fixture: true,
+    argv: command.argv,
+    cwd: worktree,
+    stdout: "Synthetic fixture failure log",
+    stderr: "Synthetic fixture stderr",
+    exitCode,
+    startedAt: "fixture-start",
+    finishedAt: "fixture-end"
+  })
+  writeFileSync(artifact, artifactRaw)
+  const plan = planNativeVerification(s.policy, candidate.files)
+  const provenance = {
+    version: 1 as const,
+    workflowId,
+    attemptId: workflow.lifecycle!.attemptId,
+    skillDigest: workflow.proposal.quality?.skillHash ?? nativeContentDigest(workflow.proposal.implementationPrompt),
+    executionId: "fixture-verifier",
+    agentId: "fixture-verifier",
+    sessionKey: "fixture-verifier",
+    repositoryId: nativeRepositoryIdentity(s.policy),
+    baseSha: candidate.baseSha,
+    headSha: candidate.headSha,
+    diffDigest: workflow.riskAssessment!.changesDigest,
+    policyDigest: nativePolicyDigest(s.policy),
+    policySnapshot: s.policy,
+    checkIds: plan.ruleIds,
+    toolchain: { node: "fixture", git: "fixture", platform: "fixture", arch: "fixture", sandbox: "fixture" },
+    artifacts: [{ ruleId: nativeVerificationRuleId(command), path: artifact, sha256: nativeContentDigest(artifactRaw) }]
+  }
+  const provenancePath = join(artifactRoot, "verified-fixture-provenance.json")
+  const provenanceRaw = JSON.stringify(provenance)
+  writeFileSync(provenancePath, provenanceRaw)
+  return {
+    headSha: candidate.headSha,
+    baseSha: candidate.baseSha,
+    plan,
+    provenance,
+    acceptance: nativeAcceptanceBindings(
+      s.policy,
+      workflow.proposal.acceptance,
+      plan.ruleIds,
+      candidate.headSha,
+      s.runtime.quality.designApproved(workflow)
+        ? { headSha: candidate.headSha, reviewedBy: s.policy.reviewerAgentId }
+        : undefined
+    ),
+    provenanceArtifact: { path: provenancePath, sha256: nativeContentDigest(provenanceRaw) },
+    checks: [
+      {
+        ruleId: nativeVerificationRuleId(command),
+        argv: command.argv,
+        cwd: worktree,
+        exitCode,
+        startedAt: "fixture-start",
+        finishedAt: "fixture-end",
+        artifact,
+        artifactSha256: nativeContentDigest(artifactRaw)
+      }
+    ]
+  }
+}
+
 describe("native quality investigations", () => {
+  it("stages final acceptance review from complete committed evidence instead of the linked HOST checkout", async () => {
+    const s = setup(fixtureSkill, [], true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful bounded navigation repair")
+    const worktree = join(s.root, "final-review-candidate")
+    s.git("worktree", "add", "-b", "final-review-candidate", worktree)
+    writeFileSync(join(worktree, "src/view.ts"), "export const navigation = true\n")
+    execFileSync("git", ["-C", worktree, "add", "src/view.ts"])
+    execFileSync("git", ["-C", worktree, "commit", "-m", "implement navigation"])
+    const implementation = s.gateway.cards.find(
+      (card) => card.id === s.runtime.requireWorkflow(workflowId).implementationCardId
+    )
+    implementation.status = "running"
+    implementation.sessionKey = "candidate-coder"
+    implementation.metadata = { automation: { workspace: { path: worktree } } }
+    await expect(s.runtime.submit("coder", implementation.sessionKey, workflowId, worktree)).resolves.toMatchObject({
+      accepted: true
+    })
+    let workflow = s.runtime.requireWorkflow(workflowId)
+    const design = s.gateway.cards.find((card) => card.id === workflow.designCardId)
+    design.status = "running"
+    design.sessionKey = "candidate-design"
+    await s.runtime.quality.designReview(
+      "reviewer",
+      design.sessionKey,
+      workflowId,
+      "approved",
+      "Reviewed the complete candidate design",
+      assessment
+    )
+    workflow = s.runtime.requireWorkflow(workflowId)
+    const candidate = workflow.candidate!
+    workflow.verification = fixtureVerification(s, workflow, workflowId, worktree)
+    s.store.put("workflow", workflowId, workflow)
+    const reviewId = await s.runtime.stage(
+      workflowId,
+      workflow,
+      "Review",
+      "ready",
+      JSON.stringify({
+        workflowId,
+        candidate,
+        verification: s.runtime.verificationForAgent(workflow.verification),
+        proposal: workflow.proposal
+      })
+    )
+    const input = s.gateway.calls.find(
+      (call) => call.method === "workboard.cards.create" && call.params.title.startsWith("Review:")
+    )!.params
+    // The real Git worktree is linked to HOST metadata; generic restricted dir dispatch cannot admit it.
+    expect(
+      execFileSync("git", ["-C", worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"], {
+        encoding: "utf8"
+      }).trim()
+    ).toBe(join(s.root, ".git"))
+    expect(input.workspace).toEqual({ kind: "scratch" })
+    const card = s.gateway.cards.find((card) => card.id === reviewId)
+    const pointer = JSON.parse(card.notes)
+    const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+    expect(notes.committedDiff).toMatchObject({
+      baseSha: candidate.baseSha,
+      headSha: candidate.headSha,
+      changesDigest: workflow.riskAssessment!.changesDigest,
+      complete: true,
+      truncated: false,
+      redacted: false
+    })
+    expect(notes.committedDiff.content).toContain("+export const navigation = true")
+    expect(notes.verification.verificationDigest).toBe(nativeVerificationDigest(workflow.verification))
+    expect(notes.proposal.acceptance).toEqual(workflow.proposal.acceptance)
+    expect(input.agentId).toBe(s.policy.reviewerAgentId)
+    expect(workflow.review).toBeUndefined()
+    const count = s.gateway.cards.length
+    const failed = structuredClone(workflow)
+    failed.verification!.checks[0]!.exitCode = 1
+    await expect(s.runtime.stage(workflowId, failed, "Review", "ready", "{}")).rejects.toThrow(
+      "verified committed candidate"
+    )
+    const missing = structuredClone(workflow)
+    missing.verification!.checks = []
+    await expect(s.runtime.stage(workflowId, missing, "Review", "ready", "{}")).rejects.toThrow(
+      "verified committed candidate"
+    )
+    expect(s.gateway.cards).toHaveLength(count)
+  })
+
+  it.each([
+    "matching",
+    "wrong-archive-attempt",
+    "blocked-archive",
+    "changed-submission"
+  ])("reconciles the exact blocked legacy Repair intent without resetting the failed attempt (%s)", async (scenario) => {
+    const s = setup(fixtureSkill, [], true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "bounded repair")
+    const worktree = join(s.root, "blocked-repair-candidate")
+    s.git("worktree", "add", "-b", "blocked-repair-candidate", worktree)
+    writeFileSync(join(worktree, "src/view.ts"), "export const navigation = true\n")
+    const coder = s.gateway.cards.find((card) => card.id === s.runtime.requireWorkflow(workflowId).implementationCardId)
+    coder.status = "running"
+    coder.sessionKey = "blocked-repair-coder"
+    coder.metadata = { automation: { workspace: { path: worktree } } }
+    await s.runtime.submit("coder", coder.sessionKey, workflowId, worktree)
+    coder.status = "done"
+    const w = s.runtime.requireWorkflow(workflowId)
+    const design = s.gateway.cards.find((card) => card.id === w.designCardId)
+    design.status = "running"
+    design.sessionKey = "blocked-repair-design"
+    await s.runtime.quality.designReview(
+      "reviewer",
+      design.sessionKey,
+      workflowId,
+      "approved",
+      "complete design",
+      assessment
+    )
+    design.status = "done"
+    const current = s.runtime.requireWorkflow(workflowId)
+    s.runtime.transitionWorkflow(workflowId, current, "verification")
+    current.verification = fixtureVerification(s, current, workflowId, worktree, 1)
+    const reason = `Verification failed: ${JSON.stringify(current.verification.checks.map((check) => ({ argv: check.argv, exitCode: check.exitCode })))}`
+    const observation = nativeRepairObservation(current, reason)
+    const repairPlan = planNativeRepair(observation, [], 0)
+    const attempt = current.lifecycle!.attempt + 1
+    const oldKey = `workflow:${workflowId}:repair:${attempt}`
+    const legacy = {
+      boardId: s.policy.boardId,
+      title: `Repair 1: ${current.proposal.title}`,
+      status: "blocked",
+      agentId: "coder",
+      idempotencyKey: oldKey,
+      maxRetries: 1,
+      workspace: { kind: "dir", path: worktree },
+      notes: JSON.stringify({
+        workflowId,
+        proposal: current.proposal,
+        reason,
+        candidate: current.candidate,
+        verification: s.runtime.verificationForAgent(current.verification),
+        review: current.review,
+        designReview: current.designReview,
+        repairPlan,
+        instructions:
+          "Repair the preserved implementation within its admitted scope. Make a real correction; do not weaken required tests. The submission broker records the scoped commit. Call autocode_submit with workflowId and worktreePath, then workboard_complete. Independent verification and review will run again."
+      })
+    }
+    const receipt = {
+      lifecycle: current.lifecycle,
+      candidate: current.candidate,
+      verification: current.verification,
+      review: current.review,
+      designReview: current.designReview,
+      riskAssessment: current.riskAssessment,
+      submission: current.submission,
+      signature: nativeContentDigest(reason),
+      reason,
+      observation
+    }
+    const archiveId = `${workflowId}:${attempt}`
+    s.store.put("attempt-evidence", archiveId, receipt)
+    s.store.put("effect-intent", `card:${oldKey}`, { state: "pending", input: legacy })
+    current.blocker = "Error: workspace path is outside the caller allowed workspaces"
+    s.runtime.transitionWorkflow(workflowId, current, "blocked")
+    const oldArchiveVersion = s.store.version("attempt-evidence", archiveId)
+    if (scenario !== "matching") {
+      const changed = structuredClone(receipt)
+      if (scenario === "wrong-archive-attempt") changed.lifecycle!.attempt += 1
+      if (scenario === "blocked-archive") changed.lifecycle!.state = "blocked"
+      if (scenario === "changed-submission") changed.submission!.sessionKey = "another-coder"
+      s.store.put("attempt-evidence", archiveId, changed)
+      await s.runtime.reconcile()
+      expect(s.runtime.requireWorkflow(workflowId).lifecycle!.state).toBe("blocked")
+      expect(s.runtime.requireWorkflow(workflowId).candidate).toEqual(current.candidate)
+      expect(s.runtime.requireWorkflow(workflowId).repairCount ?? 0).toBe(0)
+      expect(s.store.get<any>("effect-intent", `card:${oldKey}`).state).toBe("pending")
+      expect(s.store.get("effect-intent", `card:${oldKey}:managed-source-v1`)).toBeNull()
+      return
+    }
+    await s.runtime.reconcile()
+    const repaired = s.runtime.requireWorkflow(workflowId)
+    expect(repaired.lifecycle!.attempt).toBe(attempt)
+    expect(repaired.repairCount).toBe(1)
+    expect(repaired.blocker).toBeUndefined()
+    expect(repaired.reviewCardId).toBeUndefined()
+    expect(s.store.get("attempt-evidence", archiveId)).toEqual(receipt)
+    expect(s.store.version("attempt-evidence", archiveId)).toBe(oldArchiveVersion)
+    expect(s.store.get<any>("effect-intent", `card:${oldKey}`)).toMatchObject({ state: "superseded", input: legacy })
+    expect(s.store.get<any>("effect-intent", `card:${oldKey}:managed-source-v1`).state).toBe("confirmed")
+    const repair = s.gateway.calls.find(
+      (call) => call.method === "workboard.cards.create" && call.params.title.startsWith("Repair ")
+    )!.params
+    expect(repair.workspace).toEqual({ kind: "worktree", sourcePath: s.policy.repository, sourceBranch: "origin/main" })
+    const pointer = JSON.parse(s.gateway.cards.find((card) => card.id === repaired.implementationCardId).notes)
+    const context = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+    expect(context.failureEvidence[0]).toMatchObject({
+      headSha: receipt.candidate!.headSha,
+      exitCode: 1,
+      stdout: { content: "Synthetic fixture failure log", truncated: false }
+    })
+  })
+
   it("exposes current blocked and legacy scope reservations without treating them as approval", async () => {
     const s = setup()
     const c = await prepare(s)
@@ -520,7 +816,8 @@ describe("native quality investigations", () => {
     const headSha = s.git("rev-parse", "HEAD")
     await s.runtime.quality.classifyCandidate(workflowId, w, { cwd: s.root, baseSha, headSha } as any, "submission")
     writeFileSync(join(s.root, "src/view.ts"), "UNCOMMITTED PRIVATE CONTENT")
-    const evidence = await (s.runtime.quality as any).designEvidence(w)
+    const evidence = await s.runtime.quality.committedReviewEvidence(w)
+    if (!evidence) throw new Error("Committed fixture evidence missing")
     expect(evidence.complete).toBe(complete)
     if (_name === "query reference") {
       expect(evidence.content).toContain("-const detailKey = reportsQueryKeys.previous({ bundleId });")
@@ -531,7 +828,7 @@ describe("native quality investigations", () => {
     expect(Buffer.byteLength(evidence.content)).toBeLessThanOrEqual(64000)
     expect(evidence).toMatchObject({ baseSha, headSha })
     w.riskAssessment!.changesDigest = "mismatched-classification"
-    await expect((s.runtime.quality as any).designEvidence(w)).rejects.toThrow(/differs from classified/)
+    await expect(s.runtime.quality.committedReviewEvidence(w)).rejects.toThrow(/differs from classified/)
   })
   it("requires new evidence for a rejected problem even when its title changes", async () => {
     const s = setup()
@@ -960,6 +1257,20 @@ describe("native quality investigations", () => {
       const pointer = JSON.parse(repairs[0].notes)
       const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
       expect(notes.designReview.assessment).toEqual(rejected)
+      const repairInput = s.gateway.calls.find(
+        (call) => call.method === "workboard.cards.create" && call.params.title.startsWith("Repair ")
+      )!.params
+      expect(repairInput.workspace).toEqual({
+        kind: "worktree",
+        sourcePath: s.policy.repository,
+        sourceBranch: `origin/${s.policy.baseBranch}`
+      })
+      expect(notes.previousCandidate).toMatchObject({
+        headSha: submitted.candidate!.headSha,
+        baseSha: submitted.candidate!.baseSha,
+        complete: true
+      })
+      expect(notes.previousCandidate.content).toContain("+export const navigation = true")
       await s.runtime.reconcile()
       expect(s.gateway.cards.filter((card) => card.title.startsWith("Repair "))).toHaveLength(1)
       expect(repairs[0].status).toBe("ready")

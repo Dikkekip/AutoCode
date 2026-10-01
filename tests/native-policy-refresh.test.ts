@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
-import { NativeCliGateway, NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
 import { nativeLoadedPolicyDigest } from "../packages/core-runtime/src/native/policy-refresh.js"
 import type { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
@@ -497,7 +497,7 @@ it("CLI submits exact saved plan through the native admin RPC", async () => {
   const { registerNativeAutonomyCommands } = await import("../apps/dispatcher-cli/src/native-autonomy.js")
   const program = new Command()
   registerNativeAutonomyCommands(program, { stdout: vi.fn() })
-  const cliRequest = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({ accepted: true })
+  const cliRequest = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ accepted: true })
   await program.parseAsync(
     [
       "native",

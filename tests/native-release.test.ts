@@ -1085,8 +1085,25 @@ describe("verification refresh after a policy change", () => {
     s.runtime.policy.workerConcurrency = 2
     const second = await s.runtime.stage("workflow", s.workflow, "Verify", "blocked", "Verify")
     expect(second).not.toBe(first)
-    const review = await s.runtime.stage("workflow", s.workflow, "Review", "ready", "Review")
+    s.workflow.verification!.plan = planNativeVerification(s.runtime.policy, s.workflow.candidate!.files)
+    reseal(s)
+    // This identity-only test uses a synthetic complete evidence owner; real committed diffs are covered in native-quality.
+    vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
+      baseSha: s.workflow.candidate!.baseSha,
+      headSha: s.workflow.candidate!.headSha,
+      changesDigest: s.workflow.verification!.provenance!.diffDigest,
+      patchSha256: nativeContentDigest("fixture"),
+      content: "fixture",
+      complete: true,
+      truncated: false,
+      redacted: false,
+      trust: "fixture"
+    })
+    const review = await s.runtime.stage("workflow", s.workflow, "Review", "ready", "{}")
     s.workflow.verification!.provenance!.executionId = "fresh-verifier-execution"
-    expect(await s.runtime.stage("workflow", s.workflow, "Review", "ready", "Review")).not.toBe(review)
+    const raw = JSON.stringify(s.workflow.verification!.provenance)
+    writeFileSync(s.workflow.verification!.provenanceArtifact!.path, raw)
+    s.workflow.verification!.provenanceArtifact!.sha256 = nativeContentDigest(raw)
+    expect(await s.runtime.stage("workflow", s.workflow, "Review", "ready", "{}")).not.toBe(review)
   })
 })

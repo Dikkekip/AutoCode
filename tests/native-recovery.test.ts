@@ -230,21 +230,38 @@ it("gives an operator retry two repairs without reusing historical cards or evid
   s.runtime.policy.enabled = true
   s.runtime.policy.mode = "implement-human-review"
   s.runtime.control.change(false)
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: s.runtime.policy.repository, encoding: "utf8" }).trim()
+  git("init", "-b", "main")
+  git("config", "user.name", "Fixture")
+  git("config", "user.email", "fixture@example.invalid")
+  mkdirSync(join(s.runtime.policy.repository, "src"), { recursive: true })
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "baseline\n")
+  git("add", "src/fix.ts")
+  git("commit", "-m", "baseline")
+  const baseSha = git("rev-parse", "HEAD")
+  const heads: string[] = []
+  for (const value of ["first", "second"]) {
+    writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), value + "\n")
+    git("add", "src/fix.ts")
+    git("commit", "-m", value)
+    heads.push(git("rev-parse", "HEAD"))
+  }
   const candidate = {
     cwd: s.runtime.policy.repository,
-    headSha: "a".repeat(40),
-    baseSha: "b".repeat(40),
+    headSha: heads[0]!,
+    baseSha,
     files: ["src/fix.ts"],
     branch: "candidate"
   }
   for (const attempt of [7, 8]) {
-    const repairedCandidate = { ...candidate, headSha: (attempt === 7 ? "a" : "c").repeat(40) }
+    const repairedCandidate = { ...candidate, headSha: heads[attempt - 7]! }
     retried.candidate = repairedCandidate
     await s.runtime.requestRepair("workflow", retried, "Add the missing acceptance assertion")
     expect(retried.lifecycle?.attempt).toBe(attempt)
     expect(retried.repairCount).toBe(attempt - 6)
     expect(s.cards.find((card) => card.id === retried.implementationCardId).key).toBe(
-      `workflow:workflow:repair:${attempt}`
+      `workflow:workflow:repair:${attempt}:managed-source-v1`
     )
     expect(s.store.get<any>("attempt-evidence", `workflow:${attempt}`).candidate).toEqual(repairedCandidate)
   }

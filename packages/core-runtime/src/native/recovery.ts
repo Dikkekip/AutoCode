@@ -54,7 +54,12 @@ export function planNativeRecovery(
     )
   )
     blockers.push("Stop or finish owned Workboard execution and return runnable cards to blocked before replanning")
-  if (snapshot.operations.some((op) => (op.value as { state?: string })?.state !== "confirmed"))
+  if (
+    snapshot.operations.some((op) => {
+      const value = op.value as { state?: string; supersessionClosed?: boolean }
+      return value?.state !== "confirmed" && !(value?.state === "superseded" && value.supersessionClosed === true)
+    })
+  )
     blockers.push(
       "Reconcile uncertain external effects against remote truth before recovery; never delete or replay the journal"
     )

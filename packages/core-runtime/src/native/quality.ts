@@ -94,7 +94,7 @@ export class NativeQualityRuntime {
   designApproved(w: NativeWorkflow): boolean {
     return w.designReview?.verdict === "approved" && w.designReview.digest === this.designDigest(w)
   }
-  private async designEvidence(w: NativeWorkflow) {
+  async committedReviewEvidence(w: NativeWorkflow) {
     const risk = w.riskAssessment
     if (!risk) return null
     const { baseSha, headSha, changesDigest } = risk
@@ -175,7 +175,7 @@ export class NativeQualityRuntime {
       return true
     }
     this.runtime.transitionWorkflow(id, w, "design_wait")
-    const committedDiff = await this.designEvidence(w).catch(() => ({
+    const committedDiff = await this.committedReviewEvidence(w).catch(() => ({
       baseSha: w.riskAssessment?.baseSha,
       headSha: w.riskAssessment?.headSha,
       changesDigest: w.riskAssessment?.changesDigest,

@@ -412,6 +412,23 @@ describe("native autonomy policy and creative provenance", () => {
       store = new NativeEvidenceStore(join(p.repository, "evidence.db"))
     try {
       const runtime = new NativeAutonomyRuntime(p, gateway, store)
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: p.repository, encoding: "utf8" }).trim()
+      git("init", "-b", "main")
+      git("config", "user.name", "Fixture")
+      git("config", "user.email", "fixture@example.invalid")
+      mkdirSync(join(p.repository, "src"), { recursive: true })
+      writeFileSync(join(p.repository, "src/a"), "baseline\n")
+      git("add", "src/a")
+      git("commit", "-m", "baseline")
+      const baseSha = git("rev-parse", "HEAD")
+      writeFileSync(join(p.repository, "src/a"), "first correction\n")
+      git("add", "src/a")
+      git("commit", "-m", "first")
+      const headSha = git("rev-parse", "HEAD")
+      writeFileSync(join(p.repository, "src/a"), "second correction\n")
+      git("add", "src/a")
+      git("commit", "-m", "second")
+      const secondHead = git("rev-parse", "HEAD")
       const workflow = {
         proposal: proposal(),
         rootCardId: "root",
@@ -419,8 +436,8 @@ describe("native autonomy policy and creative provenance", () => {
         stageCards: {},
         candidate: {
           cwd: p.repository,
-          headSha: "a".repeat(40),
-          baseSha: "b".repeat(40),
+          headSha,
+          baseSha,
           files: ["src/a"],
           branch: "candidate"
         }
@@ -433,7 +450,7 @@ describe("native autonomy policy and creative provenance", () => {
       await expect(runtime.requestRepair("repair-workflow", workflow, "test failed")).rejects.toThrow(/stalled/)
       expect(gateway.cards).toHaveLength(1)
       expect(store.list("attempt-evidence")).toHaveLength(1)
-      workflow.candidate = { ...original, headSha: "c".repeat(40) }
+      workflow.candidate = { ...original, headSha: secondHead }
       await runtime.requestRepair("repair-workflow", workflow, "test failed")
       const effect = store.list<any>("effect-intent").find((row) => row.value.input?.title.startsWith("Repair 2:"))
       expect(JSON.parse(effect!.value.input.notes).repairPlan).toMatchObject({

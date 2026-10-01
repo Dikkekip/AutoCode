@@ -11,6 +11,7 @@ import {
   transitionNativeLifecycle,
   validateNativeLifecycle
 } from "@openclaw/domain"
+import { preservedNativeRepairLifecycle } from "./repair-intent.js"
 export interface NativeLease {
   readonly id: string
   readonly owner: string
@@ -218,7 +219,10 @@ export class NativeEvidenceStore {
                   ? recoverNativeLifecycle(previous.lifecycle, value)
                   : value.lifecycle.attemptId === previous.lifecycle.attemptId
                     ? transitionNativeLifecycle(previous.lifecycle, value.lifecycle.state, value)
-                    : nextNativeAttempt(previous.lifecycle, value)
+                    : nextNativeAttempt(
+                        preservedNativeRepairLifecycle(this, write.id, previous, value, event) ?? previous.lifecycle,
+                        value
+                      )
               if (JSON.stringify(expectedLifecycle) !== JSON.stringify(value.lifecycle))
                 throw new Error("Invalid native attempt transition")
             }
