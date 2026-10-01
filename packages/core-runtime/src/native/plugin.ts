@@ -15,7 +15,7 @@ import {
   planNativePolicyRefresh
 } from "./policy-refresh.js"
 import { assertNativeMode } from "./promotion-mode.js"
-import { createNativeOperatorRequest } from "./requests.js"
+import { applyNativeRequestDeferral, createNativeOperatorRequest, planNativeRequestDeferral } from "./requests.js"
 import { NativeAutonomyRuntime } from "./runtime.js"
 import { stopNativeRuntimeCalls, withNativeRuntimeCall, withNativeRuntimeRefresh } from "./runtime-lifetime.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
@@ -397,6 +397,44 @@ export function registerNativeAutonomyPlugin(api: any): void {
       }
     },
     { scope: "operator.read" }
+  )
+  registerMethod(
+    "autocode.requests.defer.plan",
+    async ({ params, respond }: any) => {
+      try {
+        if (Object.keys(params).some((key) => !["boardId", "requestId", "reason"].includes(key)))
+          throw new Error("Unknown request deferral plan argument")
+        respond(true, planNativeRequestDeferral(runtime(params.boardId), params.requestId, params.reason))
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.read" }
+  )
+  registerMethod(
+    "autocode.requests.defer.apply",
+    async ({ params, client, respond }: any) => {
+      try {
+        if (Object.keys(params).some((key) => !["boardId", "plan"].includes(key)))
+          throw new Error("Unknown request deferral apply argument")
+        if (!client?.connect?.scopes?.includes("operator.admin")) throw new Error("Operator admin scope required")
+        const operatorId = client.connect.device?.id ?? client.connect.client?.id
+        if (typeof operatorId !== "string" || !operatorId.trim()) throw new Error("Verified operator identity required")
+        const r = runtime(params.boardId)
+        respond(
+          true,
+          await r.withOwnership(async () =>
+            applyNativeRequestDeferral(r, params.plan, {
+              operatorId,
+              rationale: params.plan?.reason
+            })
+          )
+        )
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.admin" }
   )
   registerMethod(
     "autocode.dashboard",
