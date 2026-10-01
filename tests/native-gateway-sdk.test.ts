@@ -15,6 +15,60 @@ it("uses the public in-process Gateway call with the existing method deadlines",
   expect(call.mock.calls[1]?.[1]).toEqual({ json: true, timeout: "30000" })
 })
 
+it("retains a single start accepted after cold workspace preparation exceeds thirty seconds", async () => {
+  vi.useFakeTimers()
+  try {
+    const accepted = { ok: true, runId: "accepted-run", sessionKey: "agent:coder:workboard-card" }
+    const call = vi.fn<NativeGatewaySdkCall>(
+      async (_method, options) =>
+        new Promise((resolve, reject) => {
+          const deadline = setTimeout(() => reject(new Error("Gateway request timed out")), Number(options.timeout))
+          setTimeout(() => {
+            clearTimeout(deadline)
+            resolve(accepted)
+          }, 30_824)
+        })
+    )
+    const gateway = new NativeSdkGateway("/usr/bin/openclaw", async () => call)
+    const result = gateway.request("workboard.cards.start", { id: "card" }).then(
+      (value) => ({ status: "accepted", value }),
+      (error: Error) => ({ status: "failed", message: error.message })
+    )
+    await vi.advanceTimersByTimeAsync(30_824)
+    expect(await result).toEqual({ status: "accepted", value: accepted })
+    expect(call).toHaveBeenCalledExactlyOnceWith(
+      "workboard.cards.start",
+      { json: true, timeout: "180000" },
+      { id: "card" },
+      { scopes: ["operator.write"], progress: false }
+    )
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it("does not retry a start when its bounded deadline expires with acceptance unknown", async () => {
+  vi.useFakeTimers()
+  try {
+    const call = vi.fn<NativeGatewaySdkCall>(
+      async (_method, options) =>
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new Error("Gateway request timed out")), Number(options.timeout))
+        })
+    )
+    const gateway = new NativeSdkGateway("/usr/bin/openclaw", async () => call)
+    const result = gateway.request("workboard.cards.start", { id: "card" }).catch((error: Error) => error)
+    await vi.advanceTimersByTimeAsync(180_000)
+    expect(await result).toMatchObject({
+      message: "Native RPC workboard.cards.start failed: Gateway request timed out"
+    })
+    expect(call).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it("reports SDK failures without exposing the executable path", async () => {
   const gateway = new NativeSdkGateway("/private/bin/openclaw", async () => async () => {
     throw new Error("Gateway unavailable")
