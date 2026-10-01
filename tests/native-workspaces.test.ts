@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
@@ -39,8 +39,7 @@ function setup() {
   const adapter = new NativeWorkspaceGateway(
     gateway as any,
     { repository: root, baseBranch: "main", boardId: "board", workerConcurrency: 1, coderAgentId: "coder" } as any,
-    authorize,
-    worktrees
+    authorize
   )
   return {
     root,
@@ -123,27 +122,6 @@ it("does not let an expired historical claim block fresh work", async () => {
   expect(s.calls.some(([method]) => method === "workboard.cards.release")).toBe(false)
   expect(s.calls.some(([method]) => method === "workboard.cards.start")).toBe(true)
 })
-it("binds the exact managed sandbox root and starts only the prepared card", async () => {
-  const s = setup()
-  await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
-  expect(s.worktrees.create).toHaveBeenCalledWith({
-    repoRoot: s.root,
-    name: "wb-card",
-    baseRef: "origin/main",
-    ownerKind: "workboard",
-    ownerId: "card"
-  })
-  const patch = s.calls.find(([method]) => method === "config.patch")![1]
-  expect(patch.baseHash).toBe("revision")
-  expect(JSON.parse(patch.raw)).toEqual({ agents: { entries: { coder: { workspace: s.root } } } })
-  expect(s.calls.slice(-2)).toEqual([
-    [
-      "workboard.cards.update",
-      { id: "card", expectedUpdatedAt: 1, patch: { workspace: { kind: "dir", path: s.root } } }
-    ],
-    ["workboard.cards.start", { id: "card" }]
-  ])
-})
 it("does not rebind a coder with active work on any board", async () => {
   const s = setup()
   s.busy()
@@ -161,10 +139,10 @@ it("leaves scratch investigation workspaces under Workboard ownership", async ()
   expect(s.calls.some(([method]) => method === "config.patch" || method === "workboard.cards.update")).toBe(false)
   expect(s.calls.at(-1)).toEqual(["workboard.cards.start", { id: "card" }])
 })
-it("rechecks dispatch authority after asynchronous workspace preparation", async () => {
+it("rechecks dispatch authority after awaited native queue reads", async () => {
   const s = setup()
   s.authorize.mockImplementation(() => {
-    if (s.calls.some(([method]) => method === "workboard.cards.update")) throw new Error("paused")
+    throw new Error("paused")
   })
   await expect(
     s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
@@ -226,26 +204,18 @@ it("starts three distinct coders in isolated worktrees while keeping busy-agent 
       return { started: true }
     })
   }
-  const worktrees = {
-    create: vi.fn(async ({ name }: { name: string }) => {
-      const path = join(s.root, name)
-      mkdirSync(path)
-      return { path }
-    })
-  }
   const adapter = new NativeWorkspaceGateway(
     gateway as any,
     { repository: s.root, baseBranch: "main", boardId: "board", workerConcurrency: 3 } as any,
-    () => {},
-    worktrees
+    () => {}
   )
   expect(
     ((await adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 3 })) as any).started
   ).toHaveLength(3)
-  const patches = calls
-    .filter(([method]) => method === "config.patch")
-    .map(([, args]) => JSON.parse(args.raw).agents.entries)
-  expect(patches).toEqual(cards.map((c) => ({ [c.agentId]: { workspace: join(s.root, `wb-${c.id}`) } })))
+  expect(calls.some(([method]) => ["config.get", "config.patch", "workboard.cards.update"].includes(method))).toBe(
+    false
+  )
+  expect(cards.every((c) => c.metadata.automation.workspace.kind === "worktree")).toBe(true)
   expect(
     ((await adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 3 })) as any).started
   ).toHaveLength(0)
@@ -275,89 +245,95 @@ it("does not dispatch a different coder into another active coder's preserved ca
   })
 })
 
-const capacityError = () =>
-  new Error(
-    "Insufficient disk space near /managed/worktrees for worktree allocation: 11 GiB available; approximately 12 GiB required including safety reserve. Free caches or archive/remove unused worktrees, then retry."
+it("preserves native start failures without allocation or configuration fallback", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  const failure = new Error("Native managed projection failed")
+  s.gateway.request.mockImplementation(async (method, params) => {
+    if (method === "workboard.cards.start") throw failure
+    return original(method, params)
+  })
+  await expect(
+    s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+  ).rejects.toBe(failure)
+  expect(s.worktrees.create).not.toHaveBeenCalled()
+  expect(s.calls.some(([method]) => ["config.get", "config.patch", "workboard.cards.update"].includes(method))).toBe(
+    false
   )
-function withReadyResearch(s: ReturnType<typeof setup>) {
+})
+it("defers researchers with an unexpired native claim without resetting their card", async () => {
+  const s = setup()
+  s.card.agentId = "researcher"
+  s.card.metadata.automation.workspace.kind = "scratch"
   const original = s.gateway.request.getMockImplementation()!
   s.gateway.request.mockImplementation(async (method, params) => {
-    if (method === "workboard.cards.list" && params.boardId)
+    if (method === "workboard.cards.list" && !params.boardId)
       return {
         cards: [
-          s.card,
           {
-            id: "research",
-            title: "Investigate",
-            status: "ready",
+            id: "prior",
+            status: "blocked",
             agentId: "researcher",
-            metadata: { automation: { workspace: { kind: "scratch" } } }
+            metadata: { claim: { ownerId: "researcher", expiresAt: Date.now() + 100000 } }
           }
         ]
       } as any
     return original(method, params)
   })
-}
-it("defers only the disk-constrained worktree while starting independent scratch work within the start limit", async () => {
-  const s = setup()
-  withReadyResearch(s)
-  const originalCard = JSON.stringify(s.card)
-  s.worktrees.create.mockRejectedValue(capacityError())
-  const result = await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
-  expect(result.deferred).toEqual([{ cardId: "card", reason: "worktree-capacity" }])
-  expect(result.started).toHaveLength(1)
-  expect(result.startedCardIds).toEqual(["research"])
-  expect(s.calls.filter(([method]) => method === "workboard.cards.start")).toEqual([
-    ["workboard.cards.start", { id: "research" }]
-  ])
-  expect(s.calls.some(([method]) => ["config.patch", "workboard.cards.update"].includes(method))).toBe(false)
-  expect(JSON.stringify(s.card)).toBe(originalCard)
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })).toEqual({
+    started: []
+  })
+  expect(
+    s.calls.some(([method]) => ["workboard.cards.start", "workboard.cards.release", "config.patch"].includes(method))
+  ).toBe(false)
 })
-it.each([
-  new Error("allocator permission denied"),
-  new Error("Insufficient disk space near unrecognized diagnostic"),
-  new Error(capacityError().message.replace("11 GiB", "11 mystery-units")),
-  new Error("prefix " + capacityError().message),
-  Object.assign(capacityError(), { name: "NativeControlRevoked" })
-])("does not suppress an unknown allocator failure: %s", async (error) => {
+
+it("preserves native Workboard project custody without changing agent configuration", async () => {
   const s = setup()
-  withReadyResearch(s)
-  s.worktrees.create.mockRejectedValue(error)
-  await expect(
-    s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
-  ).rejects.toBe(error)
+  const workspace = JSON.stringify(s.card.metadata.automation.workspace)
+  await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+  expect(s.worktrees.create).not.toHaveBeenCalled()
+  expect(s.calls.some(([method]) => ["config.get", "config.patch", "workboard.cards.update"].includes(method))).toBe(
+    false
+  )
+  expect(JSON.stringify(s.card.metadata.automation.workspace)).toBe(workspace)
+  expect(s.calls.at(-1)).toEqual(["workboard.cards.start", { id: "card" }])
+})
+
+it("holds an assigned agent even when the native claimant has a different owner ID", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method, params) => {
+    if (method === "workboard.cards.list" && !params.boardId)
+      return {
+        cards: [
+          {
+            id: "other-board",
+            agentId: "coder",
+            status: "blocked",
+            metadata: { claim: { ownerId: "operator-worker" } }
+          }
+        ]
+      } as any
+    return original(method, params)
+  })
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })).toEqual({
+    started: []
+  })
   expect(s.calls.some(([method]) => method === "workboard.cards.start")).toBe(false)
 })
-it("honors revoked authorization after a capacity deferral before starting other work", async () => {
+it.each([
+  { hasMore: true },
+  { nextCursor: "next" }
+])("rejects an incomplete all-board inventory %j", async (pagination) => {
   const s = setup()
-  withReadyResearch(s)
-  s.worktrees.create.mockImplementation(async () => {
-    s.authorize.mockImplementation(() => {
-      throw new Error("paused")
-    })
-    throw capacityError()
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method, params) => {
+    if (method === "workboard.cards.list" && !params.boardId) return { cards: [], ...pagination } as any
+    return original(method, params)
   })
   await expect(
     s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
-  ).rejects.toThrow("paused")
+  ).rejects.toThrow("listing unavailable")
   expect(s.calls.some(([method]) => method === "workboard.cards.start")).toBe(false)
-})
-
-it.each([
-  "0 MiB",
-  "512 MiB",
-  "9.9 GiB"
-])("continues scratch research for allocator available-space format %s", async (available) => {
-  const s = setup()
-  withReadyResearch(s)
-  s.worktrees.create.mockRejectedValue(
-    new Error(capacityError().message.replace("11 GiB available", `${available} available`))
-  )
-  const result = await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
-  expect(result.deferred).toEqual([{ cardId: "card", reason: "worktree-capacity" }])
-  expect(result.started).toHaveLength(1)
-  expect(result.startedCardIds).toEqual(["research"])
-  expect(s.calls.filter(([method]) => method === "workboard.cards.start")).toEqual([
-    ["workboard.cards.start", { id: "research" }]
-  ])
 })

@@ -82,18 +82,13 @@ export function registerNativeAutonomyPlugin(api: any): void {
   const makeRuntime = (policy: NativeAutonomyPolicy, store: NativeEvidenceStore) =>
     new NativeAutonomyRuntime(
       policy,
-      new NativeWorkspaceGateway(
-        gateway,
-        policy,
-        () => {
-          const owner = instances.get(policy.boardId)
-          if (!owner?.hasOwnership || owner.policy !== policy)
-            throw new Error("Native workspace dispatch generation unavailable")
-          owner.control.assert()
-          store.authorizeEffect()
-        },
-        api.runtime?.worktrees
-      ),
+      new NativeWorkspaceGateway(gateway, policy, () => {
+        const owner = instances.get(policy.boardId)
+        if (!owner?.hasOwnership || owner.policy !== policy)
+          throw new Error("Native workspace dispatch generation unavailable")
+        owner.control.assert()
+        store.authorizeEffect()
+      }),
       store,
       (api.pluginConfig?.humanInput ?? []).find((item: any) => item.boardId === policy.boardId)
     )
