@@ -35,7 +35,8 @@ function setup(candidate?: NativeWorkflow["candidate"], initialAttempt = 0) {
               id: `card-${cards.length}`,
               title: params.title,
               status: params.status,
-              key: params.idempotencyKey
+              key: params.idempotencyKey,
+              metadata: { automation: { idempotencyKey: params.idempotencyKey } }
             }
             cards.push(card)
           }
@@ -65,6 +66,53 @@ function setup(candidate?: NativeWorkflow["candidate"], initialAttempt = 0) {
   }
   store.put("workflow", "workflow", workflow)
   return { store, runtime, cards, workflow, requests }
+}
+async function pendingRecovery() {
+  const s = setup(undefined, 5)
+  s.runtime.policy.enabled = true
+  s.runtime.control.change(true)
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: s.runtime.policy.repository,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim()
+  git("init")
+  git("config", "user.name", "Fixture")
+  git("config", "user.email", "fixture@example.invalid")
+  mkdirSync(join(s.runtime.policy.repository, "src"))
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "before")
+  git("add", "src")
+  git("commit", "-m", "base")
+  const baseSha = git("rev-parse", "HEAD")
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "after")
+  git("add", "src")
+  git("commit", "-m", "candidate")
+  s.workflow.candidate = {
+    cwd: "/retired/candidate",
+    baseSha,
+    headSha: git("rev-parse", "HEAD"),
+    files: ["src/fix.ts"],
+    branch: "preserved"
+  }
+  s.workflow.lifecycle = transitionNativeLifecycle(s.workflow.lifecycle!, "blocked", s.workflow)
+  s.store.put("workflow", "workflow", s.workflow)
+  const request = s.runtime.gateway.request.bind(s.runtime.gateway)
+  s.runtime.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.create") throw new Error("Workspace source outside caller grant")
+    return request(method, params)
+  }
+  const reason = "Recover preserved candidate after repairing admission"
+  const original = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
+  await expect(s.runtime.applyWorkflowRecovery(original, "operator")).rejects.toThrow(/outside caller/)
+  s.runtime.gateway.request = request
+  s.runtime.control.change(false)
+  s.runtime.control.change(true)
+  const plan = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
+  const intentId = "card:recovery:workflow:attempt:6"
+  const pending = s.store.get<any>("effect-intent", intentId)
+  const archiveId = JSON.parse(pending.input.notes).previousCandidate.archiveRecordId as string
+  return { ...s, request, original, plan, intentId, pending, archiveId }
 }
 it("explains state and produces a deterministic plan without writing records or events", async () => {
   const s = setup()
@@ -232,6 +280,249 @@ it("rejects recovery after the control changes during blocked-card creation", as
   expect(s.store.get<any>("workflow", "workflow").lifecycle.state).toBe("blocked")
   expect(s.store.get<any>("recovery", plan.digest).state).toBe("prepared")
   expect(s.cards[2].status).toBe("blocked")
+})
+
+it("reconciles an unaccepted recovery card intent after a fresh plan without rewriting its candidate evidence", async () => {
+  const s = setup(undefined, 5)
+  s.runtime.policy.enabled = true
+  s.runtime.control.change(true)
+  const git = (...args: string[]) =>
+    execFileSync("git", args, {
+      cwd: s.runtime.policy.repository,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    }).trim()
+  git("init")
+  git("config", "user.name", "Fixture")
+  git("config", "user.email", "fixture@example.invalid")
+  mkdirSync(join(s.runtime.policy.repository, "src"))
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "before")
+  git("add", "src")
+  git("commit", "-m", "base")
+  const baseSha = git("rev-parse", "HEAD")
+  writeFileSync(join(s.runtime.policy.repository, "src/fix.ts"), "after")
+  git("add", "src")
+  git("commit", "-m", "candidate")
+  s.workflow.candidate = {
+    cwd: "/retired/candidate",
+    baseSha,
+    headSha: git("rev-parse", "HEAD"),
+    files: ["src/fix.ts"],
+    branch: "preserved-candidate"
+  }
+  s.workflow.lifecycle = transitionNativeLifecycle(s.workflow.lifecycle!, "blocked", s.workflow)
+  s.store.put("workflow", "workflow", s.workflow)
+  const originalWorkflow = s.store.get<NativeWorkflow>("workflow", "workflow")!
+  const request = s.runtime.gateway.request.bind(s.runtime.gateway)
+  s.runtime.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.create") throw new Error("Workspace source outside caller grant")
+    return request(method, params)
+  }
+  const reason = "Recover the preserved commit after workspace admission is repaired"
+  const firstPlan = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
+  expect(firstPlan.allowed).toBe(true)
+  await expect(s.runtime.applyWorkflowRecovery(firstPlan, "operator")).rejects.toThrow(/outside caller/)
+  const intentId = "card:recovery:workflow:attempt:6"
+  const pending = s.store.get<any>("effect-intent", intentId)
+  const prepared = s.store.get<any>("recovery", firstPlan.digest)
+  const notes = JSON.parse(pending.input.notes)
+  expect(pending.state).toBe("pending")
+  expect(pending.card).toBeUndefined()
+  expect(notes.previousCandidate.complete).toBe(true)
+  expect(notes.previousCandidate.content).toContain("+after")
+  expect(s.store.get("attempt-history", notes.previousCandidate.archiveRecordId)).toBeNull()
+  expect(s.store.get("workflow", "workflow")).toEqual(originalWorkflow)
+  expect(s.cards).toHaveLength(2)
+
+  s.runtime.control.change(false)
+  s.runtime.control.change(true)
+  const freshPlan = await s.runtime.planWorkflowRecovery("workflow", "retry", reason)
+  expect(freshPlan.allowed).toBe(true)
+  expect(freshPlan.digest).not.toBe(firstPlan.digest)
+  await expect(s.runtime.applyWorkflowRecovery(firstPlan, "operator")).rejects.toThrow(/stale|edited/)
+  s.runtime.gateway.request = request
+  await expect(s.runtime.applyWorkflowRecovery(freshPlan, "operator")).resolves.toMatchObject({ applied: true })
+
+  const confirmed = s.store.get<any>("effect-intent", intentId)
+  expect(confirmed.state).toBe("confirmed")
+  expect(confirmed.input).toEqual(pending.input)
+  expect(s.store.get("recovery", firstPlan.digest)).toEqual(prepared)
+  expect(s.store.get("attempt-history", notes.previousCandidate.archiveRecordId)).toEqual(originalWorkflow)
+  const recovered = s.runtime.requireWorkflow("workflow")
+  expect(recovered.lifecycle?.attempt).toBe(6)
+  expect(recovered.recovery).toMatchObject({ planDigest: freshPlan.digest, fromAttemptId: "workflow:attempt:5" })
+  expect(recovered.recovery?.reconciledIntent).toEqual({ id: intentId, preparedPlanDigest: firstPlan.digest })
+  expect(s.cards).toHaveLength(3)
+  expect(s.cards.find((card) => card.id === recovered.implementationCardId).status).toBe("blocked")
+  expect(s.requests).not.toContain("workboard.cards.dispatchWithOptions")
+  await expect(s.runtime.applyWorkflowRecovery(freshPlan, "operator")).resolves.toMatchObject({ applied: true })
+  expect(s.cards).toHaveLength(3)
+})
+
+it.each([
+  "source",
+  "agent",
+  "reason",
+  "candidate",
+  "receipt",
+  "archive"
+])("preserves a pending recovery and rejects changed %s evidence", async (change) => {
+  const s = await pendingRecovery()
+  if (change === "source") s.pending.input.workspace.sourcePath = "/different/repository"
+  if (change === "agent") s.pending.input.agentId = "different-coder"
+  if (change === "reason" || change === "candidate") {
+    const notes = JSON.parse(s.pending.input.notes)
+    if (change === "reason") notes.recoveryReason = "Different task"
+    else notes.previousCandidate.content += "\nChanged patch"
+    s.pending.input.notes = JSON.stringify(notes)
+  }
+  if (["source", "agent", "reason", "candidate"].includes(change)) s.store.put("effect-intent", s.intentId, s.pending)
+  if (change === "receipt") s.store.put("recovery", s.original.digest, { state: "applied" })
+  if (change === "archive") s.store.put("attempt-history", s.archiveId, { unrelated: true })
+  const before = s.store.get("effect-intent", s.intentId)
+  await expect(s.runtime.applyWorkflowRecovery(s.plan, "operator")).rejects.toThrow(/cannot be reconciled/)
+  expect(s.store.get("effect-intent", s.intentId)).toEqual(before)
+  expect(s.store.get("workflow", "workflow")).toEqual(s.workflow)
+  expect(s.cards).toHaveLength(2)
+})
+
+it.each([
+  "accepted",
+  "uncertain",
+  "partial"
+])("rejects %s remote custody before pending recovery replay", async (state) => {
+  const s = await pendingRecovery()
+  s.runtime.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.list" && !params.boardId) {
+      if (state === "partial") return { cards: [], hasMore: true } as any
+      return {
+        cards: [
+          ...s.cards,
+          {
+            id: "accepted-elsewhere",
+            boardId: "other-board",
+            title: s.pending.input.title,
+            status: "blocked",
+            ...(state === "accepted"
+              ? { metadata: { automation: { idempotencyKey: s.pending.input.idempotencyKey } } }
+              : {})
+          }
+        ]
+      } as any
+    }
+    return s.request(method, params)
+  }
+  await expect(s.runtime.applyWorkflowRecovery(s.plan, "operator")).rejects.toThrow(
+    /acceptance is uncertain|complete all-card/
+  )
+  expect(s.store.get("effect-intent", s.intentId)).toEqual(s.pending)
+  expect(s.cards).toHaveLength(2)
+})
+
+it.each([
+  { hasMore: "false" },
+  { hasMore: null },
+  { nextOffset: 0 },
+  { nextOffset: 2 },
+  { totalCount: 3 },
+  { totalCount: -1 },
+  { totalCount: 2.5 },
+  { totalCount: "2" },
+  { totalCount: null }
+])("rejects an incomplete or invalid advertised card inventory %j", async (advertised) => {
+  const s = await pendingRecovery()
+  s.runtime.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.list" && !params.boardId) return { cards: s.cards, ...advertised } as any
+    return s.request(method, params)
+  }
+  await expect(s.runtime.applyWorkflowRecovery(s.plan, "operator")).rejects.toThrow(/complete all-card/)
+  expect(s.store.get("effect-intent", s.intentId)).toEqual(s.pending)
+  expect(s.cards).toHaveLength(2)
+})
+
+it("accepts a complete advertised all-card inventory", async () => {
+  const s = await pendingRecovery()
+  s.runtime.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.list" && !params.boardId)
+      return { cards: s.cards, hasMore: false, nextCursor: null, nextOffset: null, totalCount: s.cards.length } as any
+    return s.request(method, params)
+  }
+  await expect(s.runtime.applyWorkflowRecovery(s.plan, "operator")).resolves.toMatchObject({ applied: true })
+  expect(s.cards).toHaveLength(3)
+})
+
+it.each([
+  "control",
+  "intent",
+  "receipt",
+  "archive",
+  "host"
+])("rechecks %s authority after the remote absence read yields", async (change) => {
+  const s = await pendingRecovery()
+  let hostCurrent = true
+  s.runtime.gateway.request = async (method, params) => {
+    const result = await s.request(method, params)
+    if (method === "workboard.cards.list" && !params.boardId) {
+      if (change === "control") s.runtime.control.change(true)
+      if (change === "intent") s.store.put("effect-intent", s.intentId, s.pending)
+      if (change === "receipt") s.store.put("recovery", s.original.digest, s.store.get("recovery", s.original.digest))
+      if (change === "archive") s.store.put("attempt-history", s.archiveId, s.workflow)
+      if (change === "host") hostCurrent = false
+    }
+    return result
+  }
+  await expect(
+    s.store.withEffectAuthority(
+      () => {
+        if (!hostCurrent) throw new Error("Host authority revoked")
+      },
+      () => s.runtime.applyWorkflowRecovery(s.plan, "operator")
+    )
+  ).rejects.toThrow(/changed|revoked/)
+  expect(s.cards).toHaveLength(2)
+  expect(s.store.get("workflow", "workflow")).toEqual(s.workflow)
+  expect(s.store.get<any>("effect-intent", s.intentId).state).toBe("pending")
+})
+
+it("retains strict generic card intent equality", async () => {
+  const s = setup()
+  const input = { boardId: "board", title: "Original", status: "blocked", idempotencyKey: "generic-key" }
+  s.store.put("effect-intent", "card:generic-key", { state: "pending", input })
+  await expect(s.runtime.createCard({ ...input, title: "Changed" })).rejects.toThrow(/Card intent changed/)
+  expect(s.cards).toHaveLength(2)
+})
+
+it("preserves a remotely accepted recovery whose creation response was lost", async () => {
+  const s = await pendingRecovery()
+  s.runtime.gateway.request = async (method, params) => {
+    const result = await s.request(method, params)
+    if (method === "workboard.cards.create") throw new Error("Accepted response lost")
+    return result
+  }
+  await expect(s.runtime.createCard(s.pending.input)).rejects.toThrow(/Accepted response lost/)
+  expect(s.cards).toHaveLength(3)
+  s.runtime.gateway.request = s.request
+  await expect(s.runtime.applyWorkflowRecovery(s.plan, "operator")).rejects.toThrow(/acceptance is uncertain/)
+  expect(s.cards).toHaveLength(3)
+  expect(s.store.get("effect-intent", s.intentId)).toEqual(s.pending)
+  expect(s.store.get("workflow", "workflow")).toEqual(s.workflow)
+})
+
+it("rechecks preserved intent evidence at the final recovery commit after card acceptance", async () => {
+  const s = await pendingRecovery()
+  let accepted = false
+  s.runtime.gateway.request = async (method, params) => {
+    const result = await s.request(method, params)
+    if (method === "workboard.cards.create") accepted = true
+    if (accepted && method === "workboard.cards.list")
+      s.store.put("recovery", s.original.digest, s.store.get("recovery", s.original.digest))
+    return result
+  }
+  await expect(s.runtime.applyWorkflowRecovery(s.plan, "operator")).rejects.toThrow(/evidence changed/)
+  expect(s.cards).toHaveLength(3)
+  expect(s.store.get<any>("effect-intent", s.intentId)).toMatchObject({ state: "confirmed", input: s.pending.input })
+  expect(s.store.get("workflow", "workflow")).toEqual(s.workflow)
+  expect(s.store.get("attempt-history", s.archiveId)).toBeNull()
 })
 
 it("freezes only exact owned running sessions without pretending accepted abort is termination", async () => {
