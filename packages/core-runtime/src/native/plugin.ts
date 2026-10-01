@@ -5,6 +5,7 @@ import { authorizeNativeTool, resolveNativeToolRuntime } from "./broker.js"
 import { configuredNativeModels } from "./capabilities.js"
 import { registerNativeCapabilityOperatorMethods } from "./capability-operator.js"
 import { loadNativePolicy, nativeDoctor } from "./doctor.js"
+import { applyNativeEffectCustody, planNativeEffectCustody } from "./effect-custody.js"
 import { NativeSdkGateway } from "./gateway.js"
 import {
   applyNativePolicyRefresh,
@@ -240,6 +241,45 @@ export function registerNativeAutonomyPlugin(api: any): void {
       return configuredNativeModels(response.config ?? response.parsed, policy)
     }
   })
+  registerMethod(
+    "autocode.effects.hold.plan",
+    async ({ params, respond }: any) => {
+      try {
+        if (Object.keys(params).some((key) => !["boardId", "intentIds", "reason"].includes(key)))
+          throw new Error("Unknown custody plan argument")
+        respond(true, await planNativeEffectCustody(runtime(params.boardId), params.intentIds, params.reason))
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.read" }
+  )
+  // Shares the host's exclusive native-call barrier; never retires or restarts the runtime.
+  api.registerGatewayMethod(
+    "autocode.effects.hold.apply",
+    async ({ params, client, respond }: any) => {
+      try {
+        if (!client?.connect?.scopes?.includes("operator.admin")) throw new Error("Operator admin scope required")
+        const operatorId = client.connect.device?.id ?? client.connect.client?.id
+        if (typeof operatorId !== "string" || !operatorId.trim()) throw new Error("Verified operator identity required")
+        if (Object.keys(params).some((key) => !["boardId", "plan"].includes(key)))
+          throw new Error("Unknown custody apply argument")
+        const r = runtime(params.boardId)
+        respond(
+          true,
+          await withNativeRuntimeRefresh(
+            r,
+            () => activeInstances.get(params.boardId) === r,
+            async (_retire, assertGeneration) =>
+              r.withOwnership(() => applyNativeEffectCustody(r, params.plan, operatorId, assertGeneration))
+          )
+        )
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.admin" }
+  )
   registerMethod(
     "autocode.policy.refresh.plan",
     async ({ params, respond }: any) => {

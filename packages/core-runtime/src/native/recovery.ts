@@ -56,13 +56,22 @@ export function planNativeRecovery(
     blockers.push("Stop or finish owned Workboard execution and return runnable cards to blocked before replanning")
   if (
     snapshot.operations.some((op) => {
-      const value = op.value as { state?: string; supersessionClosed?: boolean }
-      return value?.state !== "confirmed" && !(value?.state === "superseded" && value.supersessionClosed === true)
+      const value = op.value as { state?: string; supersessionClosed?: boolean; custodyHeld?: boolean }
+      return (
+        value?.state !== "confirmed" &&
+        !(value?.state === "superseded" && value.supersessionClosed === true) &&
+        !(value?.state === "pending" && value.custodyHeld === true)
+      )
     })
   )
     blockers.push(
       "Reconcile uncertain external effects against remote truth before recovery; never delete or replay the journal"
     )
+  if (
+    snapshot.operations.some((op) => (op.value as { custodyHeld?: boolean })?.custodyHeld) &&
+    !["cancel", "abandon", "archive"].includes(action)
+  )
+    blockers.push("Held unresolved intents permit only safe cancellation or archival, never retry or replay")
   if (action === "archive") {
     if (!terminal) blockers.push("Only completed or safely cancelled workflows can be archived")
   } else {

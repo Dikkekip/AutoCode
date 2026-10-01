@@ -32,6 +32,7 @@ import { assertExecutionOwnership, holdsExecutionOwner, withExecutionOwner } fro
 import { NativeBudgetLedger } from "./budget-ledger.js"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NativeControl, NativeControlRevoked } from "./control.js"
+import { assertNativeHeldCardAbsence, assertNativeHeldCreateDenied, nativeEffectCustodyHeld } from "./effect-custody.js"
 import { nativeFailureEvidence } from "./failure-evidence.js"
 import {
   type NativeCard,
@@ -200,7 +201,9 @@ export class NativeAutonomyRuntime {
     return [...pool].sort((a, b) => load(a) - load(b))[0]!
   }
   private async authorizeDispatch(gateway: NativeGateway): Promise<void> {
-    const cards = (await nativeCards(gateway, this.policy.boardId)).filter(
+    const inventory = await nativeCards(gateway, this.policy.boardId)
+    assertNativeHeldCardAbsence(this.store, inventory)
+    const cards = inventory.filter(
       (c) =>
         ["ready", "todo"].includes(c.status) ||
         (c.status === "scheduled" && (c.metadata?.automation?.scheduledAt ?? Infinity) <= Date.now())
@@ -243,6 +246,11 @@ export class NativeAutonomyRuntime {
     const key = String(input.idempotencyKey ?? "")
     if (!key) throw new Error("Native card creation requires a durable correlation key")
     const intentId = `card:${key}`
+    assertNativeHeldCreateDenied(this.store, key)
+    if (this.store.list("effect-custody").length) {
+      assertNativeHeldCardAbsence(this.store, await nativeCards(this.gateway, this.policy.boardId))
+      assertNativeHeldCreateDenied(this.store, key)
+    }
     const previousIntent = this.store.get<{ input: Record<string, unknown>; card?: NativeCard }>(
       "effect-intent",
       intentId
@@ -464,7 +472,9 @@ export class NativeAutonomyRuntime {
         ...Object.values(workflow.stageCards)
       ].filter((id): id is string => Boolean(id))
     )
-    const cards = (await nativeCards(this.gateway, this.policy.boardId)).filter((card) => owned.has(card.id))
+    const allCards = await nativeCards(this.gateway, this.policy.boardId)
+    assertNativeHeldCardAbsence(this.store, allCards)
+    const cards = allCards.filter((card) => owned.has(card.id))
     const successor = successorId ? this.store.get<NativeWorkflow>("workflow", successorId) : null
     return planNativeRecovery(
       {
@@ -513,6 +523,7 @@ export class NativeAutonomyRuntime {
               value: {
                 state: op.value.state,
                 digest: nativeRecoveryDigest(op.value),
+                ...(op.value.state === "pending" ? { custodyHeld: nativeEffectCustodyHeld(this.store, op.id) } : {}),
                 ...(op.value.state === "superseded"
                   ? { supersessionClosed: nativeRepairSupersessionClosed(this.store, op.id) }
                   : {})
