@@ -5,6 +5,7 @@ import { assertExecutionOwnership } from "@openclaw/os-adapters"
 import { loadNativePolicy, nativeDoctor } from "./doctor.js"
 import { type NativeCard, type NativeGateway, nativeCards, nativeObject } from "./gateway.js"
 import { nativeGovernanceDigest, requireNativeHuman } from "./governance.js"
+import { nativeRepairSupersessionClosed } from "./repair-intent.js"
 import type { NativeAutonomyRuntime } from "./runtime.js"
 import { nativeRuntimeGeneration } from "./runtime-lifetime.js"
 import { NATIVE_SKILL_CONTRACT_VERSION, nativeSkillPolicyDigest } from "./skills.js"
@@ -99,7 +100,15 @@ function localIdle(runtime: NativeAutonomyRuntime) {
   if (runtime.store.db.prepare("SELECT 1 FROM native_locks WHERE expires_at>? LIMIT 1").get(Date.now()))
     throw new Error("Native operation lease remains active")
   for (const kind of ["operation", "effect-intent"]) {
-    if (runtime.store.list<{ state?: string }>(kind).some(({ value }) => value.state !== "confirmed"))
+    if (
+      runtime.store
+        .list<{ state?: string }>(kind)
+        .some(
+          ({ id, value }) =>
+            value.state !== "confirmed" &&
+            !(kind === "effect-intent" && nativeRepairSupersessionClosed(runtime.store, id))
+        )
+    )
       throw new Error("Uncertain native effects require reconciliation before policy refresh")
   }
 }

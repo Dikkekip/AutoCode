@@ -795,3 +795,55 @@ it("rejects an owned active session appearing on the second page of the second p
   expect(proof).toBe(2)
   expect(s.get()).toBe(before)
 })
+
+it.each([
+  "closed",
+  "pending-foreign",
+  "unconfirmed-replacement",
+  "changed-replacement",
+  "changed-old-version",
+  "forged-operation"
+])("refresh recognizes only exact closed repair supersession: %s", async (scenario) => {
+  const s = await setup(),
+    before = s.get(),
+    store = before.store
+  const id = "card:workflow:preserved:repair:8"
+  const input = { idempotencyKey: "workflow:preserved:repair:8", workspace: { kind: "dir", path: s.repo } }
+  const replacementInput = {
+    idempotencyKey: "workflow:preserved:repair:8:managed-source-v1",
+    workspace: { kind: "worktree", sourcePath: s.repo, sourceBranch: "origin/main" }
+  }
+  store.put("effect-intent", id, { state: "pending", input })
+  const priorVersion = store.version("effect-intent", id)
+  store.put("effect-intent", id, {
+    state: "superseded",
+    input,
+    replacementId: `${id}:managed-source-v1`,
+    replacementInput,
+    supersession: { workflowId: "preserved", completeAllCardAbsence: true, priorVersion }
+  })
+  store.put("effect-intent", `${id}:managed-source-v1`, {
+    state: scenario === "unconfirmed-replacement" ? "pending" : "confirmed",
+    input: scenario === "changed-replacement" ? { ...replacementInput, unexpected: true } : replacementInput,
+    card: { id: "actual-confirmed-replacement" }
+  })
+  if (scenario === "changed-old-version") store.put("effect-intent", id, store.get("effect-intent", id))
+  if (scenario === "pending-foreign")
+    store.put("effect-intent", "card:foreign", { state: "pending", input: { idempotencyKey: "foreign" } })
+  if (scenario === "forged-operation") store.put("operation", id, store.get("effect-intent", id))
+  const preserved = store.get("effect-intent", id),
+    version = store.version("effect-intent", id)
+  s.edit((p) => {
+    p.verification[0].argv = ["true", "reviewed-change"]
+  })
+  const result = await s.apply(await s.plan())
+  expect(result[0]).toBe(scenario === "closed")
+  expect(store.get("effect-intent", id)).toEqual(preserved)
+  expect(store.version("effect-intent", id)).toBe(version)
+  if (scenario !== "closed") expect(s.get()).toBe(before)
+  if (scenario === "pending-foreign")
+    expect(store.get("effect-intent", "card:foreign")).toEqual({
+      state: "pending",
+      input: { idempotencyKey: "foreign" }
+    })
+})
