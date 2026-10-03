@@ -673,7 +673,7 @@ export class NativeAutonomyRuntime {
             nativeRecoveryDigest(this.store.get("workflow", workflowId)) !== plan.snapshot.workflowDigest ||
             nativeRecoveryDigest(this.policy) !== plan.snapshot.policyDigest ||
             this.control.state.revision !== plan.snapshot.control.revision ||
-            !this.control.state.paused
+            this.control.state.paused !== plan.snapshot.control.paused
           )
             throw new Error("Recovery authority changed during preparation")
         }
@@ -834,7 +834,8 @@ export class NativeAutonomyRuntime {
               this.store.version(evidenceArchive.kind, evidenceArchive.id) !== evidenceArchive.version
             )
               throw new Error("Preserved recovery attempt changed during evidence preparation")
-            if (this.control.state.revision !== plan.snapshot.control.revision || !this.control.state.paused)
+            const control = this.control.state
+            if (control.revision !== plan.snapshot.control.revision || control.paused !== plan.snapshot.control.paused)
               throw new Error("Control changed during recovery")
             if (
               plan.snapshot.successor &&
