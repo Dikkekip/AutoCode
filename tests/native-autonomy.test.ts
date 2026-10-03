@@ -20,6 +20,7 @@ import {
   validateNativeAutonomyPolicy,
   validateNativeProposal
 } from "../packages/domain/src/native-autonomy.js"
+import { nativeCoderRoute } from "../packages/domain/src/native-model-routing.js"
 import * as osAdapters from "../packages/os-adapters/src/index.js"
 
 const cleanups: string[] = []
@@ -205,6 +206,98 @@ describe("native autonomy policy and creative provenance", () => {
     }
   })
 
+  it("routes native admission by task tier without borrowing a different tier's idle worker", async () => {
+    const p = validateNativeAutonomyPolicy({
+      ...policy(),
+      coderAgentIds: ["coder", "coder-2", "coder-3"],
+      workerConcurrency: 3,
+      coderRouting: {
+        simple: ["coder-2"],
+        routine: ["coder"],
+        veryComplex: ["coder-3"],
+        simplePaths: ["src/simple"],
+        veryComplexPaths: ["src/complex"]
+      }
+    })
+    const gateway = new Gateway(),
+      store = new NativeEvidenceStore(join(p.repository, "tiers.db"))
+    try {
+      const runtime = new NativeAutonomyRuntime(p, gateway, store)
+      await runtime.discover()
+      const round = store.list("round")[0]!
+      gateway.cards.forEach((card) => {
+        card.status = "done"
+      })
+      gateway.cards.push({ id: "busy-sol", title: "Existing work", agentId: "coder", status: "running" })
+      const cases = [
+        { scope: "simple", tier: "simple", expected: "coder-2" },
+        { scope: "routine", tier: "routine", expected: "coder" },
+        { scope: "complex", tier: "simple", expected: "coder-3" }
+      ] as const
+      for (const [index, item] of cases.entries()) {
+        const personaId = ["legal", "design", "backend"][index]!
+        mkdirSync(join(p.repository, "src", item.scope), { recursive: true })
+        const { proposalId } = runtime.propose(personaId, round.id, {
+          ...proposal(),
+          personaId,
+          goal: `${personaId} outcome`,
+          title: `Tiered task ${item.scope}`,
+          allowedPaths: [`src/${item.scope}`],
+          complexity: { tier: item.tier, rationale: "Inspected bounded scope" }
+        })
+        const { workflowId } = await runtime.admit("planner", proposalId, "Independent scoped admission")
+        const workflow = runtime.requireWorkflow(workflowId)
+        expect(gateway.cards.find((c) => c.id === workflow.implementationCardId)?.agentId).toBe(item.expected)
+      }
+    } finally {
+      store.close()
+    }
+  })
+
+  it("defaults missing complexity to routine and raises repeated repairs without changing authority", () => {
+    const p = validateNativeAutonomyPolicy({
+      ...policy(),
+      coderAgentIds: ["coder", "coder-2", "coder-3"],
+      coderRouting: {
+        simple: ["coder-2"],
+        routine: ["coder"],
+        veryComplex: ["coder-3"],
+        simplePaths: ["src/simple"],
+        veryComplexPaths: []
+      }
+    })
+    const simple = {
+      ...proposal(),
+      allowedPaths: ["src/simple"],
+      complexity: { tier: "simple" as const, rationale: "Small change" }
+    }
+    expect(nativeCoderRoute(p, proposal()).agentIds).toEqual(["coder"])
+    expect(nativeCoderRoute(p, simple).agentIds).toEqual(["coder-2"])
+    expect(nativeCoderRoute(p, simple, { highRisk: true }).agentIds).toEqual(["coder"])
+    expect(nativeCoderRoute(p, simple, { repairCount: 2 }).agentIds).toEqual(["coder-3"])
+    expect(nativeCoderRoute(p, { ...simple, allowedPaths: ["src/simple-elsewhere"] }).agentIds).toEqual(["coder"])
+    expect(
+      nativeCoderRoute(p, { ...simple, complexity: { tier: "very-complex", rationale: "Cross-system reasoning" } })
+        .agentIds
+    ).toEqual(["coder-3"])
+    expect(validateNativeProposal(simple, p).complexity).toEqual(simple.complexity)
+    expect(() => validateNativeProposal({ ...simple, complexity: { tier: "unknown", rationale: "test" } }, p)).toThrow(
+      /complexity/
+    )
+    expect(() => validateNativeProposal({ ...simple, complexity: { tier: "simple", rationale: "" } }, p)).toThrow(
+      /rationale/
+    )
+    expect(() =>
+      validateNativeAutonomyPolicy({ ...p, coderRouting: { ...p.coderRouting, routine: ["coder", "reviewer"] } })
+    ).toThrow(/partition/)
+    expect(() =>
+      validateNativeAutonomyPolicy({ ...p, coderRouting: { ...p.coderRouting, simple: ["coder"] } })
+    ).toThrow(/partition/)
+    expect(() => validateNativeAutonomyPolicy({ ...p, coderRouting: { ...p.coderRouting, routine: [] } })).toThrow(
+      /non-empty/
+    )
+  })
+
   it("requires independent review, verification, bounded paths and explicit goals", () => {
     const p = policy()
     expect(() => validateNativeAutonomyPolicy({ ...p, reviewerAgentId: p.coderAgentId })).toThrow(/independent/)
@@ -319,6 +412,23 @@ describe("native autonomy policy and creative provenance", () => {
       store = new NativeEvidenceStore(join(p.repository, "evidence.db"))
     try {
       const runtime = new NativeAutonomyRuntime(p, gateway, store)
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: p.repository, encoding: "utf8" }).trim()
+      git("init", "-b", "main")
+      git("config", "user.name", "Fixture")
+      git("config", "user.email", "fixture@example.invalid")
+      mkdirSync(join(p.repository, "src"), { recursive: true })
+      writeFileSync(join(p.repository, "src/a"), "baseline\n")
+      git("add", "src/a")
+      git("commit", "-m", "baseline")
+      const baseSha = git("rev-parse", "HEAD")
+      writeFileSync(join(p.repository, "src/a"), "first correction\n")
+      git("add", "src/a")
+      git("commit", "-m", "first")
+      const headSha = git("rev-parse", "HEAD")
+      writeFileSync(join(p.repository, "src/a"), "second correction\n")
+      git("add", "src/a")
+      git("commit", "-m", "second")
+      const secondHead = git("rev-parse", "HEAD")
       const workflow = {
         proposal: proposal(),
         rootCardId: "root",
@@ -326,8 +436,8 @@ describe("native autonomy policy and creative provenance", () => {
         stageCards: {},
         candidate: {
           cwd: p.repository,
-          headSha: "a".repeat(40),
-          baseSha: "b".repeat(40),
+          headSha,
+          baseSha,
           files: ["src/a"],
           branch: "candidate"
         }
@@ -340,7 +450,7 @@ describe("native autonomy policy and creative provenance", () => {
       await expect(runtime.requestRepair("repair-workflow", workflow, "test failed")).rejects.toThrow(/stalled/)
       expect(gateway.cards).toHaveLength(1)
       expect(store.list("attempt-evidence")).toHaveLength(1)
-      workflow.candidate = { ...original, headSha: "c".repeat(40) }
+      workflow.candidate = { ...original, headSha: secondHead }
       await runtime.requestRepair("repair-workflow", workflow, "test failed")
       const effect = store.list<any>("effect-intent").find((row) => row.value.input?.title.startsWith("Repair 2:"))
       expect(JSON.parse(effect!.value.input.notes).repairPlan).toMatchObject({
@@ -842,6 +952,39 @@ it("preserves an explicit future implementation schedule while repairing undated
     gateway.cards[0]!.metadata!.automation!.scheduledAt = Date.now() - 1000
     await runtime.reconcile()
     expect(gateway.cards[0]!.status).toBe("ready")
+  } finally {
+    store.close()
+  }
+})
+
+it("blocks a terminal implementation card without a submitted candidate for recovery", async () => {
+  const p = policy(),
+    gateway = new Gateway(),
+    store = new NativeEvidenceStore(join(p.repository, "missing-submission.db"))
+  try {
+    const runtime = new NativeAutonomyRuntime(p, gateway, store)
+    gateway.cards.push({
+      id: "unsubmitted",
+      agentId: p.coderAgentId,
+      title: "unsubmitted",
+      status: "review",
+      updatedAt: 123,
+      execution: { status: "review" }
+    })
+    store.put("workflow", "unsubmitted", {
+      proposal: proposal(),
+      rootCardId: "root",
+      implementationCardId: "unsubmitted",
+      stageCards: {}
+    })
+    await runtime.reconcile()
+    expect(gateway.cards[0]!.status).toBe("blocked")
+    expect(gateway.calls).toContainEqual({
+      method: "workboard.cards.update",
+      params: { id: "unsubmitted", expectedUpdatedAt: 123, patch: { status: "blocked" } }
+    })
+    expect(runtime.requireWorkflow("unsubmitted").lifecycle?.state).toBe("blocked")
+    expect(runtime.requireWorkflow("unsubmitted").blocker).toMatch(/without an authenticated candidate submission/)
   } finally {
     store.close()
   }

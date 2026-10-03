@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
-import { NativeCliGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
@@ -41,14 +41,18 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
   )
   let service: any
   const methods = new Map<string, any>(),
-    factories: any[] = []
+    factories: any[] = [],
+    registrations: any[] = []
   registerNativeAutonomyPlugin({
     pluginConfig: { projects: [path], openclawCommand: "/usr/bin/openclaw" },
     registerService: (s: any) => {
       service = s
     },
     registerGatewayMethod: (name: string, handler: any) => methods.set(name, handler),
-    registerTool: (factory: any) => factories.push(factory),
+    registerTool: (factory: any, options: any) => {
+      registrations.push({ factory, options })
+      factories.push((ctx: any) => factory.create({ assertInvocationCurrent: () => {}, ...ctx }))
+    },
     on: () => {},
     logger: { warn: vi.fn() }
   })
@@ -61,6 +65,7 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
     methods,
     service,
     factories,
+    registrations,
     call: async (name: string) => {
       let response: any
       await methods.get(name)({
@@ -128,7 +133,7 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
   await server.service.start()
   const client = setup(server.root)
   vi.mocked(nativeDoctor).mockResolvedValue(report(true))
-  vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method, params) => {
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method, params) => {
     if (method === "workboard.cards.list")
       return {
         cards: [
@@ -329,4 +334,23 @@ it("passes verified device identity with client identity fallback to request aud
     expect(response[0]).toBe(true)
     expect(create).toHaveBeenLastCalledWith(expect.any(NativeAutonomyRuntime), { title: "source brief" }, expected)
   }
+})
+
+it("declares only versioned session-bound factory tools and rejects revoked host calls", async () => {
+  const s = setup()
+  await s.service.start()
+  const registration = s.registrations[0]
+  expect(registration.factory.contextVersion).toBe(2)
+  expect(registration.options.confinement).toBe("session-bound")
+  expect(registration.options.names).toContain("autocode_context")
+  const assertInvocationCurrent = vi.fn(() => {
+    throw new Error("Host invocation revoked")
+  })
+  const tool = registration.factory
+    .create({ agentId: "research", sessionKey: "session", assertInvocationCurrent })
+    .find((t: any) => t.name === "autocode_context")
+  await expect(tool.execute("call", { boardId: "app", contextId: "context" })).rejects.toThrow(
+    "Host invocation revoked"
+  )
+  expect(nativeDoctor).not.toHaveBeenCalled()
 })

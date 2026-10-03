@@ -12,15 +12,33 @@ Discovery, admission, and reconciliation use 120-second leases renewed every 40 
 
 Lease loss cannot revoke an external request already sent. Its recorded operation intent remains available for recovery; reconciliation must confirm the remote outcome before attempting another effect.
 
+## Codex Goal supervision
+
+Codex can supervise a long-running native rollout with its thread-scoped `/goal` command. A Goal keeps the operator's outcome and evidence standard across turns; it does not replace OpenClaw's native Workboard cards, Automations, or `autocode.*` functions. Keep coding, review, and release authority in those native functions. See [Using Goals in Codex](https://developers.openai.com/cookbook/examples/codex/using_goals_in_codex) for the Codex Goal lifecycle.
+
+For example, an operator can set a Goal to keep this pipeline coding through a measured operating window, verified by fresh Workboard executions, submitted candidate commits, independent verification and review receipts, and release records, while preserving accepted runs and scoped permissions. On each continuation, Codex should inspect the current native status, automation run history, active Workboard executions, verifier processes, and release state before deciding whether to wait, repair a defect, or submit a source-bound request. A scheduled tick that returned `ok` with no work started is evidence of the tick, not of progress. An active candidate or verifier must be followed to a durable outcome before treating its process as stale.
+
+The CLI discovery command retries a transient `reconciliation already running` result through `autocode.discover`, with a bounded wait. Other results, including backpressure or a still-active persona round, return immediately so the native control plane remains authoritative. Codex should report the specific blocker and leave its Goal active when completion is unproved; it must not use Goal continuation to bypass native admission, verification, review, or publication gates.
+
 An investigation is a real turn by a named persona. Weighted rotation chooses three personas, sequential dependencies preserve the planner concurrency limit, and a separate planner compares their recorded proposals. Each persona can propose at most two alternatives; a round may admit none. Existing persona goals and lane checks can be imported with `native prepare`. Defaults admit at most six tasks per round, cap new quality-enabled discovery at twenty-four rounds daily (legacy policies default to twelve), and apply backlog/scope backpressure. OpenClaw owns provider accounts and cooldowns; the legacy account switcher is not called.
+
+Completed investigations, including `no_op`, suppress unchanged research for `dedupeWindowHours` (72 hours by default). After that window, weighted rotation can revisit the persona's goals even if its files have not changed. A refreshed research turn receives up to three prior investigation summaries and must check unresolved assumptions or a different user journey before proposing another bounded implementation prompt. Existing proposal deduplication, active-round exclusion, daily limits and downstream backpressure still apply. Code or goal changes can trigger earlier investigation. Legacy investigations without a completion timestamp use their round's start time.
+
+An implementation card blocked by a startup failure without an execution is recorded as a blocked native workflow on reconciliation. This makes allocation failures visible in `autocode.status` and workflow explanations instead of showing an implementation that silently makes no progress. Preserve the card and diagnostics, resolve capacity or startup configuration, then use scoped operator recovery; reconciliation does not replay failed or uncertain execution.
 
 Implementation, verification, review, merge, and deployment are separate cards. The workflow card remains blocked until deployment has an exact-revision receipt. A worker's `workboard_complete` is not a release authorization. Managed implementation worktrees start from `origin/<baseBranch>`, preserving a stale or dirty local branch. The coder must call `autocode_submit` from its assigned card session with its managed worktree; the host broker records any scoped source edits as a commit without exposing shared Git metadata to the sandbox; the reviewer must call `autocode_review` from the separate assigned review session. Structured host-executed checks, independent review, and GitHub CI must all pass for the submitted head.
 
-Sandboxed roles need Autocode and Workboard tools allowed in both the role tool policy and `tools.sandbox.tools`. Before dispatch, the native adapter binds the assigned sandbox workspace through the public configuration API and starts only that prepared Workboard card. It does not rebind a role with an active Workboard card. Scratch research cards retain their native workspace behavior.
+Sandboxed roles need Autocode and Workboard tools allowed in both the role tool policy and `tools.sandbox.tools`. Configure Workboard `worktreeSources` with the native board, an existing registered project ID, and the exact `origin/<baseBranch>` source ref. The native adapter validates the policy source and starts the unchanged Workboard card. Workboard prepares its canonical project session and isolated worker projection through the host SDK; it never changes the role workspace or exposes source-checkout Git metadata. Hosts without session preparation reject the launch. Scratch research cards retain their native workspace behavior.
 
 The submission broker rejects outside-scope files and symlinks, snapshots bounded regular source files through checked file descriptors, and uses Git plumbing with hooks and filters disabled. It preserves untracked runtime persona notes locally and excludes them from the candidate. An ended implementation without a submission becomes an explicit recovery blocker; retry preserves the prior attempt and requires an operator recovery decision.
 
-Verification and review rejection allow at most two repair handoffs against the preserved worktree. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
+Verification and review rejection allow at most two repair handoffs against the preserved worktree. With `verificationAuthority.independentCandidateReview` enabled, commit-bound design changes also use this shared repair limit. The repair receives the structured findings, retains the rejected candidate and review receipt, and requires fresh design approval, verification and final acceptance. Reviewers receive the policy-selected commands and per-file coverage as a plan, never as execution evidence. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
+
+If committed design evidence is truncated or redacted and the reviewer requests
+changes, reconciliation blocks for operator recovery without spending a coding
+repair attempt. The candidate commit and review receipt remain available.
+Provide independently reviewed evidence or correct the evidence policy before
+resuming; changing implementation code alone cannot fill a missing review view.
 
 ## Optional native coder pool
 
@@ -36,7 +54,7 @@ Omitting `coderAgentIds` preserves the singular `coderAgentId` behavior. A revie
 
 This is a policy fragment, not a complete activation policy. The pool must include the primary `coderAgentId`, contain at most eight distinct IDs, and exclude planner, reviewer and research identities. `workerConcurrency` accepts integers from one to eight. Register and review each coder's tool policy and isolated workspace before using the pool; the concurrency setting does not provision agents. New implementation assignments favor the least-loaded pool member, counting running cards and pending current implementations.
 
-Dispatch excludes an agent that already has a running Workboard card, including on another board. It also excludes a managed workspace whose resolved path is already in use by a running card, even when a different coder is assigned. This preserves isolation when a repair reuses a candidate worktree. Workspace binding uses the supported configuration API, and only the prepared card starts. Pool membership alone does not authorize submission: `autocode_submit` requires the exact assigned implementation card, active session and managed worktree. Review remains assigned to the independent reviewer, who cannot be any pool member.
+Dispatch excludes an agent that already has a running Workboard card, including on another board. It also excludes a managed workspace whose resolved path is already in use by a running card, even when a different coder is assigned. This preserves isolation when a repair reuses a candidate worktree. Workboard owns session and workspace preparation, and only the exact card starts. Unexpired or unknown-expiry native claims also hold their assigned worker across boards. Pool membership alone does not authorize submission: `autocode_submit` requires the exact assigned implementation card, active session and managed worktree. Review remains assigned to the independent reviewer, who cannot be any pool member.
 
 A finished coding session can leave an unexpired Workboard claim. Before dispatch, the adapter releases its own coder claim only when the exact session is terminal, has an end time, and explicitly reports no active run or subagent. Missing or ambiguous session evidence keeps that coder busy. Expired historical claims do not block new work.
 
@@ -288,11 +306,13 @@ Application release also requires `requiredCi: {checks: [{name, appId}],
 maxAgeSeconds}` with reviewed GitHub App identities. The release service queries
 GitHub REST check runs for the exact reviewed commit and requires one completed,
 successful, fresh run for every configured identity. Missing, ambiguous, skipped,
-neutral, malformed and stale checks never authorize merge. Queued checks remain
-pending. Repository branch-protection required checks must be covered by policy;
-unavailable protection metadata fails closed. Repositories using only rulesets
-must configure equivalent supported branch protection before this release path is
-usable. Server-side protection and exact-head merge matching remain enabled.
+neutral, malformed and stale checks never authorize merge. Missing or queued checks
+remain pending until GitHub reports them. By default, repository branch-protection
+required checks must be covered by policy and unavailable protection metadata fails
+closed. An operator may explicitly set `requireBranchProtection: false` when the
+repository cannot expose that metadata. This uses the reviewed list of checks as
+the local requirement; it still requires every configured identity to pass and
+does not disable GitHub's own protections or exact-head merge matching.
 
 ### Protected receipt provenance
 
@@ -425,7 +445,7 @@ paused/observe until that review; running this test suite never activates them.
 
 An explicit `verificationSandbox: {backend: "docker", image: "sha256:<64 hex digits>", inputFiles: [...]}` selects a locally provisioned immutable Docker image. The image must include the administrator-reviewed `/opt/openclaw/checks/` executables and build dependencies. Candidate commands run without network or inherited credentials, with a read-only image, dropped capabilities, bounded resources, and only committed source copies mounted at `/work`. Cancellation removes the container as well as its client. Bubblewrap remains supported; there is no automatic unrestricted fallback.
 
-OpenClaw 2026.9.1 and 2026.9.2 have reviewed Workboard contracts. In `implement-human-review` mode release remains disabled; named CI identities become mandatory before switching to a release mode.
+OpenClaw 2026.9.1, 2026.9.2 and 2026.9.6 have reviewed Workboard contracts. The 2026.9.6 installed-contract check uses its real SQLite store in a disposable directory, including conditional writes, dependency holds, idempotent creation and recovery association clearing. In `implement-human-review` mode release remains disabled; named CI identities become mandatory before switching to a release mode.
 
 Before first discovery, pause execution and use the administrator-only `autocode.skill.bootstrap` Gateway method with `boardId`, the reviewed immutable skill `digest`, `policyDigest`, and a `reason`. The method checks the authenticated administrator context and exact configured content; it cannot replace an already active skill. Skill changes still require evaluated promotion.
 
@@ -439,8 +459,96 @@ Workers cannot supply operator authority or approve their own skill evidence. Co
 
 Source modules whose names contain `secrets`, `credentials`, or `policy` remain excluded by default. If a build needs one, the operator can include its exact path in `verificationSandbox.inputFiles` and add `reviewedSourceFiles: [{path: "libs/common/src/secrets.py", blobSha: "<full Git blob ID>", reviewedBy: "<operator identity>"}]` to the same sandbox configuration. Review the committed source first and obtain its blob ID with `git rev-parse <reviewed-commit>:<path>`. Only explicit source-code extensions qualify; hidden directories, environment files, PEM files and JSON policy or credential data cannot be exempted. Snapshot preparation checks every approved blob before copying any files. A changed module requires fresh review and policy approval; neither candidate content nor a worker request can update the allowance.
 
-Native `dispatch` runs the same admission and Workboard dispatch decisions as `reconcile`, without advancing verification or release gates. When a dispatch attempt returns, its additive `dispatch` result reports successful start counts/card IDs and deferred card IDs with the fixed `worktree-capacity` reason. `advanced` continues to count workflow advancement; zero does not mean no worker started. Allocator messages, host paths, and opaque start responses are not exposed. `install-automations` creates a separate disabled dispatch job running every minute, so a long reconciliation job does not prevent ready workers from starting. Existing dispatch jobs retain their schedule and enabled state. Enable the new job through the normal operator automation controls. Workflow and verification-pool leases remain responsible for gate ownership; dispatch does not change those leases or verification evidence.
+Native `dispatch` runs the same admission and Workboard dispatch decisions as `reconcile`, without advancing verification or release gates. When a dispatch attempt returns, its additive `dispatch` result reports successful start counts/card IDs with native Workboard retaining any preparation or capacity failure on the original card. `advanced` continues to count workflow advancement; zero does not mean no worker started. Allocator messages, host paths, and opaque start responses are not exposed. `install-automations` creates a separate disabled dispatch job running every minute, so a long reconciliation job does not prevent ready workers from starting. Existing dispatch jobs retain their schedule and enabled state. Enable the new job through the normal operator automation controls. Workflow and verification-pool leases remain responsible for gate ownership; dispatch does not change those leases or verification evidence.
 
 For a concrete operator-reported defect, use `native requests create --file brief.json` and inspect the durable queue with `native requests list`. The administrative RPC is `autocode.requests.create`; its request document contains `idempotencyKey`, configured `personaId`, `title`, `brief`, full `expectedBaseSha`, and `evidence` entries with repository-relative `path` and `observation`. Evidence must be regular files tracked at the current remote base and within the persona scope. Identical keys retry safely; changed content requires a new key. Queueing while paused does not start work. Discovery selects queued requests before random personas, subject to its existing limits, and creates a real investigation followed by planner admission. A moved base defers the request for renewed inspection and a fresh key. A reviewed candidate SHA may be described in the brief as an unverified lead; this version does not import candidate patches. Neither the brief nor the intake record supplies inspections, submissions, test-authority approval, or review evidence. `autocode.workflow.explain` exposes the existing acceptance list for operator review without granting agent context access.
 
 `verificationConcurrency` optionally limits concurrent native verifier jobs independently of `workerConcurrency` (integer 1–8). When omitted, verification retains the worker limit and the normalized policy omits this field. Three coders can therefore use one verifier without changing admission or dispatch capacity. Apply a changed limit only through the paused, quiescent policy refresh or a fully drained restart; existing verification leases and release capacity remain unchanged.
+
+The LawyerRAG verifier image runs its browser audit and shell browser checks with
+one Playwright worker. Docker's two-CPU quota does not reduce the host CPU count
+seen by Playwright, whose default worker count can exhaust the four-GiB verifier
+allocation and kill the development server. The trusted wrappers retain every
+test, assertion, retry and timeout; only browser concurrency changes. Rebuild the
+immutable verifier image and refresh its policy binding when updating these
+wrappers. Do not patch an active verifier or treat an out-of-memory run as a
+candidate code failure.
+
+The image also pins `fonts-dejavu-core` to the Debian Bookworm version used for
+the Linux monospace snapshots. Missing fonts change screenshot text geometry;
+repair the image rather than updating approved snapshots to match a fallback.
+Mocked browser suites must explicitly emulate network state in networkless
+containers and retain coverage for offline and online transitions.
+
+Do not launch the Gateway with a process-wide `--max-old-space-size` override:
+Node applies it ahead of worker `resourceLimits`, defeating OpenClaw's bounded
+catalog worker heap. Keep the main-thread default so the catalog worker's limit
+remains effective. Check both the systemd unit and drop-ins after upgrades.
+Memory pressure can stall the main event loop beyond the execution lease TTL;
+expired owners correctly lose authority and must never publish late receipts.
+Candidate submission therefore uses a five-minute workflow lease and permits
+one fresh fenced retry if that lease expires. The assigned coder and live
+Workboard session are checked again; if the first call already persisted the
+candidate, the same session receives its original commit SHA. This does not
+restore an expired owner's authority or retry a different workflow lease.
+Longer stalls can still block submission and require preserved-worktree
+recovery.
+
+The optional host supervisor `scripts/native-gateway-recovery.mjs` probes the
+actual `workboard.cards.list` RPC outside the Gateway. With `--apply`, it
+restarts the existing `openclaw-gateway.service` only after three consecutive
+`Agent database cleanup failed` responses from the same active process over
+at least ten minutes, with a one-hour restart cooldown. It stores only the
+process ID, counters and timestamps in the private `--state` file. Use a
+systemd user timer at five-minute intervals and pass the installed OpenClaw
+CLI as `--openclaw` and the project board as `--board`. Without `--apply` it
+reports eligibility without restarting. This recovers a wedged Gateway; it
+does not repair the underlying OpenClaw SQLite worker lifecycle or assert
+that interrupted agent work completed. Confirm a successful Workboard RPC and
+fresh discover, dispatch and reconcile results after any restart.
+The `examples/systemd/openclaw-native-gateway-recovery.*` units are templates;
+replace their paths and board before enabling the timer.
+
+The immutable route and workspace critical-suite commands also exercise the
+named bundle export and ingestion batch recovery tests, respectively.
+`test:critical` alone does not select these tests. The additional feature checks
+use one Vitest worker and retain all standing build, critical-suite and browser
+checks. Their explicit test paths are visible in independent reviewer context.
+
+
+### Standing application release preparation
+
+A deployment policy can use `prepare: NativeCommand` instead of a fixed
+`artifactSha256`. The administrator-owned command builds and stages the exact
+`AUTOCODE_SHA`, then returns `{targetId, revision, artifactSha256, staged:true}`.
+The runtime retains that identity and the command receipt per workflow attempt,
+checks receipt integrity on replay, and passes the exact digest to deployment and
+health checks. An already confirmed target becomes the next release's known-good
+baseline. Fixed-artifact policies retain their original behavior.
+
+Preparation must be idempotent and must not deploy production. A failing or
+uncertain preparation cannot produce a deployment operation. It remains subject
+to promotion, ownership, cancellation and budget checks. The project-specific
+`profiles/lawyerrag/native-release-adapter.py` implements immutable image
+manifests, private staging with real migrations and a cross-service Dapr workflow,
+settled health observation, production health receipts and exact-image rollback.
+Its configuration and staging credentials belong outside version control.
+
+`verificationAuthority.independentCandidateReview: true` requires the independent
+reviewer to approve every committed candidate before verification. The approval
+is bound to the full candidate diff, attempt and policy. It can authorize ordinary
+test source changes and bind new acceptance criteria to the path-selected trusted
+checks. Missing, stale, incomplete or self-authored review does not authorize
+those changes. Scripts, CI configuration, dependency manifests and verifier
+harness changes still require explicit blob approval. Executed verification and
+independent final acceptance review remain mandatory.
+
+Sandboxed coders may submit `worktreePath: "/workspace"`. The broker resolves this
+exact alias (or its trailing-slash form) from the authenticated implementation
+card's managed workspace after validating the assigned coder and active session.
+Other paths must still resolve to that same worktree; alias children and paths to
+other cards are not accepted. Coders do not need host Git metadata to submit edits.
+
+GitHub check runs are paginated using ordinary REST requests, including on CLI
+versions without `--slurp`. Branch-protection requirements are still mandatory;
+an unavailable branch-protection API does not silently authorize a release.

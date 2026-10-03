@@ -2,6 +2,24 @@ import { redactCommandText, redactLogText } from "@openclaw/domain"
 
 // Protect only complete, bounded opening tags with attribute-level references.
 const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}$/
+const STANDALONE_REFERENCE_KEY = /^key[ \t]*=[ \t]*(\{[^}\n]*\})/
+// Equality against a browser keyboard name is not a credential assignment.
+// Keep this source-only and narrow; literals, comments and arbitrary key values
+// still go through the normal credential filters.
+const KEYBOARD_COMPARISON =
+  /^\.key[ \t]*==={0,1}[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
+// The numeric 229 browser keyCode marks IME composition. Protect only that
+// fixed comparison; other keyCode values still pass through credential filters.
+const IME_KEYCODE_COMPARISON = /^\.keyCode[ \t]*===[ \t]*229\b/
+const KEYBOARD_HANDLER = /^onKeyDown[ \t]*=[ \t]*\{[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*\)[ \t]*=>/
+const KEYBOARD_CALLBACK =
+  /^(?:onKeyDown|handleKeyDown)[ \t]*=[ \t]*\([ \t]*[A-Za-z_$][\w$]*[ \t]*:[ \t]*KeyboardEvent[ \t]*\)[ \t]*=>/
+// A strict comparison with another variable has no literal credential value.
+// The broad command filter otherwise mistakes `key === SOME_IDENTIFIER` for
+// an assignment and hides part of a reviewable committed patch.
+const KEY_IDENTIFIER_COMPARISON = /^key[ \t]*===[ \t]*[A-Za-z_$][\w$]*/
+const KEY_IDENTIFIER_KEYBOARD_COMPARISON =
+  /^key[ \t]*===[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -13,16 +31,68 @@ function quotedEnd(source: string, start: number, limit: number): number {
   return limit
 }
 
-function openingTag(source: string, start: number): { end: number; keys: number[] } {
+// JSX opening-tag parsing skips nested handler bodies. Shield only known
+// keyboard callback names and literal keyboard comparisons before that scan.
+function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker: string): string {
+  const chunks: string[] = []
+  let copied = 0
+  let cursor = 0
+  while (cursor < source.length) {
+    const char = source[cursor]
+    if (char === '"' || char === "'" || char === "`") {
+      // Diff hunks can juxtapose removed and added lines, leaving a quote
+      // unmatched in the patch even when each committed file is valid.
+      const newline = source.indexOf("\n", cursor)
+      cursor = quotedEnd(source, cursor, char === "`" || newline < 0 ? source.length : newline)
+    } else if (source.slice(cursor, cursor + 2) === "//") {
+      const end = source.indexOf("\n", cursor + 2)
+      cursor = end < 0 ? source.length : end + 1
+    } else if (source.slice(cursor, cursor + 2) === "/*") {
+      const end = source.indexOf("*/", cursor + 2)
+      cursor = end < 0 ? source.length : end + 2
+    } else if (
+      (source.startsWith("onKeyDown", cursor) || source.startsWith("handleKeyDown", cursor)) &&
+      /[\s<]/.test(source[cursor - 1] ?? "") &&
+      (KEYBOARD_HANDLER.test(source.slice(cursor, cursor + 160)) ||
+        (/\bconst[ \t]+$/.test(source.slice(Math.max(0, cursor - 16), cursor)) &&
+          KEYBOARD_CALLBACK.test(source.slice(cursor, cursor + 160))))
+    ) {
+      const prefixLength = source.startsWith("handleKeyDown", cursor) ? 6 : 2
+      chunks.push(source.slice(copied, cursor + prefixLength), handlerMarker)
+      copied = cursor + prefixLength + 3
+      cursor += prefixLength + 7
+    } else if (
+      char === "." &&
+      (KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80)) ||
+        IME_KEYCODE_COMPARISON.test(source.slice(cursor, cursor + 80)))
+    ) {
+      chunks.push(source.slice(copied, cursor + 1), keyMarker)
+      copied = cursor + 4
+      cursor += 4
+    } else cursor++
+  }
+  chunks.push(source.slice(copied))
+  return chunks.join("")
+}
+
+function openingTag(source: string, start: number): { end: number; keys: number[]; syntheticKeys: number[] } {
   const limit = Math.min(source.length, start + 4096)
   let cursor = start + 1
   const keys: number[] = []
+  const syntheticKeys: number[] = []
   while (cursor < limit && /[\w.:-]/.test(source[cursor]!)) cursor++
   while (cursor < limit) {
     const beforeSpace = cursor
     while (cursor < limit && /\s/.test(source[cursor]!)) cursor++
-    if (source[cursor] === ">") return { end: cursor + 1, keys }
-    if (source.slice(cursor, cursor + 2) === "/>") return { end: cursor + 2, keys }
+    if (source[cursor] === ">") return { end: cursor + 1, keys, syntheticKeys }
+    if (source.slice(cursor, cursor + 2) === "/>") return { end: cursor + 2, keys, syntheticKeys }
+    // A common JSX spread is a complete reference, so scanning can continue
+    // to subsequent attributes without shielding the spread itself.
+    const spread = /^\{\.\.\.[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\}/.exec(source.slice(cursor, limit))?.[0]
+    if (spread) {
+      cursor += spread.length
+      continue
+    }
     if (cursor === beforeSpace || !/[A-Za-z_:]/.test(source[cursor] ?? "")) break
     const nameStart = cursor++
     while (cursor < limit && /[\w.:-]/.test(source[cursor]!)) cursor++
@@ -36,7 +106,12 @@ function openingTag(source: string, start: number): { end: number; keys: number[
     cursor++
     while (cursor < limit && /\s/.test(source[cursor]!)) cursor++
     if (source[cursor] === '"' || source[cursor] === "'") {
+      const valueStart = cursor
       cursor = quotedEnd(source, cursor, limit)
+      // This fixture-shaped matter identity carries no credential value. Keep
+      // the exemption on the JSX attribute name; other quoted keys are masked.
+      if (name === "actingKey" && /^(["'])matter:MATTER-[0-9]{3}:document\1$/.test(source.slice(valueStart, cursor)))
+        syntheticKeys.push(nameStart + 6)
       continue
     }
     if (source[cursor] !== "{") break
@@ -63,7 +138,29 @@ function openingTag(source: string, start: number): { end: number; keys: number[
       keys.push(nameStart)
     }
   }
-  return { end: Math.max(start + 1, cursor), keys: [] }
+  return { end: Math.max(start + 1, cursor), keys: [], syntheticKeys: [] }
+}
+
+// Shield only key names whose complete RHS is composed of source references.
+// Credential-shaped literals and unsupported expressions keep normal masking.
+function derivedKeyDeclaration(source: string, start: number): { key: number; name: string; end: number } | undefined {
+  const lineEnd = source.indexOf("\n", start)
+  const line = source.slice(start, lineEnd < 0 ? source.length : lineEnd)
+  const match = /^const[ \t]+(key|[A-Za-z_$][\w$]*Key)[ \t]*=[ \t]*(.*);[ \t]*\r?$/.exec(line)
+  if (!match) return undefined
+  const rhs = match[2]!
+  const reference = "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*"
+  const safeCall = new RegExp(`^[A-Za-z_$][\\w$]*Key\\(${reference}\\)$`).test(rhs)
+  const safeArray = new RegExp(
+    `^JSON\\.stringify\\(\\[[ \\t]*${reference}(?:[ \\t]*,[ \\t]*${reference})*[ \\t]*\\]\\)$`
+  ).test(rhs)
+  const safeReplace = /^key\.replace\(\/\[\^a-zA-Z0-9_-\]\/g,[ \t]*'-'\)$/.test(rhs)
+  if (
+    (!safeCall && !safeArray && !safeReplace) ||
+    /credential|secret|token|password|authorization|bearer|ghp_/i.test(rhs)
+  )
+    return undefined
+  return { key: start + match[0].indexOf(match[1]!), name: match[1]!, end: start + line.length }
 }
 
 // A cache-key factory reference carries no literal value. Recognize only this
@@ -109,7 +206,26 @@ function queryReference(source: string, start: number): { key: number; end: numb
   return { key, end: cursor }
 }
 
-function protectReferenceNames(source: string, marker: string, queryMarker: string): string {
+// A dotted JavaScript member reference can resemble the command filter's broad
+// JWT pattern. Protect its separators only in source code, never in strings or
+// comments. A base64url JSON header remains credential-shaped even when bare.
+function memberReference(source: string, start: number): string | undefined {
+  const spread = source.slice(start - 3, start) === "..." && !/[\w$.]/.test(source[start - 4] ?? "")
+  if (!spread && /[\w$.-]/.test(source[start - 1] ?? "")) return undefined
+  const reference = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,}/.exec(source.slice(start, start + 4096))?.[0]
+  if (!reference || /[\w$.-]/.test(source[start + reference.length] ?? "")) return undefined
+  const header = reference.slice(0, reference.indexOf("."))
+  if (/^eyJ/.test(header)) return undefined
+  try {
+    const decoded = JSON.parse(Buffer.from(header, "base64url").toString("utf8"))
+    if (decoded && typeof decoded === "object") return undefined
+  } catch {
+    // Ordinary identifiers are not JWT headers.
+  }
+  return reference
+}
+
+function protectReferenceNames(source: string, marker: string, queryMarker: string, dotMarker: string): string {
   const chunks: string[] = []
   let copied = 0
   let cursor = 0
@@ -123,20 +239,66 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
     } else if (source.slice(cursor, cursor + 2) === "/*") {
       const end = source.indexOf("*/", cursor + 2)
       cursor = end < 0 ? source.length : end + 2
+    } else if (
+      char === "." &&
+      (KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 80)) ||
+        IME_KEYCODE_COMPARISON.test(source.slice(cursor, cursor + 80)))
+    ) {
+      chunks.push(source.slice(copied, cursor + 1), marker)
+      copied = cursor + 4
+      cursor += 4
     } else if (source.startsWith("const", cursor) && !/[\w$]/.test(source[cursor - 1] ?? "")) {
       const query = queryReference(source, cursor)
       if (query) {
         chunks.push(source.slice(copied, query.key), queryMarker)
         copied = query.key + 3
         cursor = query.end
-      } else cursor++
+      } else {
+        const derived = derivedKeyDeclaration(source, cursor)
+        if (derived) {
+          const suffix = derived.name === "key" ? marker : queryMarker
+          const at = derived.name === "key" ? derived.key : derived.key + derived.name.length - 3
+          chunks.push(source.slice(copied, at), suffix)
+          copied = at + 3
+          cursor = derived.end
+        } else cursor++
+      }
     } else if (char === "<" && /[A-Za-z]/.test(source[cursor + 1] ?? "")) {
       const tag = openingTag(source, cursor)
-      for (const key of tag.keys) {
-        chunks.push(source.slice(copied, key), marker)
-        copied = key + 3
+      const keys = [
+        ...tag.keys.map((at) => ({ at, replacement: marker })),
+        ...tag.syntheticKeys.map((at) => ({ at, replacement: queryMarker }))
+      ].sort((left, right) => left.at - right.at)
+      for (const key of keys) {
+        chunks.push(source.slice(copied, key.at), key.replacement)
+        copied = key.at + 3
       }
       cursor = tag.end
+    } else if (source.startsWith("key", cursor)) {
+      // A diff hunk can start at a JSX attribute without its opening tag.
+      const lineStart = source.lastIndexOf("\n", cursor - 1) + 1
+      const linePrefix = source.slice(lineStart, cursor)
+      const assignment = STANDALONE_REFERENCE_KEY.exec(source.slice(cursor, cursor + 160))
+      if (/^[+\- ][ \t]*$/.test(linePrefix) && assignment && REFERENCE_EXPRESSION.test(assignment[1]!)) {
+        chunks.push(source.slice(copied, cursor), marker)
+        copied = cursor + 3
+        cursor += 3
+      } else if (
+        !/[\w$]/.test(source[cursor - 1] ?? "") &&
+        (KEY_IDENTIFIER_COMPARISON.test(source.slice(cursor, cursor + 160)) ||
+          KEY_IDENTIFIER_KEYBOARD_COMPARISON.test(source.slice(cursor, cursor + 160)))
+      ) {
+        chunks.push(source.slice(copied, cursor), marker)
+        copied = cursor + 3
+        cursor += 3
+      } else cursor++
+    } else if (/[A-Za-z_$]/.test(char ?? "")) {
+      const reference = memberReference(source, cursor)
+      if (reference) {
+        chunks.push(source.slice(copied, cursor), reference.split(".").join(dotMarker))
+        copied = cursor + reference.length
+        cursor = copied
+      } else cursor++
     } else cursor++
   }
   chunks.push(source.slice(copied))
@@ -144,7 +306,7 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
 }
 
 const QUOTED_ASSIGNMENT_START =
-  /(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTHORIZATION|JWT)[A-Za-z0-9_]*\s*=\s*(?:\{\s*)?)(["'])/gi
+  /(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTHORIZATION|JWT)[A-Za-z0-9_]*\s*=+\s*(?:\{\s*)?)(["'])/gi
 
 function redactQuotedAssignments(source: string): string {
   const pattern = new RegExp(QUOTED_ASSIGNMENT_START)
@@ -164,6 +326,13 @@ function redactQuotedAssignments(source: string): string {
   }
   return output + source.slice(cursor)
 }
+function redactSuspiciousKeyDeclarations(source: string): string {
+  return source.replace(
+    /^([+\- ]?[ \t]*const[ \t]+(?:key|[A-Za-z_$][\w$]*Key)[ \t]*=[ \t]*)([^\n]*)$/gm,
+    (line, prefix: string, rhs: string) =>
+      /credential|secret|token|password|authorization|bearer|ghp_/i.test(rhs) ? `${prefix}***REDACTED***` : line
+  )
+}
 const PRIVATE_KEY_BLOCK =
   /(-----BEGIN ((?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----)[\s\S]*?(-----END \2-----|$)/g
 
@@ -179,9 +348,19 @@ export function redactNativeSourceText(source: string): string {
   let querySerial = 0
   while (occupiedQueries.has(String(querySerial))) querySerial++
   const queryMarker = `__SOURCE_QUERY_REFERENCE_${querySerial}__`
-  const prepared = protectReferenceNames(source, marker, queryMarker)
-  const literals = redactQuotedAssignments(prepared)
+  const occupiedDots = new Set(Array.from(source.matchAll(/__SOURCE_MEMBER_DOT_(\d+)__/g), (match) => match[1]))
+  let dotSerial = 0
+  while (occupiedDots.has(String(dotSerial))) dotSerial++
+  // Non-identifier punctuation keeps adjacent credential-token scanning intact.
+  const dotMarker = `:__SOURCE_MEMBER_DOT_${dotSerial}__:`
+  const prepared = protectReferenceNames(
+    protectKeyboardSyntax(source, marker, queryMarker),
+    marker,
+    queryMarker,
+    dotMarker
+  )
+  const literals = redactQuotedAssignments(redactSuspiciousKeyDeclarations(prepared))
   const pem = literals.replace(PRIVATE_KEY_BLOCK, "$1\n***REDACTED***\n$3")
   const redacted = redactLogText(redactCommandText(pem))
-  return redacted.split(marker).join("key").split(queryMarker).join("Key")
+  return redacted.split(marker).join("key").split(queryMarker).join("Key").split(dotMarker).join(".")
 }

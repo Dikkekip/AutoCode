@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
 import { snapshotNativeInputs } from "../packages/core-runtime/src/native/snapshot.js"
+import { nativeCandidateSandbox } from "../packages/core-runtime/src/native/verification.js"
 
 const roots: string[] = []
 function temp() {
@@ -30,6 +31,49 @@ function fixture() {
 }
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+})
+
+it("includes admitted new tests and removes admitted deletions without exposing other files", async () => {
+  const f = fixture(),
+    destination = temp()
+  writeFileSync(join(f.root, "existing.ts"), "export const value = 1")
+  writeFileSync(join(f.root, "removed.ts"), "old source")
+  f.commit()
+  rmSync(join(f.root, "removed.ts"))
+  writeFileSync(join(f.root, "new.test.ts"), "real regression test")
+  writeFileSync(join(f.root, "private.txt"), "not admitted")
+  const sha = f.commit()
+  const policy = {
+    verificationSandbox: {
+      backend: "docker",
+      image: `sha256:${"a".repeat(64)}`,
+      inputFiles: ["existing.ts", "removed.ts"]
+    }
+  } as any
+  const sandbox = await nativeCandidateSandbox(policy, {
+    cwd: f.root,
+    headSha: sha,
+    files: ["removed.ts", "new.test.ts"]
+  })
+  await snapshotNativeInputs(f.root, destination, sha, sandbox!.inputFiles)
+  expect(readFileSync(join(destination, "new.test.ts"), "utf8")).toBe("real regression test")
+  expect(existsSync(join(destination, "removed.ts"))).toBe(false)
+  expect(existsSync(join(destination, "private.txt"))).toBe(false)
+  expect(policy.verificationSandbox.inputFiles).toEqual(["existing.ts", "removed.ts"])
+})
+
+it("keeps secret paths and unreviewed policy source out of candidate additions", async () => {
+  const f = fixture()
+  writeFileSync(join(f.root, ".env"), "TOKEN=private")
+  writeFileSync(join(f.root, "policy.py"), "sensitive source")
+  const sha = f.commit()
+  const policy = {
+    verificationSandbox: { backend: "docker", image: `sha256:${"a".repeat(64)}`, inputFiles: [] }
+  } as any
+  for (const file of [".env", "policy.py"])
+    await expect(nativeCandidateSandbox(policy, { cwd: f.root, headSha: sha, files: [file] })).rejects.toThrow(
+      /excluding credentials/
+    )
 })
 
 it("snapshots thousands of explicitly selected committed files without per-file processes", async () => {

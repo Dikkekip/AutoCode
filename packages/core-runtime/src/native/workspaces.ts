@@ -3,39 +3,12 @@ import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
 
-interface ManagedWorktrees {
-  create(input: {
-    repoRoot: string
-    name: string
-    baseRef: string
-    ownerKind: string
-    ownerId: string
-  }): Promise<{ path: string }>
-}
-
-// The supported allocator currently returns a plain Error rather than a typed
-// capacity code. Match only its complete disk-preflight diagnostic at the create
-// boundary; unknown errors must continue to fail closed.
-function isWorktreeCapacityError(error: unknown): error is Error {
-  return (
-    error instanceof Error &&
-    error.name === "Error" &&
-    /^Insufficient disk space near [^\r\n]+ for worktree allocation: \d+(?:\.\d+)? (?:MiB|GiB) available; approximately \d+(?:\.\d+)? (?:MiB|GiB) required including safety reserve\. Free caches or archive\/remove unused worktrees, then retry\.$/.test(
-      error.message
-    )
-  )
-}
-
-/** Bind sandbox roots through supported APIs before Workboard launches a scoped run.
- * OpenClaw 2026.9 rejects a sandboxed cwd override that differs from the agent workspace.
- * Never rebind an agent with an active card, and dispatch only the card we prepared.
- */
+/** Preserve native admission, dependency and owner serialization while Workboard owns checkout preparation. */
 export class NativeWorkspaceGateway implements NativeGateway {
   constructor(
     readonly gateway: NativeGateway,
     readonly policy: NativeAutonomyPolicy,
-    readonly authorize: () => void,
-    readonly worktrees?: ManagedWorktrees
+    readonly authorize: () => void
   ) {}
   async abortOwnedInvestigation(input: OwnedInvestigationAbort) {
     if (input.boardId !== this.policy.boardId) throw new Error("Investigation cancellation board mismatch")
@@ -46,10 +19,25 @@ export class NativeWorkspaceGateway implements NativeGateway {
     if (method !== "workboard.cards.dispatchWithOptions") return this.gateway.request<T>(method, params)
     if (params.boardId !== this.policy.boardId) throw new Error("Workspace dispatch board mismatch")
     const all = await this.gateway.request<{
-      cards: Array<{ agentId?: string; status: string; metadata?: { automation?: { workspace?: { path?: string } } } }>
+      hasMore?: boolean
+      nextCursor?: unknown
+      cards: Array<{
+        id?: string
+        agentId?: string
+        status: string
+        metadata?: { claim?: { ownerId?: string; expiresAt?: number }; automation?: { workspace?: { path?: string } } }
+      }>
     }>("workboard.cards.list", {})
-    if (!Array.isArray(all.cards)) throw new Error("Workboard card listing unavailable")
+    if (!Array.isArray(all.cards) || all.hasMore || all.nextCursor)
+      throw new Error("Workboard card listing unavailable")
     const busy = new Set(all.cards.filter((c) => c.status === "running").map((c) => c.agentId))
+    for (const card of all.cards) {
+      const claim = card.metadata?.claim
+      if (claim?.ownerId && !(typeof claim.expiresAt === "number" && claim.expiresAt <= Date.now())) {
+        busy.add(claim.ownerId)
+        if (card.agentId) busy.add(card.agentId)
+      }
+    }
     const busyPaths = new Set(
       all.cards
         .filter((c) => c.status === "running")
@@ -93,7 +81,14 @@ export class NativeWorkspaceGateway implements NativeGateway {
       await this.gateway.request("workboard.cards.release", { id: card.id, ownerId })
       heldClaims.delete(card.id)
       if (
-        !all.cards.some((other) => other.agentId === ownerId && other.status === "running") &&
+        !all.cards.some(
+          (other) =>
+            other.id !== card.id &&
+            ((other.agentId === ownerId && other.status === "running") ||
+              ((other.metadata?.claim?.ownerId === ownerId || other.agentId === ownerId) &&
+                other.metadata?.claim?.ownerId &&
+                !(typeof other.metadata.claim.expiresAt === "number" && other.metadata.claim.expiresAt <= Date.now())))
+        ) &&
         ![...heldClaims.values()].includes(ownerId)
       )
         busy.delete(ownerId)
@@ -115,7 +110,6 @@ export class NativeWorkspaceGateway implements NativeGateway {
     )
     const started: unknown[] = []
     const startedCardIds: string[] = []
-    const deferred: Array<{ cardId: string; reason: "worktree-capacity" }> = []
     const maximum = Math.min(this.policy.workerConcurrency, Number(params.maxStarts) || 1)
     for (const card of cards) {
       if (started.length >= maximum) break
@@ -132,63 +126,29 @@ export class NativeWorkspaceGateway implements NativeGateway {
       }
       if (!workspace || !["dir", "worktree"].includes(workspace.kind ?? ""))
         throw new Error("Native dispatch requires an explicit managed workspace")
-      let path = workspace.path
+      let legacyPath: string | undefined
       if (workspace.kind === "worktree") {
         if (
-          !this.worktrees ||
           realpathSync(workspace.sourcePath ?? "") !== realpathSync(this.policy.repository) ||
           workspace.sourceBranch !== `origin/${this.policy.baseBranch}`
         )
           throw new Error("Managed worktree source does not match native policy")
-        this.authorize()
-        try {
-          path = (
-            await this.worktrees.create({
-              repoRoot: this.policy.repository,
-              name: `wb-${card.id}`,
-              baseRef: `origin/${this.policy.baseBranch}`,
-              ownerKind: "workboard",
-              ownerId: card.id
-            })
-          ).path
-        } catch (error) {
-          if (!isWorktreeCapacityError(error)) throw error
-          this.authorize()
-          deferred.push({ cardId: card.id, reason: "worktree-capacity" })
-          continue
-        }
+      } else {
+        if (!workspace.path) throw new Error("Native workspace path unavailable")
+        // Existing directory cards retain their native Workboard confinement checks.
+        // Never rewrite role configuration to make a preserved candidate writable.
+        legacyPath = realpathSync(workspace.path)
+        if (busyPaths.has(legacyPath)) continue
       }
-      if (!path) throw new Error("Native workspace path unavailable")
-      path = realpathSync(path)
-      // A repair may reuse another coder's preserved candidate; never share a live workspace.
-      if (busyPaths.has(path)) continue
-      const snapshot = await this.gateway.request<any>("config.get", {})
-      const agent = (snapshot.config ?? snapshot.parsed)?.agents?.entries?.[card.agentId!]
-      if (!agent) throw new Error("Assigned native agent configuration unavailable")
-      if (agent.sandbox?.mode === "all" && agent.workspace !== path) {
-        if (!snapshot.hash) throw new Error("Configuration revision unavailable for workspace binding")
-        this.authorize()
-        await this.gateway.request("config.patch", {
-          baseHash: snapshot.hash,
-          raw: JSON.stringify({ agents: { entries: { [card.agentId!]: { workspace: path } } } })
-        })
-      }
-      this.authorize()
-      await this.gateway.request("workboard.cards.update", {
-        id: card.id,
-        expectedUpdatedAt: card.updatedAt,
-        patch: { workspace: { kind: "dir", path } }
-      })
       this.authorize()
       started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
       startedCardIds.push(card.id)
       busy.add(card.agentId)
-      busyPaths.add(path)
+      if (legacyPath) busyPaths.add(legacyPath)
     }
     return {
       started,
-      ...(startedCardIds.length ? { startedCardIds } : {}),
-      ...(deferred.length ? { deferred } : {})
+      ...(startedCardIds.length ? { startedCardIds } : {})
     } as T
   }
 }

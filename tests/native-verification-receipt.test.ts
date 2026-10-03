@@ -106,3 +106,10 @@ it("still executes committed input and creates a fresh receipt in a new parent d
   expect(JSON.parse(readFileSync(artifact, "utf8"))).toMatchObject({ exitCode: 0, stdout: "committed input" })
   expect(lstatSync(artifact).mode & 0o777).toBe(0o600)
 })
+
+it("passes the policy's bounded process capacity to the isolated verifier", async () => {
+  const execute = vi.spyOn(osAdapters, "executeDockerSandboxedCommand").mockResolvedValue({ stdout: "", stderr: "" })
+  const root = repository()
+  await runNativeCommand(command, root, join(root, "receipt.json"), { ...sandbox, pidsLimit: 1024 })
+  expect(execute).toHaveBeenCalledWith(command.argv, expect.objectContaining({ pidsLimit: 1024, image: sandbox.image }))
+})

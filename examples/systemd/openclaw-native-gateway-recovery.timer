@@ -1,0 +1,10 @@
+[Unit]
+Description=Check OpenClaw Workboard recovery every five minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=5min
+Unit=openclaw-native-gateway-recovery.service
+
+[Install]
+WantedBy=timers.target

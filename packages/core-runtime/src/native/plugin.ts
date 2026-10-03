@@ -2,8 +2,11 @@ import { isAbsolute, resolve } from "node:path"
 import type { NativeAutonomyPolicy, NativeReviewEvidence } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { authorizeNativeTool, resolveNativeToolRuntime } from "./broker.js"
+import { configuredNativeModels } from "./capabilities.js"
+import { registerNativeCapabilityOperatorMethods } from "./capability-operator.js"
 import { loadNativePolicy, nativeDoctor } from "./doctor.js"
-import { NativeCliGateway } from "./gateway.js"
+import { applyNativeEffectCustody, planNativeEffectCustody } from "./effect-custody.js"
+import { NativeSdkGateway } from "./gateway.js"
 import {
   applyNativePolicyRefresh,
   assertNativeSkillBinding,
@@ -12,7 +15,7 @@ import {
   planNativePolicyRefresh
 } from "./policy-refresh.js"
 import { assertNativeMode } from "./promotion-mode.js"
-import { createNativeOperatorRequest } from "./requests.js"
+import { applyNativeRequestDeferral, createNativeOperatorRequest, planNativeRequestDeferral } from "./requests.js"
 import { NativeAutonomyRuntime } from "./runtime.js"
 import { stopNativeRuntimeCalls, withNativeRuntimeCall, withNativeRuntimeRefresh } from "./runtime-lifetime.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
@@ -24,6 +27,7 @@ import {
   registerNativeSkillEvaluation
 } from "./skills.js"
 import { NativeEvidenceStore } from "./store.js"
+import { deliverNativeIdeas, handleNativeIdeaCommand, sendNativeIdea } from "./telegram-ideas.js"
 import { NativeWorkspaceGateway } from "./workspaces.js"
 
 // Tool catalogs can register the plugin again without starting another service.
@@ -42,6 +46,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
   let stopped = false
   let budgetTimer: ReturnType<typeof setInterval> | undefined
   let budgetCheck: Promise<void> | undefined
+  let ideaTimer: ReturnType<typeof setInterval> | undefined
+  let ideaCheck: Promise<void> | undefined
   const policyFiles = api.pluginConfig?.projects ?? []
   const runtime = (boardId: string): NativeAutonomyRuntime => {
     const item = instances.get(boardId) ?? activeInstances.get(boardId)
@@ -64,31 +70,28 @@ export function registerNativeAutonomyPlugin(api: any): void {
       options
     )
   }
-  // OpenClaw reserves runtime.gateway.request for bundled/official plugins. Use its
-  // authenticated public CLI instead; never import private RPC/auth internals.
+  // OpenClaw reserves runtime.gateway.request for bundled/official plugins. Use
+  // its authenticated public Gateway SDK within this process; never import
+  // private RPC/auth internals or launch a child CLI for each nested call.
   const command = api.pluginConfig?.openclawCommand
   if (policyFiles.length && (typeof command !== "string" || !isAbsolute(command))) {
     throw new Error(
       "Configure autocode.openclawCommand as the absolute active OpenClaw executable; Gateway PATH may select a legacy CLI"
     )
   }
-  const gateway = new NativeCliGateway(command ?? "openclaw")
+  const gateway = new NativeSdkGateway(command ?? "openclaw")
   const makeRuntime = (policy: NativeAutonomyPolicy, store: NativeEvidenceStore) =>
     new NativeAutonomyRuntime(
       policy,
-      new NativeWorkspaceGateway(
-        gateway,
-        policy,
-        () => {
-          const owner = instances.get(policy.boardId)
-          if (!owner?.hasOwnership || owner.policy !== policy)
-            throw new Error("Native workspace dispatch generation unavailable")
-          owner.control.assert()
-          store.authorizeEffect()
-        },
-        api.runtime?.worktrees
-      ),
-      store
+      new NativeWorkspaceGateway(gateway, policy, () => {
+        const owner = instances.get(policy.boardId)
+        if (!owner?.hasOwnership || owner.policy !== policy)
+          throw new Error("Native workspace dispatch generation unavailable")
+        owner.control.assert()
+        store.authorizeEffect()
+      }),
+      store,
+      (api.pluginConfig?.humanInput ?? []).find((item: any) => item.boardId === policy.boardId)
     )
   // Service startup precedes the Gateway accepting authenticated RPCs. Validate
   // before execution instead of waiting on the same Gateway during its startup.
@@ -140,14 +143,37 @@ export function registerNativeAutonomyPlugin(api: any): void {
         })
       }, 15_000)
       budgetTimer.unref()
+      ideaTimer = setInterval(() => {
+        if (ideaCheck) return
+        ideaCheck = (async () => {
+          for (const r of instances.values()) {
+            if (!r.humanInput) continue
+            try {
+              await invoke(r, () =>
+                r.withOwnership(async () => {
+                  if (!r.isPaused()) await r.control.run(() => r.humanInput!.queueApproved())
+                  await deliverNativeIdeas(r, (message) => sendNativeIdea(command, r, message))
+                })
+              )
+            } catch (error) {
+              api.logger.warn(`Idea decisions unavailable: ${String(error)}`)
+            }
+          }
+        })().finally(() => {
+          ideaCheck = undefined
+        })
+      }, 60_000)
+      ideaTimer.unref()
     },
     stop: async () => {
       stopped = true
       ready.clear()
       checking.clear()
       if (budgetTimer) clearInterval(budgetTimer)
+      if (ideaTimer) clearInterval(ideaTimer)
       const drained = [...instances.values()].map(stopNativeRuntimeCalls)
       await budgetCheck
+      await ideaCheck
       await Promise.all(drained)
       for (const value of instances.values()) {
         if (activeInstances.get(value.policy.boardId) === value) activeInstances.delete(value.policy.boardId)
@@ -157,6 +183,103 @@ export function registerNativeAutonomyPlugin(api: any): void {
       configuredFiles.clear()
     }
   })
+  if ((api.pluginConfig?.humanInput ?? []).length) {
+    if (typeof api.registerCommand !== "function")
+      throw new Error("Telegram idea commands require the public command API")
+    for (const name of ["ideas", "idea"])
+      api.registerCommand({
+        name,
+        description:
+          name === "ideas"
+            ? "Show short decisions for high-impact coding ideas"
+            : "Approve or skip an exact coding idea",
+        channels: ["telegram"],
+        acceptsArgs: true,
+        requireAuth: true,
+        handler: (ctx: any) => handleNativeIdeaCommand([...instances.values()], ctx, name === "idea", invoke)
+      })
+  }
+  registerMethod(
+    "autocode.ideas.list",
+    async ({ params, respond }: any) => {
+      const input = runtime(params.boardId).humanInput
+      respond(true, {
+        configured: Boolean(input),
+        deliveryEnabled: input?.config.telegramDelivery === true,
+        ideas: input?.list() ?? []
+      })
+    },
+    { scope: "operator.read" }
+  )
+  registerNativeCapabilityOperatorMethods({
+    registerMethod: (name, handler, options) =>
+      api.registerGatewayMethod(
+        name,
+        async (input: any) => {
+          try {
+            if (!input.client?.connect?.scopes?.includes("operator.admin"))
+              throw new Error("Operator admin scope required")
+            const operatorId = input.client.connect.device?.id ?? input.client.connect.client?.id
+            if (typeof operatorId !== "string" || !operatorId.trim())
+              throw new Error("Verified operator identity required")
+            const r = runtime(input.params?.boardId)
+            await invoke(r, () => handler(input))
+          } catch (error) {
+            input.respond(false, undefined, { code: "autocode_error", message: String(error) })
+          }
+        },
+        options
+      ),
+    runtime,
+    candidatePolicy: (boardId) => {
+      const file = configuredFiles.get(boardId)
+      if (!file) throw new Error("Capability administration requires the owning service registration")
+      return loadNativePolicy(file)
+    },
+    configuredModels: async (policy) => {
+      const response = await gateway.request("config.get", {})
+      return configuredNativeModels(response.config ?? response.parsed, policy)
+    }
+  })
+  registerMethod(
+    "autocode.effects.hold.plan",
+    async ({ params, respond }: any) => {
+      try {
+        if (Object.keys(params).some((key) => !["boardId", "intentIds", "reason"].includes(key)))
+          throw new Error("Unknown custody plan argument")
+        respond(true, await planNativeEffectCustody(runtime(params.boardId), params.intentIds, params.reason))
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.read" }
+  )
+  // Shares the host's exclusive native-call barrier; never retires or restarts the runtime.
+  api.registerGatewayMethod(
+    "autocode.effects.hold.apply",
+    async ({ params, client, respond }: any) => {
+      try {
+        if (!client?.connect?.scopes?.includes("operator.admin")) throw new Error("Operator admin scope required")
+        const operatorId = client.connect.device?.id ?? client.connect.client?.id
+        if (typeof operatorId !== "string" || !operatorId.trim()) throw new Error("Verified operator identity required")
+        if (Object.keys(params).some((key) => !["boardId", "plan"].includes(key)))
+          throw new Error("Unknown custody apply argument")
+        const r = runtime(params.boardId)
+        respond(
+          true,
+          await withNativeRuntimeRefresh(
+            r,
+            () => activeInstances.get(params.boardId) === r,
+            async (_retire, assertGeneration) =>
+              r.withOwnership(() => applyNativeEffectCustody(r, params.plan, operatorId, assertGeneration))
+          )
+        )
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.admin" }
+  )
   registerMethod(
     "autocode.policy.refresh.plan",
     async ({ params, respond }: any) => {
@@ -274,6 +397,44 @@ export function registerNativeAutonomyPlugin(api: any): void {
       }
     },
     { scope: "operator.read" }
+  )
+  registerMethod(
+    "autocode.requests.defer.plan",
+    async ({ params, respond }: any) => {
+      try {
+        if (Object.keys(params).some((key) => !["boardId", "requestId", "reason"].includes(key)))
+          throw new Error("Unknown request deferral plan argument")
+        respond(true, planNativeRequestDeferral(runtime(params.boardId), params.requestId, params.reason))
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.read" }
+  )
+  registerMethod(
+    "autocode.requests.defer.apply",
+    async ({ params, client, respond }: any) => {
+      try {
+        if (Object.keys(params).some((key) => !["boardId", "plan"].includes(key)))
+          throw new Error("Unknown request deferral apply argument")
+        if (!client?.connect?.scopes?.includes("operator.admin")) throw new Error("Operator admin scope required")
+        const operatorId = client.connect.device?.id ?? client.connect.client?.id
+        if (typeof operatorId !== "string" || !operatorId.trim()) throw new Error("Verified operator identity required")
+        const r = runtime(params.boardId)
+        respond(
+          true,
+          await r.withOwnership(async () =>
+            applyNativeRequestDeferral(r, params.plan, {
+              operatorId,
+              rationale: params.plan?.reason
+            })
+          )
+        )
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.admin" }
   )
   registerMethod(
     "autocode.dashboard",
@@ -622,6 +783,16 @@ export function registerNativeAutonomyPlugin(api: any): void {
               description: "Strings describing alternatives and why they were rejected or deferred."
             },
             implementationPrompt: field,
+            complexity: {
+              type: "object",
+              required: ["tier", "rationale"],
+              properties: {
+                tier: { type: "string", enum: ["simple", "routine", "very-complex"] },
+                rationale: field
+              },
+              description:
+                "Default routine. Simple requires a small bounded change; very-complex covers difficult architecture or multi-system reasoning. Operator scope constraints can raise this tier."
+            },
             quality: {
               type: "object",
               description: "Required for persona quality investigations.",
@@ -677,20 +848,9 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_proposals",
-      "Read persona proposals with budget-aware value rankings for a discovery round.",
+      "Read persona proposals, budget-aware value rankings, and current native scope reservations for a discovery round. An unreserved snapshot permits an admission attempt, not approval; admission rechecks reservations and all quality gates.",
       { roundId: field },
-      (p) => {
-        const r = runtime(p.boardId)
-        const ranking = r.quality.selection(p.roundId)
-        return r.store
-          .list<any>("proposal")
-          .filter((item) => item.value.roundId === p.roundId)
-          .map((item) => ({
-            ...item,
-            selection: ranking.find((d) => d.id === item.id),
-            decision: r.store.get("decision", item.id)
-          }))
-      }
+      (p) => runtime(p.boardId).proposals(p.roundId)
     ),
     tool(
       "autocode_admit",
@@ -700,7 +860,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_submit",
-      "Submit scoped edits from the assigned managed worktree. The host broker records a commit without exposing Git metadata to the sandbox, then independently verifies it. Never include agent notes or credentials.",
+      "Submit scoped edits from the assigned managed worktree. Use worktreePath /workspace for the sandbox workspace; the broker resolves only your authenticated card's host worktree. The broker records the commit without exposing Git metadata, then independently verifies it. Never include agent notes or credentials.",
       { workflowId: field, worktreePath: field },
       (p, ctx) => runtime(p.boardId).submit(ctx.agentId, ctx.sessionKey, p.workflowId, p.worktreePath)
     ),
@@ -742,31 +902,40 @@ export function registerNativeAutonomyPlugin(api: any): void {
     { scope: "operator.admin" }
   )
   api.registerTool(
-    (ctx: any) =>
-      tools.map((definition) => ({
-        ...definition,
-        execute: async (_id: string, params: any) => {
-          if (!activeInstances.has(params.boardId))
-            throw new Error("Native remote tool broker unavailable: trusted local plugin factory context required")
-          return invoke(runtime(params.boardId), async () => {
-            // Sandboxed sessions can call the narrow broker: identity comes from
-            // the host factory closure, while board/card ownership is resolved server-side.
+    {
+      contextVersion: 2,
+      create: (ctx: any) =>
+        tools.map((definition) => ({
+          ...definition,
+          execute: async (_id: string, params: any) => {
+            ctx.assertInvocationCurrent()
             if (!activeInstances.has(params.boardId))
               throw new Error("Native remote tool broker unavailable: trusted local plugin factory context required")
-            await ensureReady(runtime(params.boardId))
-            const assigned = await resolveNativeToolRuntime(activeInstances.values(), ctx)
-            if (assigned.policy.boardId !== params.boardId) {
-              assigned.store.event("tool.denied", assigned.policy.boardId, {
-                reason: "board selector differs from live assignment"
+            return runtime(params.boardId).store.withEffectAuthority(ctx.assertInvocationCurrent, () =>
+              invoke(runtime(params.boardId), async () => {
+                // Sandboxed sessions can call the narrow broker: identity comes from
+                // the host factory closure, while board/card ownership is resolved server-side.
+                if (!activeInstances.has(params.boardId))
+                  throw new Error(
+                    "Native remote tool broker unavailable: trusted local plugin factory context required"
+                  )
+                await ensureReady(runtime(params.boardId))
+                const assigned = await resolveNativeToolRuntime(activeInstances.values(), ctx)
+                if (assigned.policy.boardId !== params.boardId) {
+                  assigned.store.event("tool.denied", assigned.policy.boardId, {
+                    reason: "board selector differs from live assignment"
+                  })
+                  throw new Error("Native tool denied: board is not assigned to this session")
+                }
+                ctx.assertInvocationCurrent()
+                const result = await definition.execute(params, ctx)
+                return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }
               })
-              throw new Error("Native tool denied: board is not assigned to this session")
-            }
-            const result = await definition.execute(params, ctx)
-            return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }
-          })
-        }
-      })),
-    { names: tools.map((t) => t.name), optional: true }
+            )
+          }
+        }))
+    },
+    { names: tools.map((t) => t.name), optional: true, confinement: "session-bound" }
   )
   api.on("subagent_ended", async () => {
     for (const r of instances.values()) {

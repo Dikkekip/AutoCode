@@ -59,7 +59,8 @@ export function nativeCanaryScopeDigest(policy: NativeAutonomyPolicy): string {
       exemptions: policy.verificationExemptions,
       authority: policy.verificationAuthority,
       requiredCi: policy.requiredCi,
-      artifactSha256: policy.deployment?.artifactSha256
+      artifactSha256: policy.deployment?.artifactSha256,
+      prepare: policy.deployment?.prepare
     })
   )
 }

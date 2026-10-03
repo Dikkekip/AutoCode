@@ -10,6 +10,7 @@ import {
   nativeRepositoryIdentity,
   nativeVerificationDigest
 } from "../packages/core-runtime/src/native/provenance.js"
+import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
 import * as releaseModule from "../packages/core-runtime/src/native/release.js"
 import {
   type NativeReleaseIO,
@@ -966,5 +967,143 @@ describe("seeded accepted-effect fault replay", () => {
     expect(s.workflow.deployedSha).toBe(s.mergedSha)
     expect(vi.mocked(s.io.github).mock.calls.filter(([, args]) => args[1] === "merge")).toHaveLength(1)
     expect(vi.mocked(s.io.command).mock.calls.filter(([c]) => c.argv[0] === "deploy")).toHaveLength(1)
+  })
+})
+
+it("prepares one immutable artifact for an exact release and rejects changed preparation evidence", async () => {
+  const s = setup()
+  const p = s.runtime.policy.deployment!
+  delete p.artifactSha256
+  p.prepare = { argv: ["prepare"], cwd: ".", timeoutSeconds: 60 }
+  reseal(s)
+  const original = s.io.command
+  let preparations = 0
+  s.io.command = async (...args) => {
+    const result = await original(...args)
+    if (args[0] === p.prepare) {
+      preparations++
+      result.stdout = JSON.stringify({
+        targetId: p.targetId,
+        revision: s.mergedSha,
+        artifactSha256: "9".repeat(64),
+        staged: true
+      })
+      writeFileSync(result.artifact, JSON.stringify(result))
+    }
+    return result
+  }
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  expect(preparations).toBe(1)
+  expect(s.workflow.deployedSha).toBe(s.mergedSha)
+  const prepared = s.store.get<any>("deployment-artifact", "workflow:workflow:attempt:0:artifact")!
+  expect(prepared.artifactSha256).toBe("9".repeat(64))
+  writeFileSync(prepared.evidence.path, "replaced")
+  await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("evidence changed")
+})
+it("does not deploy preparation for a different revision or unstaged artifact", async () => {
+  for (const staged of [true, false]) {
+    const s = setup(),
+      p = s.runtime.policy.deployment!
+    delete p.artifactSha256
+    p.prepare = { argv: ["prepare"], cwd: ".", timeoutSeconds: 60 }
+    reseal(s)
+    const original = s.io.command
+    s.io.command = async (...args) => {
+      const result = await original(...args)
+      if (args[0] === p.prepare)
+        result.stdout = JSON.stringify({
+          targetId: p.targetId,
+          revision: staged ? "d".repeat(40) : s.mergedSha,
+          artifactSha256: "9".repeat(64),
+          staged
+        })
+      return result
+    }
+    await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("exact staged release")
+    expect(s.store.get("operation", "workflow:deploy")).toBeNull()
+  }
+})
+
+describe("verification refresh after a policy change", () => {
+  function stale() {
+    const s = setup()
+    delete s.workflow.prNumber
+    s.workflow.repairCount = 2
+    s.workflow.reviewCardId = "old-review"
+    s.workflow.stageCards = { Verify: "old-verify", Review: "old-review" }
+    s.store.put("workflow", "workflow", s.workflow)
+    s.runtime.policy.workerConcurrency = 2
+    vi.spyOn(NativeQualityRuntime.prototype, "ensureDesign").mockResolvedValue(false)
+    return s
+  }
+  it("archives intact receipts and keeps the exact candidate, submission and coding budget", async () => {
+    const s = stale()
+    const prior = structuredClone(s.workflow)
+    expect(await s.runtime.advanceWorkflow("workflow")).toBe(0)
+    const w = s.runtime.requireWorkflow("workflow")
+    expect(w.blocker).toBeUndefined()
+    expect(w.candidate).toEqual(prior.candidate)
+    expect(w.submission).toEqual(prior.submission)
+    expect(w.lifecycle).toMatchObject({ state: "design_wait", attemptId: prior.lifecycle!.attemptId })
+    expect(w.repairCount).toBe(2)
+    expect(w.verification).toBeUndefined()
+    expect(w.review).toBeUndefined()
+    expect(w.reviewCardId).toBeUndefined()
+    expect(w.stageCards).toEqual({})
+    expect(s.store.list<any>("verification-history")[0]!.value.verification).toEqual(prior.verification)
+    expect(s.store.list<any>("verification-history")[0]!.value.review).toEqual(prior.review)
+    await s.runtime.advanceWorkflow("workflow")
+    expect(s.store.list("verification-history")).toHaveLength(1)
+  })
+  it.each(["provenance", "check"])("does not retire tampered %s artifacts", async (kind) => {
+    const s = stale()
+    const path =
+      kind === "provenance"
+        ? s.workflow.verification!.provenanceArtifact!.path
+        : s.workflow.verification!.checks[0]!.artifact
+    writeFileSync(path, "{}")
+    await s.runtime.advanceWorkflow("workflow")
+    expect(s.runtime.requireWorkflow("workflow").blocker).toMatch(/artifact/i)
+    expect(s.runtime.requireWorkflow("workflow").verification).toEqual(s.workflow.verification)
+    expect(s.store.list("verification-history")).toHaveLength(0)
+  })
+  it("preserves accepted release operations without replay or invalidation", async () => {
+    const s = stale()
+    s.store.put("operation", "workflow:push", { state: "pending" })
+    await s.runtime.advanceWorkflow("workflow")
+    const w = s.runtime.requireWorkflow("workflow")
+    expect(w.blocker).toBeUndefined()
+    expect(w.verification).toEqual(s.workflow.verification)
+    expect(w.review).toEqual(s.workflow.review)
+    expect(s.store.list("verification-history")).toHaveLength(0)
+  })
+  it("uses distinct verification cards for changed policies and review cards for distinct receipts", async () => {
+    const s = setup()
+    s.runtime.transitionWorkflow("workflow", s.workflow, "design_wait")
+    const first = await s.runtime.stage("workflow", s.workflow, "Verify", "blocked", "Verify")
+    s.runtime.policy.workerConcurrency = 2
+    const second = await s.runtime.stage("workflow", s.workflow, "Verify", "blocked", "Verify")
+    expect(second).not.toBe(first)
+    s.workflow.verification!.plan = planNativeVerification(s.runtime.policy, s.workflow.candidate!.files)
+    reseal(s)
+    // This identity-only test uses a synthetic complete evidence owner; real committed diffs are covered in native-quality.
+    vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
+      baseSha: s.workflow.candidate!.baseSha,
+      headSha: s.workflow.candidate!.headSha,
+      changesDigest: s.workflow.verification!.provenance!.diffDigest,
+      patchSha256: nativeContentDigest("fixture"),
+      content: "fixture",
+      complete: true,
+      truncated: false,
+      redacted: false,
+      trust: "fixture"
+    })
+    const review = await s.runtime.stage("workflow", s.workflow, "Review", "ready", "{}")
+    s.workflow.verification!.provenance!.executionId = "fresh-verifier-execution"
+    const raw = JSON.stringify(s.workflow.verification!.provenance)
+    writeFileSync(s.workflow.verification!.provenanceArtifact!.path, raw)
+    s.workflow.verification!.provenanceArtifact!.sha256 = nativeContentDigest(raw)
+    expect(await s.runtime.stage("workflow", s.workflow, "Review", "ready", "{}")).not.toBe(review)
   })
 })

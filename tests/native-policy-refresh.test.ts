@@ -1,18 +1,29 @@
+import { createHash } from "node:crypto"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
+import {
+  nativeCustodyLocalEvidence,
+  nativeCustodyLocalIdentity
+} from "../packages/core-runtime/src/native/custody-local-evidence.js"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
-import { NativeCliGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { nativeEffectCustodyHeld } from "../packages/core-runtime/src/native/effect-custody.js"
+import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
 import { nativeLoadedPolicyDigest } from "../packages/core-runtime/src/native/policy-refresh.js"
 import type { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { withNativeRuntimeCall } from "../packages/core-runtime/src/native/runtime-lifetime.js"
+import { upgradeNativeLifecycle } from "../packages/domain/src/native-lifecycle.js"
 
 vi.mock("../packages/core-runtime/src/native/doctor.js", async (original) => ({
   ...(await original<typeof import("../packages/core-runtime/src/native/doctor.js")>()),
   nativeDoctor: vi.fn()
+}))
+vi.mock("../packages/core-runtime/src/native/custody-local-evidence.js", () => ({
+  nativeCustodyLocalEvidence: vi.fn(),
+  nativeCustodyLocalIdentity: vi.fn()
 }))
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -64,7 +75,7 @@ async function setup(configure?: (policy: any) => void) {
     logger: { warn: vi.fn() }
   })
   vi.mocked(nativeDoctor).mockResolvedValue({ ok: true, enabled: true, boardId: "refresh-app", checks: [] })
-  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method) => {
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method) => {
     if (method === "workboard.cards.list") return { cards: [] } as any
     if (method === "sessions.list") return { sessions: [], totalCount: 0, hasMore: false, nextOffset: null } as any
     throw new Error("Unexpected gateway method " + method)
@@ -73,7 +84,9 @@ async function setup(configure?: (policy: any) => void) {
     (globalThis as any)[Symbol.for("autocode.native.service-runtimes.v1")].get("refresh-app") as NativeAutonomyRuntime
   const call = async (method: string, params: any = {}, client: any = admin) => {
     let response: any
-    await methods.get(method)({
+    const handler = methods.get(method)
+    if (!handler) return [false, undefined, { code: "unknown_method" }]
+    await handler({
       params: { boardId: "refresh-app", ...params },
       client,
       respond: (...args: any[]) => {
@@ -497,7 +510,7 @@ it("CLI submits exact saved plan through the native admin RPC", async () => {
   const { registerNativeAutonomyCommands } = await import("../apps/dispatcher-cli/src/native-autonomy.js")
   const program = new Command()
   registerNativeAutonomyCommands(program, { stdout: vi.fn() })
-  s.request.mockResolvedValue({ accepted: true })
+  const cliRequest = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ accepted: true })
   await program.parseAsync(
     [
       "native",
@@ -514,7 +527,7 @@ it("CLI submits exact saved plan through the native admin RPC", async () => {
     ],
     { from: "user" }
   )
-  expect(s.request).toHaveBeenLastCalledWith("autocode.policy.refresh.apply", {
+  expect(cliRequest).toHaveBeenLastCalledWith("autocode.policy.refresh.apply", {
     boardId: "refresh-app",
     plan,
     reason: "Reviewed exact candidate"
@@ -794,4 +807,573 @@ it("rejects an owned active session appearing on the second page of the second p
   expect((await s.apply(plan))[0]).toBe(false)
   expect(proof).toBe(2)
   expect(s.get()).toBe(before)
+})
+
+it.each([
+  "closed",
+  "pending-foreign",
+  "unconfirmed-replacement",
+  "changed-replacement",
+  "changed-old-version",
+  "forged-operation"
+])("refresh recognizes only exact closed repair supersession: %s", async (scenario) => {
+  const s = await setup(),
+    before = s.get(),
+    store = before.store
+  const id = "card:workflow:preserved:repair:8"
+  const input = { idempotencyKey: "workflow:preserved:repair:8", workspace: { kind: "dir", path: s.repo } }
+  const replacementInput = {
+    idempotencyKey: "workflow:preserved:repair:8:managed-source-v1",
+    workspace: { kind: "worktree", sourcePath: s.repo, sourceBranch: "origin/main" }
+  }
+  store.put("effect-intent", id, { state: "pending", input })
+  const priorVersion = store.version("effect-intent", id)
+  store.put("effect-intent", id, {
+    state: "superseded",
+    input,
+    replacementId: `${id}:managed-source-v1`,
+    replacementInput,
+    supersession: { workflowId: "preserved", completeAllCardAbsence: true, priorVersion }
+  })
+  store.put("effect-intent", `${id}:managed-source-v1`, {
+    state: scenario === "unconfirmed-replacement" ? "pending" : "confirmed",
+    input: scenario === "changed-replacement" ? { ...replacementInput, unexpected: true } : replacementInput,
+    card: { id: "actual-confirmed-replacement" }
+  })
+  if (scenario === "changed-old-version") store.put("effect-intent", id, store.get("effect-intent", id))
+  if (scenario === "pending-foreign")
+    store.put("effect-intent", "card:foreign", { state: "pending", input: { idempotencyKey: "foreign" } })
+  if (scenario === "forged-operation") store.put("operation", id, store.get("effect-intent", id))
+  const preserved = store.get("effect-intent", id),
+    version = store.version("effect-intent", id)
+  s.edit((p) => {
+    p.verification[0].argv = ["true", "reviewed-change"]
+  })
+  const result = await s.apply(await s.plan())
+  expect(result[0]).toBe(scenario === "closed")
+  expect(store.get("effect-intent", id)).toEqual(preserved)
+  expect(store.version("effect-intent", id)).toBe(version)
+  if (scenario !== "closed") expect(s.get()).toBe(before)
+  if (scenario === "pending-foreign")
+    expect(store.get("effect-intent", "card:foreign")).toEqual({
+      state: "pending",
+      input: { idempotencyKey: "foreign" }
+    })
+})
+
+async function custodyFixture() {
+  const s = await setup(),
+    store = s.get().store,
+    id = `card:workflow:${"a".repeat(64)}:implement`
+  const input = {
+    boardId: "refresh-app",
+    title: "Preserved original",
+    idempotencyKey: id.slice(5),
+    status: "blocked",
+    workspace: { kind: "worktree", sourcePath: s.repo, sourceBranch: "origin/main" },
+    notes: "Preserve original uncertain input"
+  }
+  store.commit([{ kind: "effect-intent", id, value: { input, state: "pending" }, expectedVersion: 0 }], {
+    kind: "effect.prepared",
+    subject: id,
+    value: { correlationKey: input.idempotencyKey }
+  })
+  vi.mocked(nativeCustodyLocalEvidence).mockReturnValue({
+    configPath: "/fixture/local/openclaw.json",
+    configSha256: "c".repeat(64),
+    gatewayMode: "local",
+    port: 18789,
+    currentPid: 100,
+    processStartTicks: 100,
+    ticksPerSecond: 100,
+    bootId: "b".repeat(32),
+    oldPid: 99,
+    unit: "fixture.service",
+    rejectedAtUs: 1000,
+    rejectionMessageSha256: "d".repeat(64),
+    rejectedMonotonicUs: 1,
+    journalRejectionSha256: "e".repeat(64),
+    uncertainty: "fixture local observation; original wire key unavailable"
+  })
+  const {
+    oldPid: _oldPid,
+    rejectedAtUs: _at,
+    rejectedMonotonicUs: _mono,
+    rejectionMessageSha256: _message,
+    journalRejectionSha256: _journal,
+    uncertainty: _uncertainty,
+    ...identity
+  } = vi.mocked(nativeCustodyLocalEvidence)(1)
+  vi.mocked(nativeCustodyLocalIdentity).mockReturnValue(identity)
+  return {
+    ...s,
+    store,
+    id,
+    input,
+    holdPlan: () =>
+      s.call("autocode.effects.hold.plan", {
+        intentIds: [id],
+        reason: "Hold unresolved original create; no replay or success assertion"
+      }),
+    holdApply: (plan: any, client: any = admin) => s.call("autocode.effects.hold.apply", { plan }, client)
+  }
+}
+it("native custody API preserves uncertain input and prevents replay while permitting exact idle refresh", async () => {
+  const s = await custodyFixture(),
+    original = s.store.get("effect-intent", s.id),
+    version = s.store.version("effect-intent", s.id)
+  const planned = await s.holdPlan()
+  expect(planned[0]).toBe(true)
+  const applied = await s.holdApply(planned[1])
+  expect(applied[0]).toBe(true)
+  expect(applied[1].externalSuccessConfirmed).toBe(false)
+  expect(s.store.get("effect-intent", s.id)).toEqual(original)
+  expect(s.store.version("effect-intent", s.id)).toBe(version)
+  expect(nativeEffectCustodyHeld(s.store, s.id)).toBe(true)
+  await expect(s.get().createCard(s.input)).rejects.toThrow(/held intent/)
+  expect((await s.apply(await s.plan()))[0]).toBe(true)
+  expect(s.store.get("effect-intent", s.id)).toEqual(original)
+})
+it.each([
+  "forged-plan",
+  "changed-input",
+  "wrong-owner",
+  "active-card",
+  "incomplete-cards",
+  "late-card",
+  "manual-card",
+  "archived-card",
+  "operation",
+  "unselected-pending",
+  "generation",
+  "missing-local-proof",
+  "no-admin"
+])("native custody refuses %s", async (scenario) => {
+  const s = await custodyFixture(),
+    planned = await s.holdPlan()
+  expect(planned[0]).toBe(true)
+  const plan = planned[1],
+    before = s.get()
+  if (scenario === "forged-plan") plan.reason = "Forged"
+  if (scenario === "changed-input")
+    s.store.put("effect-intent", s.id, { input: { ...s.input, notes: "Changed" }, state: "pending" })
+  if (scenario === "wrong-owner") s.store.put("workflow", "a".repeat(64), { unexpected: true })
+  if (
+    scenario === "active-card" ||
+    scenario === "incomplete-cards" ||
+    scenario === "late-card" ||
+    scenario === "manual-card" ||
+    scenario === "archived-card"
+  )
+    s.request.mockImplementation(async (method) => {
+      if (method === "workboard.cards.list")
+        return scenario === "incomplete-cards"
+          ? ({ cards: [], hasMore: true } as any)
+          : ({
+              cards: [
+                {
+                  id: "remote",
+                  boardId: "refresh-app",
+                  title: "Remote",
+                  status: scenario === "active-card" ? "running" : "done",
+                  metadata: {
+                    automation: {
+                      boardId: "refresh-app",
+                      idempotencyKey:
+                        scenario === "manual-card" ? `manual:${s.input.idempotencyKey}` : s.input.idempotencyKey
+                    },
+                    ...(scenario === "archived-card" ? { archivedAt: "retained" } : {})
+                  }
+                }
+              ]
+            } as any)
+      if (method === "sessions.list") return { sessions: [], totalCount: 0, hasMore: false, nextOffset: null } as any
+      throw new Error("Unexpected method")
+    })
+  if (scenario === "operation") s.store.put("operation", "uncertain", { state: "pending" })
+  if (scenario === "unselected-pending") s.store.put("effect-intent", "card:unselected", { state: "pending" })
+  if (scenario === "generation") plan.generation = "stale"
+  if (scenario === "missing-local-proof")
+    vi.mocked(nativeCustodyLocalEvidence).mockImplementation(() => {
+      throw new Error("Original local create rejection is missing or ambiguous")
+    })
+  const result = await s.holdApply(plan, scenario === "no-admin" ? { connect: { scopes: ["operator.read"] } } : admin)
+  expect(result[0]).toBe(false)
+  expect(s.store.get("effect-custody", s.id)).toBeNull()
+  expect(s.get()).toBe(before)
+})
+it("forged hold without native audit cannot admit refresh; late card invalidates genuine hold", async () => {
+  const s = await custodyFixture(),
+    p = (await s.holdPlan())[1]
+  const entry = p.entries[0]
+  s.store.put("effect-custody", s.id, {
+    state: "unresolved-held-no-replay",
+    entry,
+    operatorId: "forged",
+    reason: "Forged",
+    boardId: "refresh-app",
+    planDigest: p.digest
+  })
+  expect(nativeEffectCustodyHeld(s.store, s.id)).toBe(false)
+  expect((await s.apply(await s.plan()))[0]).toBe(false)
+})
+
+it.each([
+  "raw",
+  "manual",
+  "archived",
+  "unknown-title"
+])("published hold stops native refresh when %s matching card later appears", async (variant) => {
+  const s = await custodyFixture(),
+    p = (await s.holdPlan())[1]
+  expect((await s.holdApply(p))[0]).toBe(true)
+  const rawBefore = s.store.db
+    .prepare("SELECT data FROM native_records WHERE kind='effect-intent' AND id=?")
+    .get(s.id)?.data
+  s.request.mockImplementation(async (method) => {
+    if (method === "workboard.cards.list")
+      return {
+        cards: [
+          {
+            id: "late",
+            boardId: "refresh-app",
+            title: s.input.title,
+            status: "done",
+            metadata: {
+              ...(variant === "archived" ? { archivedAt: "retained" } : {}),
+              automation:
+                variant === "unknown-title"
+                  ? {}
+                  : {
+                      idempotencyKey: variant === "manual" ? `manual:${s.input.idempotencyKey}` : s.input.idempotencyKey
+                    }
+            }
+          }
+        ]
+      } as any
+    if (method === "sessions.list") return { sessions: [], totalCount: 0, hasMore: false, nextOffset: null } as any
+    throw new Error("Unexpected method")
+  })
+  expect((await s.apply(await s.plan()))[0]).toBe(false)
+  await expect((s.get() as any).authorizeDispatch({ request: s.request })).rejects.toThrow(/matching remote card/)
+  expect(
+    s.store.db.prepare("SELECT data FROM native_records WHERE kind='effect-intent' AND id=?").get(s.id)?.data
+  ).toBe(rawBefore)
+})
+it("holds cannot be planned with an active lease or active session, and caller proof fields are rejected", async () => {
+  const s = await custodyFixture()
+  const lease = s.store.acquire("foreign-operation", 60_000)!
+  expect((await s.holdPlan())[0]).toBe(false)
+  s.store.release(lease)
+  expect(
+    (await s.call("autocode.effects.hold.plan", { intentIds: [s.id], reason: "Hold", journalProof: true }))[0]
+  ).toBe(false)
+  s.request.mockImplementation(async (method) => {
+    if (method === "workboard.cards.list") return { cards: [] } as any
+    if (method === "sessions.list")
+      return {
+        sessions: [
+          {
+            key: "agent:coder:active",
+            agentId: "coder",
+            status: "running",
+            hasActiveRun: true,
+            activeRunIds: ["actual"]
+          }
+        ],
+        totalCount: 1,
+        hasMore: false,
+        nextOffset: null
+      } as any
+    throw new Error("Unexpected method")
+  })
+  expect((await s.holdPlan())[0]).toBe(false)
+})
+
+async function blockedCustodyFixture(activeOwner = false) {
+  const s = await custodyFixture(),
+    workflowId = "a".repeat(64)
+  s.store.db.prepare("DELETE FROM native_records WHERE kind='effect-intent' AND id=?").run(s.id)
+  s.store.db.prepare("DELETE FROM native_versions WHERE kind='effect-intent' AND id=?").run(s.id)
+  const id = `card:workflow:${workflowId}:repair:1`
+  const input = {
+    ...s.input,
+    idempotencyKey: id.slice(5),
+    workspace: { kind: "dir", path: "/previous/owned/candidate" }
+  }
+  const workflow = {
+    proposal: { title: "Preserved", allowedPaths: ["src"], acceptance: ["works"], implementationPrompt: "Preserve" },
+    rootCardId: "root",
+    implementationCardId: "implementation",
+    stageCards: {},
+    repairCount: 0,
+    blocker: "workspace path is outside the caller allowed workspaces",
+    lifecycle: upgradeNativeLifecycle(workflowId, { blocker: "workspace path is outside" }),
+    candidate: {
+      headSha: "1".repeat(40),
+      baseSha: "2".repeat(40),
+      files: ["src/fix.ts"],
+      cwd: "/previous/owned/candidate"
+    },
+    designReview: { verdict: "changes" },
+    riskAssessment: { level: "low" },
+    submission: { headSha: "1".repeat(40) }
+  }
+  workflow.lifecycle = upgradeNativeLifecycle(workflowId, workflow)
+  if (activeOwner) workflow.lifecycle = { ...workflow.lifecycle, state: "verification" }
+  s.store.put("workflow", workflowId, workflow)
+  s.store.put("admission", workflowId, { phase: "prepared", original: true })
+  s.store.put("attempt-evidence", `${workflowId}:1`, {
+    ...workflow,
+    lifecycle: { ...workflow.lifecycle, state: "design_wait" },
+    reason: "design changes",
+    observation: "Original reviewer reason"
+  })
+  s.store.commit([{ kind: "effect-intent", id, value: { state: "pending", input }, expectedVersion: 0 }], {
+    kind: "effect.prepared",
+    subject: id,
+    value: { correlationKey: input.idempotencyKey }
+  })
+  s.request.mockImplementation(async (method) => {
+    if (method === "workboard.cards.list")
+      return {
+        cards: [
+          { id: "root", title: "Task", status: "blocked" },
+          { id: "implementation", title: "Implement", status: "blocked" }
+        ]
+      } as any
+    if (method === "sessions.list") return { sessions: [], totalCount: 0, hasMore: false, nextOffset: null } as any
+    throw new Error(`Unexpected method ${method}`)
+  })
+  return {
+    ...s,
+    id,
+    input,
+    workflowId,
+    workflow,
+    holdPlan: () =>
+      s.call("autocode.effects.hold.plan", {
+        intentIds: [id],
+        reason: "Preserve unresolved rejected repair without replay"
+      })
+  }
+}
+it("blocked-owner custody survives genuine native cancellation without changing original pending bytes or budgets", async () => {
+  const s = await blockedCustodyFixture()
+  const raw = s.store.db.prepare("SELECT data FROM native_records WHERE kind='effect-intent' AND id=?").get(s.id)?.data
+  const version = s.store.version("effect-intent", s.id)
+  const p = await s.holdPlan()
+  expect(p[0]).toBe(true)
+  expect((await s.holdApply(p[1]))[0]).toBe(true)
+  expect(nativeEffectCustodyHeld(s.store, s.id)).toBe(true)
+  const retry = await s.get().planWorkflowRecovery(s.workflowId, "retry", "Never replay held input")
+  expect(retry.allowed).toBe(false)
+  const cancel = await s.get().planWorkflowRecovery(s.workflowId, "cancel", "Abandon unresolved rejected repair")
+  expect(cancel.blockers).toEqual([])
+  expect((await s.get().applyWorkflowRecovery(cancel, "reviewed-operator")).applied).toBe(true)
+  expect(nativeEffectCustodyHeld(s.store, s.id)).toBe(true)
+  const current = s.store.get<any>("workflow", s.workflowId)
+  expect(current.lifecycle.attempt).toBe(s.workflow.lifecycle.attempt)
+  expect(current.repairCount).toBe(0)
+  expect(current.candidate).toEqual(s.workflow.candidate)
+  const archive = await s
+    .get()
+    .planWorkflowRecovery(s.workflowId, "archive", "Archive safely cancelled original while retaining uncertainty")
+  expect(archive.blockers).toEqual([])
+  expect((await s.get().applyWorkflowRecovery(archive, "reviewed-operator")).applied).toBe(true)
+  expect(nativeEffectCustodyHeld(s.store, s.id)).toBe(true)
+  expect(s.store.get<any>("workflow", s.workflowId).archivedAt).toBeTruthy()
+  expect(s.store.version("effect-intent", s.id)).toBe(version)
+  expect(
+    s.store.db.prepare("SELECT data FROM native_records WHERE kind='effect-intent' AND id=?").get(s.id)?.data
+  ).toBe(raw)
+  expect((await s.apply(await s.plan()))[0]).toBe(true)
+})
+it.each([
+  "archive-attempt",
+  "archive-state",
+  "admission",
+  "active-owner",
+  "existing-pr",
+  "existing-merge"
+])("blocked-owner custody rejects changed %s", async (scenario) => {
+  const s = await blockedCustodyFixture(scenario === "active-owner")
+  if (scenario.startsWith("archive")) {
+    const archive = s.store.get<any>("attempt-evidence", `${s.workflowId}:1`)
+    archive.lifecycle = {
+      ...archive.lifecycle,
+      ...(scenario === "archive-attempt" ? { attempt: 99 } : { state: "blocked" })
+    }
+    s.store.put("attempt-evidence", `${s.workflowId}:1`, archive)
+  }
+  if (scenario === "admission")
+    s.store.db.prepare("DELETE FROM native_records WHERE kind='admission' AND id=?").run(s.workflowId)
+  if (scenario === "existing-pr" || scenario === "existing-merge") {
+    const current = s.store.get<any>("workflow", s.workflowId)
+    if (scenario === "existing-pr") current.prNumber = 7
+    else current.mergedSha = "3".repeat(40)
+    s.store.put("workflow", s.workflowId, current)
+  }
+  expect((await s.holdPlan())[0]).toBe(false)
+  expect(s.store.get("effect-custody", s.id)).toBeNull()
+})
+it.each([
+  "pause-revision",
+  "original-input",
+  "owner-created",
+  "transport",
+  "process-birth"
+])("custody closes %s change during awaited remote proof", async (scenario) => {
+  const s = await custodyFixture(),
+    p = await s.holdPlan()
+  expect(p[0]).toBe(true)
+  let changed = false
+  const original = s.request.getMockImplementation()!
+  s.request.mockImplementation(async (method, params) => {
+    const response = await original(method, params)
+    if (!changed) {
+      changed = true
+      if (scenario === "pause-revision") s.get().control.change(true)
+      if (scenario === "original-input")
+        s.store.put("effect-intent", s.id, { state: "pending", input: { ...s.input, notes: "Concurrent mutation" } })
+      if (scenario === "owner-created") s.store.put("workflow", "a".repeat(64), { unexpected: true })
+      if (scenario === "transport" || scenario === "process-birth") {
+        const identity = vi.mocked(nativeCustodyLocalIdentity)()
+        vi.mocked(nativeCustodyLocalIdentity).mockReturnValue({
+          ...identity,
+          ...(scenario === "transport"
+            ? { configSha256: "f".repeat(64) }
+            : { processStartTicks: identity.processStartTicks + 1 })
+        })
+      }
+    }
+    return response
+  })
+  expect((await s.holdApply(p[1]))[0]).toBe(false)
+  expect(changed).toBe(true)
+  expect(s.store.get("effect-custody", s.id)).toBeNull()
+})
+
+it.each([
+  "raw",
+  "manual",
+  "normalized",
+  "manual-normalized"
+])("native create refuses held %s alias before journal preparation or gateway call", async (variant) => {
+  const s = await custodyFixture(),
+    planned = await s.holdPlan()
+  expect((await s.holdApply(planned[1]))[0]).toBe(true)
+  const { nativeCardIdempotencyKey } = await import("../packages/core-runtime/src/native/gateway.js")
+  const normalized = nativeCardIdempotencyKey(s.input.idempotencyKey)
+  const key =
+    variant === "raw"
+      ? s.input.idempotencyKey
+      : variant === "manual"
+        ? `manual:${s.input.idempotencyKey}`
+        : variant === "normalized"
+          ? normalized
+          : `manual:${normalized}`
+  s.request.mockClear()
+  const before = s.store.list("effect-intent")
+  await expect(s.get().createCard({ ...s.input, idempotencyKey: key })).rejects.toThrow(/held intent/)
+  expect(s.request).not.toHaveBeenCalled()
+  expect(s.store.list("effect-intent")).toEqual(before)
+})
+
+it.each(["plan-entry", "plan-reason"])("version-one forged audit %s cannot authenticate custody", async (scenario) => {
+  const s = await custodyFixture(),
+    p = (await s.holdPlan())[1],
+    entry = p.entries[0]
+  const { digest: _oldDigest, ...body } = p
+  const forgedBody = {
+    ...body,
+    ...(scenario === "plan-entry"
+      ? { entries: [{ ...entry, intent: { ...entry.intent, id: "unrelated" } }] }
+      : { reason: "Unrelated plan reason" })
+  }
+  const digest = createHash("sha256").update(JSON.stringify(forgedBody)).digest("hex")
+  const forgedPlan = { ...forgedBody, digest }
+  const before = s.store.db
+    .prepare("SELECT data FROM native_records WHERE kind='effect-intent' AND id=?")
+    .get(s.id)?.data
+  s.store.commit(
+    [
+      {
+        kind: "effect-custody",
+        id: s.id,
+        expectedVersion: 0,
+        value: {
+          state: "unresolved-held-no-replay",
+          boardId: "refresh-app",
+          entry,
+          planDigest: digest,
+          operatorId: "reviewed-operator",
+          reason: p.reason
+        }
+      }
+    ],
+    {
+      kind: "effect.custody-held",
+      subject: "refresh-app",
+      value: {
+        plan: forgedPlan,
+        entries: [entry],
+        planDigest: digest,
+        operatorId: "reviewed-operator",
+        reason: p.reason
+      }
+    }
+  )
+  expect(s.store.version("effect-custody", s.id)).toBe(1)
+  expect(nativeEffectCustodyHeld(s.store, s.id)).toBe(false)
+  expect((await s.apply(await s.plan()))[0]).toBe(false)
+  expect(
+    s.store.db.prepare("SELECT data FROM native_records WHERE kind='effect-intent' AND id=?").get(s.id)?.data
+  ).toBe(before)
+})
+
+it("unrelated native create requires fresh absence of held aliases and never prepares after late matching card", async () => {
+  const s = await custodyFixture(),
+    p = (await s.holdPlan())[1]
+  expect((await s.holdApply(p))[0]).toBe(true)
+  const unrelated = { ...s.input, title: "Unrelated authorized task", idempotencyKey: "unrelated-authorized" }
+  s.request.mockImplementation(async (method) => {
+    if (method === "workboard.cards.list") return { cards: [] } as any
+    if (method === "workboard.cards.create")
+      return { card: { id: "unrelated", title: unrelated.title, status: "blocked" } } as any
+    throw new Error(`Unexpected method ${method}`)
+  })
+  expect((await s.get().createCard(unrelated)).id).toBe("unrelated")
+  s.request.mockImplementation(async (method) => {
+    if (method === "workboard.cards.list")
+      return {
+        cards: [
+          {
+            id: "late",
+            title: s.input.title,
+            status: "done",
+            metadata: { automation: { idempotencyKey: `manual:${s.input.idempotencyKey}` } }
+          }
+        ]
+      } as any
+    throw new Error("Must not create or replay after matching held card appears")
+  })
+  const original = s.store.list("effect-intent")
+  await expect(s.get().createCard({ ...unrelated, idempotencyKey: "new-unrelated" })).rejects.toThrow(
+    /matching remote card/
+  )
+  expect(s.store.list("effect-intent")).toEqual(original)
+})
+
+it("custody commit rejects changed pause authority after regenerated plan settles", async () => {
+  const s = await custodyFixture(),
+    plan = (await s.holdPlan())[1]
+  const commit = s.store.commit.bind(s.store)
+  const spy = vi.spyOn(s.store, "commit").mockImplementation((...args) => {
+    if (args[0].some((write) => write.kind === "effect-custody")) s.get().control.change(true)
+    return commit(...args)
+  })
+  expect((await s.holdApply(plan))[0]).toBe(false)
+  expect(s.store.get("effect-custody", s.id)).toBeNull()
+  spy.mockRestore()
 })

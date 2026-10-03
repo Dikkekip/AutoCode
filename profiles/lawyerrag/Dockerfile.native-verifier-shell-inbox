@@ -1,0 +1,7 @@
+# Add shell inbox coverage to the reviewed hearing coverage image.
+# Verify BASE_VERIFIER_IMAGE's local sha256 ID before building.
+ARG BASE_VERIFIER_IMAGE=native-verifier:hearing-coverage-20260928
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-shell-inbox-tests.sh /opt/openclaw/checks/shell-inbox-outcomes
+RUN chmod 0555 /opt/openclaw/checks/shell-inbox-outcomes

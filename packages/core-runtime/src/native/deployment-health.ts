@@ -19,7 +19,8 @@ export function assertNativeDeploymentPolicy(policy: NativeAutonomyPolicy) {
   const p = policy.deployment
   if (
     !p?.targetId ||
-    !/^[a-f0-9]{64}$/.test(p.artifactSha256 ?? "") ||
+    (!p.prepare && !/^[a-f0-9]{64}$/.test(p.artifactSha256 ?? "")) ||
+    (!!p.prepare && !!p.artifactSha256) ||
     !/^[a-f0-9]{40,64}$/.test(p.previousKnownGood?.revision ?? "") ||
     !/^[a-f0-9]{64}$/.test(p.previousKnownGood?.artifactSha256 ?? "") ||
     !p.observationSeconds ||

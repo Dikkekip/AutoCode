@@ -67,8 +67,16 @@ export async function authorizeNativeTool(
   const card = assigned[0]!
   let targetCardId: string | undefined
   if (name === "autocode_context") {
-    const record = runtime.store.get<{ cardId: string; agentId: string }>("card-context", args.contextId)
-    if (record?.agentId === agentId) targetCardId = record.cardId
+    const record = runtime.store.get<{ cardId?: string; agentId: string; idempotencyKey?: string }>(
+      "card-context",
+      args.contextId
+    )
+    if (record?.agentId === agentId)
+      targetCardId =
+        record.cardId ??
+        (record.idempotencyKey && card.metadata?.automation?.idempotencyKey === record.idempotencyKey
+          ? card.id
+          : undefined)
   } else if (research.has(name)) {
     const personaId = name === "autocode_propose" ? args.proposal?.personaId : args.personaId
     const entry = runtime.store.get<{ cardId: string; agentId: string }>(

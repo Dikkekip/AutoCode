@@ -77,8 +77,11 @@ const runtimeNotes = new Set([
   "HEARTBEAT.md",
   "TOOLS.md"
 ])
-function isRuntimeNote(path: string): boolean {
-  return runtimeNotes.has(path) || path.startsWith("memory/dreaming/")
+// Exact private tool artifacts observed when sandbox HOME is the worktree.
+// Exclude only untracked copies; staged/tracked copies must still fail admission.
+const runtimeToolArtifacts = new Set([".local/share/vitest/.vitest-secret-token", ".npm/_update-notifier-last-checked"])
+function isRuntimeArtifact(path: string): boolean {
+  return runtimeNotes.has(path) || path.startsWith("memory/dreaming/") || runtimeToolArtifacts.has(path)
 }
 async function candidateChanges(cwd: string): Promise<string[]> {
   let filters = ""
@@ -129,7 +132,7 @@ async function candidateChanges(cwd: string): Promise<string[]> {
       [
         ...tracked.split("\0"),
         ...staged.split("\0"),
-        ...untracked.split("\0").filter((path) => !isRuntimeNote(path))
+        ...untracked.split("\0").filter((path) => !isRuntimeArtifact(path))
       ].filter(Boolean)
     )
   ]
@@ -158,7 +161,7 @@ export async function commitNativeCandidate(
   const rejected = files.filter(
     (file) =>
       !allowedPaths.some((root) => nativePathAllowed(file, root)) ||
-      isRuntimeNote(file) ||
+      isRuntimeArtifact(file) ||
       file
         .split("/")
         .some((part) =>
@@ -397,7 +400,8 @@ export async function runNativeCommand(
   artifact: string,
   sandbox?: NativeVerificationSandbox,
   signal?: AbortSignal,
-  authority?: NativeVerificationAuthority
+  authority?: NativeVerificationAuthority,
+  candidateSelection?: { headSha: string; changedFiles: string[] }
 ) {
   authority?.authorize()
   if (!sandbox) throw new Error("Required verification sandbox is not configured")
@@ -423,6 +427,30 @@ export async function runNativeCommand(
       () => authority?.authorize(),
       config.reviewedSourceFiles
     )
+    if (candidateSelection) {
+      if (candidateSelection.headSha !== sha || !candidateSelection.changedFiles.length)
+        throw new Error("Changed-file manifest must match the exact candidate")
+      const changedFiles = [...new Set(candidateSelection.changedFiles)]
+      if (
+        changedFiles.length !== candidateSelection.changedFiles.length ||
+        changedFiles.some(
+          (file) =>
+            !file || file.includes("\0") || isAbsolute(file) || relative(workspace, resolve(workspace, file)) !== file
+        )
+      )
+        throw new Error("Changed-file manifest contains an unsafe path")
+      const dir = resolve(workspace, ".openclaw-verification")
+      const writeManifest = () => {
+        // This directory is reserved for the host, never copied from Git.
+        mkdirSync(dir)
+        writeFileSync(resolve(dir, "changed-files.json"), JSON.stringify({ version: 1, headSha: sha, changedFiles }), {
+          mode: 0o600,
+          flag: "wx"
+        })
+      }
+      if (authority) authority.mutate(writeManifest)
+      else writeManifest()
+    }
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
     return await recordCommand(
@@ -439,7 +467,11 @@ export async function runNativeCommand(
           ...(signal ? { signal } : {})
         }
         return config.backend === "docker"
-          ? executeDockerSandboxedCommand(command.argv, { ...options, image: config.image })
+          ? executeDockerSandboxedCommand(command.argv, {
+              ...options,
+              image: config.image,
+              ...(config.pidsLimit === undefined ? {} : { pidsLimit: config.pidsLimit })
+            })
           : executeSandboxedCommand(command.argv, { ...options, rootFilesystem })
       },
       authority
@@ -481,6 +513,29 @@ export function nativeVerificationCommands(policy: NativeAutonomyPolicy, files: 
     plan.ruleIds.includes(nativeVerificationRuleId(command))
   )
 }
+/** Admitted additions and deletions must be reflected in the isolated snapshot.
+ * The baseline allowlist still controls unchanged inputs; normal path and blob
+ * restrictions also apply to every candidate addition. */
+export async function nativeCandidateSandbox(
+  policy: NativeAutonomyPolicy,
+  candidate: { cwd: string; headSha: string; files: string[] }
+): Promise<NativeVerificationSandbox | undefined> {
+  if (!policy.verificationSandbox) return undefined
+  if (!/^[a-f0-9]{40,64}$/.test(candidate.headSha)) throw new Error("Snapshot requires an exact candidate")
+  const present = new Set(
+    (await nativeGit(candidate.cwd, "ls-tree", "-r", "--name-only", "-z", candidate.headSha)).split("\0")
+  )
+  const changed = new Set(candidate.files)
+  return validateNativeVerificationSandbox({
+    ...policy.verificationSandbox,
+    inputFiles: [
+      ...new Set([
+        ...policy.verificationSandbox.inputFiles.filter((path) => !changed.has(path) || present.has(path)),
+        ...candidate.files.filter((path) => present.has(path))
+      ])
+    ]
+  })
+}
 export async function verifyNativeCandidate(
   policy: NativeAutonomyPolicy,
   candidate: { cwd: string; headSha: string; baseSha: string; files: string[] },
@@ -488,7 +543,8 @@ export async function verifyNativeCandidate(
   signal?: AbortSignal,
   authority?: NativeVerificationAuthority,
   acceptance: string[] = [],
-  context?: NativeVerificationContext
+  context?: NativeVerificationContext,
+  candidateReview?: NativeCandidateReview
 ): Promise<NativeVerificationEvidence> {
   policy = structuredClone(policy)
   const plan = planNativeVerification(policy, candidate.files)
@@ -509,8 +565,9 @@ export async function verifyNativeCandidate(
   persist()
   if (!plan.coverage.length) throw new Error("Candidate has no repository changes")
   const commands = nativeVerificationCommands(policy, candidate.files)
-  await assertNativeVerificationAuthority(policy, candidate)
-  bindings.push(...nativeAcceptanceBindings(policy, acceptance, plan.ruleIds, candidate.headSha))
+  await assertNativeVerificationAuthority(policy, candidate, nativeGit, candidateReview)
+  bindings.push(...nativeAcceptanceBindings(policy, acceptance, plan.ruleIds, candidate.headSha, candidateReview))
+  const sandbox = await nativeCandidateSandbox(policy, candidate)
   for (const [i, command] of commands.entries()) {
     if ((await nativeGit(candidate.cwd, "rev-parse", "HEAD")) !== candidate.headSha)
       throw new Error("Candidate changed during verification")
@@ -518,9 +575,10 @@ export async function verifyNativeCandidate(
       command,
       candidate.cwd,
       resolve(artifactRoot, `${i}-${randomUUID()}.json`),
-      policy.verificationSandbox,
+      sandbox,
       signal,
-      authority
+      authority,
+      { headSha: candidate.headSha, changedFiles: candidate.files }
     )
     checks.push({
       ...check,
@@ -585,13 +643,16 @@ export function nativeAcceptanceBindings(
   policy: NativeAutonomyPolicy,
   criteria: string[],
   selected: string[],
-  headSha: string
+  headSha: string,
+  candidateReview?: NativeCandidateReview
 ) {
   const authority = policy.verificationAuthority
   if (!authority || !/^[a-f0-9]{40,64}$/.test(authority.reviewedRevision))
     throw new Error("Verification requires a reviewed policy revision and acceptance bindings")
   return criteria.map((criterion) => {
     const matches = authority.acceptance.filter((binding) => binding.criterion === criterion)
+    if (!matches.length && selected.length && validCandidateReview(policy, headSha, candidateReview))
+      return { criterion, ruleIds: [...selected] }
     if (
       matches.length !== 1 ||
       (!matches[0]!.ruleIds.length && !matches[0]!.manualEvidence) ||
@@ -615,7 +676,8 @@ export function assertNativeVerificationEvidence(
   policy: NativeAutonomyPolicy,
   candidate: { headSha: string; baseSha: string; files: string[] },
   evidence: NativeVerificationEvidence,
-  acceptance: string[]
+  acceptance: string[],
+  candidateReview?: NativeCandidateReview
 ) {
   const plan = planNativeVerification(policy, candidate.files)
   if (
@@ -624,7 +686,7 @@ export function assertNativeVerificationEvidence(
     JSON.stringify(plan) !== JSON.stringify(evidence.plan)
   )
     throw new Error("Verification receipt does not match current policy and candidate coverage")
-  const bindings = nativeAcceptanceBindings(policy, acceptance, plan.ruleIds, candidate.headSha)
+  const bindings = nativeAcceptanceBindings(policy, acceptance, plan.ruleIds, candidate.headSha, candidateReview)
   if (JSON.stringify(bindings) !== JSON.stringify(evidence.acceptance))
     throw new Error("Verification acceptance bindings changed")
   for (const id of plan.ruleIds) {
@@ -643,10 +705,23 @@ export function assertNativeVerificationEvidence(
   }
 }
 
+export interface NativeCandidateReview {
+  headSha: string
+  reviewedBy: string
+}
+function validCandidateReview(policy: NativeAutonomyPolicy, headSha: string, review?: NativeCandidateReview) {
+  return (
+    policy.verificationAuthority?.independentCandidateReview === true &&
+    review?.headSha === headSha &&
+    review.reviewedBy === policy.reviewerAgentId &&
+    !nativeCoderAgentIds(policy).includes(review.reviewedBy)
+  )
+}
 export async function assertNativeVerificationAuthority(
   policy: NativeAutonomyPolicy,
   candidate: { cwd: string; headSha: string; files: string[] },
-  git = nativeGit
+  git = nativeGit,
+  candidateReview?: NativeCandidateReview
 ) {
   for (const check of policy.verification) {
     if (!check.argv[0]?.startsWith("/opt/openclaw/checks/") || check.argv[0].includes(".."))
@@ -659,6 +734,14 @@ export async function assertNativeVerificationAuthority(
       !/(^|\/)(?:tests?|__tests__|scripts|\.github|\.openclaw)(?:\/|$)|(?:^|\/)(?:package\.json|[^/]*lock[^/]*|[^/]*(?:vitest|jest|pytest|webpack|vite|tsconfig|eslint|biome)[^/]*|Makefile|Dockerfile)$|\.(?:test|spec)\.[^/]+$/.test(
         path
       )
+    )
+      continue
+    // Only ordinary test source may use standing independent review. Harnesses,
+    // executable scripts, dependencies and policy still require explicit blob approval.
+    if (
+      validCandidateReview(policy, candidate.headSha, candidateReview) &&
+      /(?:\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)test_[^/]+\.py$)/.test(path) &&
+      !/(^|\/)(scripts|\.github|\.openclaw)(\/|$)/.test(path)
     )
       continue
     const entry = await git(candidate.cwd, "ls-tree", candidate.headSha, "--", path)

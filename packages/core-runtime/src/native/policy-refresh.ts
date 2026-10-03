@@ -3,8 +3,10 @@ import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { assertExecutionOwnership } from "@openclaw/os-adapters"
 import { loadNativePolicy, nativeDoctor } from "./doctor.js"
+import { assertNativeHeldCardAbsence, nativeEffectCustodyHeld } from "./effect-custody.js"
 import { type NativeCard, type NativeGateway, nativeCards, nativeObject } from "./gateway.js"
 import { nativeGovernanceDigest, requireNativeHuman } from "./governance.js"
+import { nativeRepairSupersessionClosed } from "./repair-intent.js"
 import type { NativeAutonomyRuntime } from "./runtime.js"
 import { nativeRuntimeGeneration } from "./runtime-lifetime.js"
 import { NATIVE_SKILL_CONTRACT_VERSION, nativeSkillPolicyDigest } from "./skills.js"
@@ -99,7 +101,18 @@ function localIdle(runtime: NativeAutonomyRuntime) {
   if (runtime.store.db.prepare("SELECT 1 FROM native_locks WHERE expires_at>? LIMIT 1").get(Date.now()))
     throw new Error("Native operation lease remains active")
   for (const kind of ["operation", "effect-intent"]) {
-    if (runtime.store.list<{ state?: string }>(kind).some(({ value }) => value.state !== "confirmed"))
+    if (
+      runtime.store
+        .list<{ state?: string }>(kind)
+        .some(
+          ({ id, value }) =>
+            value.state !== "confirmed" &&
+            !(
+              kind === "effect-intent" &&
+              (nativeRepairSupersessionClosed(runtime.store, id) || nativeEffectCustodyHeld(runtime.store, id))
+            )
+        )
+    )
       throw new Error("Uncertain native effects require reconciliation before policy refresh")
   }
 }
@@ -154,9 +167,10 @@ function historicalAcceptedRun(card: NativeCard) {
 const SESSION_PAGE_SIZE = 1000
 const MAX_SESSION_ROWS = 10000
 
-async function remoteIdle(runtime: NativeAutonomyRuntime, gateway: NativeGateway) {
+export async function assertNativePolicyRemoteIdle(runtime: NativeAutonomyRuntime, gateway: NativeGateway) {
   const first = await nativeCards(gateway, runtime.policy.boardId)
   const checkCards = (cards: typeof first) => {
+    assertNativeHeldCardAbsence(runtime.store, cards)
     if (
       cards.some(
         (c) =>
@@ -294,13 +308,13 @@ export async function applyNativePolicyRefresh(
   return runtime.withOwnership(async () => {
     assertExecutionOwnership()
     localIdle(runtime)
-    const evidence = await remoteIdle(runtime, gateway)
+    const evidence = await assertNativePolicyRemoteIdle(runtime, gateway)
     const next = candidate(runtime, file)
     const doctor = await nativeDoctor(next, gateway)
     if (!doctor.ok)
       throw new Error(`Policy refresh doctor failed: ${JSON.stringify(doctor.checks.filter((c) => !c.ok))}`)
     // Recheck remote state after slow doctor calls and local authority just before publication.
-    await remoteIdle(runtime, gateway)
+    await assertNativePolicyRemoteIdle(runtime, gateway)
     assertPlan()
     localIdle(runtime)
     assertExecutionOwnership()

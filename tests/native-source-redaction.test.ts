@@ -1,7 +1,155 @@
 import { describe, expect, it } from "vitest"
 import { redactNativeSourceText } from "../packages/core-runtime/src/native/source-redaction.js"
 
+describe("member references that resemble command JWTs", () => {
+  it.each([
+    "+        execution.recovery.inspectedTaskCount = 3;",
+    "+        execution.recovery.outcomes = [execution.recovery.outcomes[0]];",
+    "+        const item = { ...execution.recovery.outcomes[0] };",
+    "+        {execution.recovery.outcomes.map((result) => result.taskId)}",
+    "__SOURCE_MEMBER_DOT_0__ execution.recovery.countsByOutcome = {};"
+  ])("preserves source reference %s", (source) => {
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it.each([
+    'const token = "abcdefgh.ijklmnop.qrstuvwx";',
+    "// abcdefgh.ijklmnop.qrstuvwx",
+    "/* abcdefgh.ijklmnop.qrstuvwx */",
+    "const token = eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.abcdefghijklmnopqrst;",
+    'execution.recovery.outcomes = []; API_KEY="credential123";',
+    "execution.recovery.ghp_abcdefghijklmnopqrstuvwxyz012345"
+  ])("retains credential filtering: %s", (source) => {
+    const redacted = redactNativeSourceText(source)
+    expect(redacted).not.toBe(source)
+    expect(redacted).not.toContain("abcdefgh.ijklmnop.qrstuvwx")
+    expect(redacted).not.toContain("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.abcdefghijklmnopqrst")
+    expect(redacted).not.toContain("credential123")
+    expect(redacted).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz012345")
+  })
+})
+
+describe("keyboard comparisons in committed diffs", () => {
+  it.each([
+    "       if (event.key === 'Escape') {",
+    '+ if (event.key === "ArrowRight") focusNext();',
+    '- if (e.key == "Enter") submit();'
+  ])("preserves keyboard logic: %s", (source) => {
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it.each([
+    'event.key = "credential123"',
+    '// event.key === "Escape"; API_KEY="credential123"',
+    'if (event.key === "Escape") API_KEY="credential123"',
+    'const sample = "event.key=credential123"'
+  ])("still filters credentials: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toContain("credential123")
+  })
+  it("does not exempt arbitrary key comparisons", () => {
+    const source = 'event.key === "arbitrary-value"'
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+  it("preserves a JSX keyboard handler while still filtering credentials in its body", () => {
+    const source = [
+      "+ <Dialog",
+      "+   aria-labelledby={confirmingClear ? titleId + '-clear' : titleId}",
+      "+   onKeyDown={(event) => {",
+      "+     if (confirmingClear && event.key === 'Escape') {",
+      "+       event.preventDefault();",
+      "+     }",
+      "+   }}",
+      "+ />"
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('<Dialog onKeyDown="credential123" />')).not.toContain("credential123")
+  })
+  it("keeps added keyboard code after an unmatched removed-line quote", () => {
+    const source = [
+      "- const stale = 'old",
+      "+ <Dialog",
+      "+   onKeyDown={(event) => {",
+      "+     if (event.key === 'Escape') event.preventDefault();",
+      "+   }}",
+      "+ />"
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it("preserves a typed keyboard callback declaration in a committed diff", () => {
+    const source = "+ const onKeyDown = (event: KeyboardEvent) => {"
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('const onKeyDown = "credential123"')).not.toContain("credential123")
+  })
+  it("preserves a typed handleKeyDown callback and bounded keyboard-name comparisons", () => {
+    const source = [
+      "+ const handleKeyDown = (event: KeyboardEvent) => {",
+      "+   expect(items[key === 'End' || key === 'ArrowUp' ? items.length - 1 : key === 'Home' ? 0 : index]);"
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('+ key === "credential123"')).not.toContain("credential123")
+    expect(redactNativeSourceText('const handleKeyDown = "credential123"')).not.toContain("credential123")
+  })
+  it("preserves the fixed IME keyCode comparison without exposing keyCode credentials", () => {
+    const source = "+ if (event.key === 'Enter' && event.keyCode === 229) event.preventDefault();"
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('event.keyCode === "credential123"')).not.toContain("credential123")
+  })
+})
+
+describe("identifier comparisons in committed diffs", () => {
+  it("preserves a storage key comparison without exposing adjacent credentials", () => {
+    const line =
+      "+ expect(removeItem.mock.calls.filter(([key]) => key === RECENT_NOTIFICATIONS_STORAGE_KEY)).toHaveLength(1);"
+    expect(redactNativeSourceText(line)).toBe(line)
+    expect(redactNativeSourceText(`${line}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText("+ key = credential123")).not.toBe("+ key = credential123")
+    expect(redactNativeSourceText('+ key === "credential123"')).not.toContain("credential123")
+  })
+})
+
+describe("structural key derivations in committed diffs", () => {
+  it("preserves the complete intake review derivation and synthetic JSX matter fixture", () => {
+    const source = [
+      "     const key = pauseKey(state);",
+      "     const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '-');",
+      "+    const reasonKey = JSON.stringify([key, state.revision]);",
+      "+    const reviewKey = JSON.stringify([key, state.revision, state.rejectedAttemptCount]);",
+      '+    rerender(<IngestionIntakePausePanel {...props} actingKey="matter:MATTER-002:document" />);'
+    ].join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+
+  it.each([
+    "const key = credential123;",
+    "const key = tokenKey(credential123);",
+    "const reasonKey = JSON.stringify([key, credential123]);",
+    'const safeKey = "credential123";',
+    'const reviewKey = JSON.stringify([key, "credential123"]);',
+    '<Panel {...props} actingKey="credential123" />',
+    '<Panel {...props} actingKey="matter:MATTER-002:credential123" />'
+  ])("keeps credential masking for unsupported key values: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toContain("credential123")
+  })
+
+  it("does not shield a quoted fixture outside a complete JSX opening tag", () => {
+    const source = "const sample = '<Panel {...props} actingKey=\"matter:MATTER-002:document\" />'"
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+})
+
 describe("recovery source redaction", () => {
+  it("preserves a complete JSX reference when a diff hunk omits its opening tag", () => {
+    const source = "                                         key={workflow.path}"
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText("+   key={workflow.path}")).toBe("+   key={workflow.path}")
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+    expect(redactNativeSourceText('+ key={"credential123"}')).not.toContain("credential123")
+    expect(redactNativeSourceText("+ key={ghp_abcdefghijklmnopqrstuvwxyz012345}")).not.toContain(
+      "ghp_abcdefghijklmnopqrstuvwxyz012345"
+    )
+  })
   it.each([
     "<option key={tag.tag_id} value={tag.tag_id}>",
     "<Item key={item.id} />",

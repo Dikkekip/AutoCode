@@ -65,10 +65,20 @@ Use your installed OpenClaw's supported agent/configuration commands. Inspect re
 openclaw agents list --json
 ~~~
 
-For each persona, register the dedicated investigationAgentId from the policy. For the minimal profile this is native-research-pm-general. Preserve the intended persona mission and existing model selection. Give research roles only this tool configuration:
+For each persona, register the dedicated investigationAgentId from the policy. For the minimal profile this is native-research-pm-general. Profile conversion creates the policy mapping; it does not register or configure the agent. Preserve the intended persona mission and existing model selection. Configure each research agent with a session sandbox and the following narrow tools:
 
 ~~~json
 {
+  "sandbox": {
+    "mode": "all",
+    "scope": "session",
+    "workspaceAccess": "ro",
+    "docker": {
+      "network": "none",
+      "readOnlyRoot": true,
+      "user": "1000:1000"
+    }
+  },
   "tools": {
     "allow": [
       "autocode_context",
@@ -76,13 +86,19 @@ For each persona, register the dedicated investigationAgentId from the policy. F
       "autocode_propose",
       "autocode_investigation_finish",
       "workboard_complete",
-      "workboard_heartbeat"
-    ]
+      "workboard_heartbeat",
+      "workboard_block"
+    ],
+    "sandbox": {
+      "tools": {
+        "allow": ["autocode_context", "autocode_inspect", "autocode_propose", "autocode_investigation_finish", "workboard_complete", "workboard_heartbeat", "workboard_block"]
+      }
+    }
   }
 }
 ~~~
 
-Do not add shell, editing, spawning, alsoAllow, or provider-specific overrides. Research runs in scratch workspaces and reads committed files through the inspection tool. Readiness checks inspect these permissions.
+Set the sandbox image to your reviewed immutable image digest, and use the runtime user's numeric UID/GID. An existing confined read-only reviewer sandbox can supply these settings. Do not add host mounts, shell, editing, spawning, alsoAllow, or provider-specific overrides. Research runs in scratch workspaces and reads committed files through the inspection tool. The tool allowlist does not enable a sandbox. Readiness checks verify the effective read-only session sandbox as well as the seven tools; Workboard independently enforces confinement at dispatch.
 
 The planner needs proposal, admission, and deferral tools. The coder needs autocode_submit. The reviewer needs autocode_design_review and autocode_review. All worker roles need native completion/heartbeat tools. See the [native tool reference](native-autonomy.md#plugin-and-native-scheduling).
 

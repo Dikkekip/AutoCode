@@ -11,6 +11,7 @@ import {
   transitionNativeLifecycle,
   validateNativeLifecycle
 } from "@openclaw/domain"
+import { preservedNativeRepairLifecycle } from "./repair-intent.js"
 export interface NativeLease {
   readonly id: string
   readonly owner: string
@@ -19,7 +20,7 @@ export interface NativeLease {
   readonly expiresAt: number
 }
 export class NativeLeaseLost extends Error {
-  constructor(id: string) {
+  constructor(readonly id: string) {
     super(`Native lease lost: ${id}`)
   }
 }
@@ -35,12 +36,18 @@ interface NativeLeaseScope {
   finished: boolean
   parent: NativeLeaseScope | undefined
 }
+interface NativeEffectAuthorityScope {
+  assertCurrent: () => void
+  finished: boolean
+  parent: NativeEffectAuthorityScope | undefined
+}
 /** Evidence and reconciliation journal only. Workboard remains the task queue. */
 export class NativeEvidenceStore {
   readonly db: DatabaseSync
   readonly owner = randomUUID()
   private readonly versions = new WeakMap<object, number>()
   private readonly context = new AsyncLocalStorage<NativeLeaseScope>()
+  private readonly effectAuthority = new AsyncLocalStorage<NativeEffectAuthorityScope>()
   constructor(
     readonly path: string,
     private readonly clock: () => number = Date.now
@@ -212,7 +219,10 @@ export class NativeEvidenceStore {
                   ? recoverNativeLifecycle(previous.lifecycle, value)
                   : value.lifecycle.attemptId === previous.lifecycle.attemptId
                     ? transitionNativeLifecycle(previous.lifecycle, value.lifecycle.state, value)
-                    : nextNativeAttempt(previous.lifecycle, value)
+                    : nextNativeAttempt(
+                        preservedNativeRepairLifecycle(this, write.id, previous, value, event) ?? previous.lifecycle,
+                        value
+                      )
               if (JSON.stringify(expectedLifecycle) !== JSON.stringify(value.lifecycle))
                 throw new Error("Invalid native attempt transition")
             }
@@ -309,8 +319,26 @@ export class NativeEvidenceStore {
   get activeLease(): NativeLease | undefined {
     return this.context.getStore()?.lease
   }
+  /** Carry the host invocation authority through asynchronous native effects. */
+  async withEffectAuthority<T>(assertCurrent: () => void, action: () => Promise<T>): Promise<T> {
+    assertCurrent()
+    const scope = { assertCurrent, finished: false, parent: this.effectAuthority.getStore() }
+    return this.effectAuthority.run(scope, async () => {
+      try {
+        return await action()
+      } finally {
+        scope.finished = true
+      }
+    })
+  }
   /** Check immediately before initiating an effect; in-flight remote work cannot be revoked. */
   authorizeEffect(): void {
+    let authority = this.effectAuthority.getStore()
+    while (authority) {
+      if (authority.finished) throw new Error("Native host invocation has closed")
+      authority.assertCurrent()
+      authority = authority.parent
+    }
     let scope = this.context.getStore()
     while (scope) {
       if (scope.finished) throw new NativeLeaseLost(scope.lease.id)

@@ -1,7 +1,7 @@
 // Required CI authorization regression fixtures; no GitHub credentials or network used.
 import { describe, expect, it } from "vitest"
-import { assertNativeRequiredCi } from "../packages/core-runtime/src/native/required-ci.js"
-import type { NativeAutonomyPolicy } from "../packages/domain/src/native-autonomy.js"
+import { assertNativeRequiredCi, NativeCiPending } from "../packages/core-runtime/src/native/required-ci.js"
+import { type NativeAutonomyPolicy, validateNativeRequiredCi } from "../packages/domain/src/native-autonomy.js"
 
 const now = Date.parse("2026-09-06T12:00:00Z"),
   sha = "a".repeat(40)
@@ -45,7 +45,42 @@ describe("required CI authorization", () => {
     [{ ...run, completed_at: "2026-09-05T00:00:00Z" }],
     [{ ...run, completed_at: "invalid" }]
   ])("rejects missing, stale, skipped, ambiguous and wrong-identity evidence %#", async (...entries) => {
-    await expect(assertNativeRequiredCi(policy, "/tmp", sha, github(entries), now)).rejects.toThrow()
+    for (const requireBranchProtection of [undefined, false])
+      await expect(
+        assertNativeRequiredCi(
+          { ...policy, requiredCi: { ...policy.requiredCi!, requireBranchProtection } },
+          "/tmp",
+          sha,
+          github(entries),
+          now
+        )
+      ).rejects.toThrow()
+  })
+  it("uses explicit check policy only when branch-protection discovery is explicitly disabled", async () => {
+    const local = { ...policy, requiredCi: { ...policy.requiredCi!, requireBranchProtection: false } }
+    let calls = 0
+    const checksOnly = async (_cwd: string, args: string[]) => {
+      if (args.at(-1)?.includes("protection")) throw new Error("403 unavailable")
+      calls++
+      return JSON.stringify({ check_runs: [run] })
+    }
+    await expect(assertNativeRequiredCi(local, "/tmp", sha, checksOnly, now)).resolves.toBeUndefined()
+    expect(calls).toBe(1)
+    await expect(assertNativeRequiredCi(policy, "/tmp", sha, checksOnly, now)).rejects.toThrow("403")
+  })
+  it("waits for asynchronous required checks without accepting missing evidence", async () => {
+    await expect(assertNativeRequiredCi(policy, "/tmp", sha, github([]), now)).rejects.toBeInstanceOf(NativeCiPending)
+  })
+  it("preserves old policy digests and rejects non-boolean opt-outs", () => {
+    const input = { checks: [{ name: "verify", appId: 42 }], maxAgeSeconds: 86400 }
+    expect(validateNativeRequiredCi(input)).toEqual(input)
+    expect(validateNativeRequiredCi({ ...input, requireBranchProtection: true })).toEqual(input)
+    expect(validateNativeRequiredCi({ ...input, requireBranchProtection: false })).toEqual({
+      ...input,
+      requireBranchProtection: false
+    })
+    for (const value of ["false", null, 0])
+      expect(() => validateNativeRequiredCi({ ...input, requireBranchProtection: value })).toThrow("boolean")
   })
   it("fails closed when protected requirements differ or are unavailable", async () => {
     await expect(
@@ -69,4 +104,24 @@ describe("required CI authorization", () => {
       )
     ).rejects.toThrow("403")
   })
+})
+
+it("checks later REST pages without relying on CLI slurp support", async () => {
+  let count = 0
+  await assertNativeRequiredCi(
+    policy,
+    "/tmp",
+    sha,
+    async (_cwd, args) => {
+      expect(args).not.toContain("--slurp")
+      if (args.at(-1)?.includes("protection")) return JSON.stringify({ checks: [], contexts: [] })
+      count++
+      expect(args.at(-1)).toContain(`page=${count}`)
+      return JSON.stringify({
+        check_runs: count === 1 ? Array.from({ length: 100 }, (_, i) => ({ ...run, name: `optional-${i}` })) : [run]
+      })
+    },
+    now
+  )
+  expect(count).toBe(2)
 })

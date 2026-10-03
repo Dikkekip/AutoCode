@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { registerNativeAutonomyCommands } from "../apps/dispatcher-cli/src/native-autonomy.js"
-import { NativeCliGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeCliGateway, NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 
 const { Command } = createRequire(resolve("apps/dispatcher-cli/package.json"))("commander")
 const roots: string[] = []
@@ -47,7 +47,7 @@ function fixture() {
 it("routes explain and plan as read-only requests and applies only the saved exact document", async () => {
   const s = fixture(),
     plan = { version: 1, digest: "exact", snapshot: { boardId: "board" } }
-  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue(plan)
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue(plan)
   await s.run("workflow", "explain", "--id", "workflow")
   expect(request).toHaveBeenLastCalledWith("autocode.workflow.explain", { boardId: "board", workflowId: "workflow" })
   await s.run(
@@ -75,7 +75,7 @@ it("routes explain and plan as read-only requests and applies only the saved exa
 })
 it("does not overwrite an existing plan or mix an apply with new decisions", async () => {
   const s = fixture()
-  vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({})
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({})
   writeFileSync(s.out, "preserve")
   await expect(s.run("workflow", "recover", "--plan", "--id", "w", "--reason", "why", "--out", s.out)).rejects.toThrow(
     /exist/
@@ -87,7 +87,7 @@ it("does not overwrite an existing plan or mix an apply with new decisions", asy
 })
 it("exposes emergency freeze as a distinct operator request", async () => {
   const s = fixture(),
-    request = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({ frozen: true })
+    request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ frozen: true })
   await s.run("freeze")
   expect(request).toHaveBeenCalledWith("autocode.freeze", { boardId: "board" })
 })
@@ -101,7 +101,7 @@ it("repoints existing automation commands after relocation without changing oper
     schedule: { kind: "cron", expr: index === 0 ? "0 */2 * * *" : "*/5 * * * *", tz: "UTC" },
     payload: { kind: "command", argv: ["/old/node", "/old/dispatcher.js"] }
   }))
-  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method, params) => {
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method, params) => {
     if (method === "cron.list") return { jobs, hasMore: false }
     if (method === "cron.update") {
       const update = params as { id: string; patch: Record<string, unknown> }
@@ -132,7 +132,7 @@ it("repoints existing automation commands after relocation without changing oper
 
 it("routes dispatch through the independent native administrative RPC", async () => {
   const s = fixture()
-  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({ advanced: 0 })
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ advanced: 0 })
   await s.run("dispatch")
   expect(request).toHaveBeenCalledWith("autocode.dispatch", { boardId: "board" })
 })
@@ -141,9 +141,29 @@ it("routes source-bound request documents and list through native operator APIs"
   const s = fixture()
   const brief = { idempotencyKey: "defect", title: "Observed defect", evidence: [] }
   writeFileSync(s.out, JSON.stringify(brief))
-  const request = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({})
+  const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({})
   await s.run("requests", "create", "--file", s.out)
   expect(request).toHaveBeenCalledWith("autocode.requests.create", { boardId: "board", request: brief })
   await s.run("requests", "list")
   expect(request).toHaveBeenCalledWith("autocode.requests.list", { boardId: "board" })
+})
+
+for (const kind of ["discover", "dispatch", "reconcile"]) {
+  it(`routes the registered ${kind} command through the authenticated SDK transport`, async () => {
+    const s = fixture()
+    const legacy = vi.spyOn(NativeCliGateway.prototype, "request").mockRejectedValue(new Error("Child CLI forbidden"))
+    const request = vi.spyOn(NativeSdkGateway.prototype, "request").mockResolvedValue({ ok: true })
+    await s.run("--openclaw", "/active/openclaw", kind)
+    expect(request).toHaveBeenCalledWith(`autocode.${kind}`, { boardId: "board" })
+    expect((request.mock.instances[0] as NativeSdkGateway).command).toBe("/active/openclaw")
+    expect(legacy).not.toHaveBeenCalled()
+  })
+}
+
+it("does not fall back to a child CLI when the registered SDK request fails", async () => {
+  const s = fixture()
+  const legacy = vi.spyOn(NativeCliGateway.prototype, "request").mockResolvedValue({ advanced: 1 })
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockRejectedValue(new Error("SDK authorization unavailable"))
+  await expect(s.run("dispatch")).rejects.toThrow("SDK authorization unavailable")
+  expect(legacy).not.toHaveBeenCalled()
 })
