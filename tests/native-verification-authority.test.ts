@@ -7,6 +7,7 @@ import { afterEach, expect, it } from "vitest"
 import {
   assertNativeVerificationAuthority,
   assertNativeVerificationEvidence,
+  nativeAcceptanceBindings,
   planNativeVerification,
   runNativeDeploymentCommand
 } from "../packages/core-runtime/src/native/verification.js"
@@ -144,4 +145,32 @@ it("records cancellation as an unknown external outcome without launching deploy
   expect(result.exitCode).toBeNull()
   expect(result.outcome).toBe("cancelled")
   expect(JSON.parse(readFileSync(result.artifact, "utf8")).outcome).toBe("cancelled")
+})
+
+it("requires explicit policy and exact independent review for standing test maintenance", async () => {
+  const s = fixture()
+  s.candidate.files = ["src/widget.test.tsx"]
+  const git = async () => `100644 blob ${"f".repeat(40)}\tsrc/widget.test.tsx`
+  const review = { headSha: s.candidate.headSha, reviewedBy: "reviewer" }
+  await expect(assertNativeVerificationAuthority(s.policy, s.candidate, git, review)).rejects.toThrow("independent")
+  s.policy.verificationAuthority!.independentCandidateReview = true
+  await expect(assertNativeVerificationAuthority(s.policy, s.candidate, git, review)).resolves.toBeUndefined()
+  for (const invalid of [undefined, { ...review, headSha: "c".repeat(40) }, { ...review, reviewedBy: "coder" }])
+    await expect(assertNativeVerificationAuthority(s.policy, s.candidate, git, invalid)).rejects.toThrow("independent")
+  for (const path of ["package.json", "vitest.config.ts", "scripts/escape.test.ts", ".github/test_guard.py"]) {
+    s.candidate.files = [path]
+    await expect(assertNativeVerificationAuthority(s.policy, s.candidate, git, review)).rejects.toThrow("independent")
+  }
+})
+it("binds new acceptance criteria only with authenticated exact-candidate review and selected checks", () => {
+  const s = fixture()
+  s.policy.verificationAuthority!.independentCandidateReview = true
+  const review = { headSha: s.candidate.headSha, reviewedBy: "reviewer" }
+  expect(nativeAcceptanceBindings(s.policy, ["New behavior"], ["trusted"], s.candidate.headSha, review)).toEqual([
+    { criterion: "New behavior", ruleIds: ["trusted"] }
+  ])
+  expect(() => nativeAcceptanceBindings(s.policy, ["New behavior"], ["trusted"], s.candidate.headSha)).toThrow(
+    "binding"
+  )
+  expect(() => nativeAcceptanceBindings(s.policy, ["New behavior"], [], s.candidate.headSha, review)).toThrow("binding")
 })

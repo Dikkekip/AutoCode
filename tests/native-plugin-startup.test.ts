@@ -3,7 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
-import { NativeCliGateway } from "../packages/core-runtime/src/native/gateway.js"
+import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
@@ -41,14 +41,18 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
   )
   let service: any
   const methods = new Map<string, any>(),
-    factories: any[] = []
+    factories: any[] = [],
+    registrations: any[] = []
   registerNativeAutonomyPlugin({
     pluginConfig: { projects: [path], openclawCommand: "/usr/bin/openclaw" },
     registerService: (s: any) => {
       service = s
     },
     registerGatewayMethod: (name: string, handler: any) => methods.set(name, handler),
-    registerTool: (factory: any) => factories.push(factory),
+    registerTool: (factory: any, options: any) => {
+      registrations.push({ factory, options })
+      factories.push((ctx: any) => factory.create({ assertInvocationCurrent: () => {}, ...ctx }))
+    },
     on: () => {},
     logger: { warn: vi.fn() }
   })
@@ -61,6 +65,7 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
     methods,
     service,
     factories,
+    registrations,
     call: async (name: string) => {
       let response: any
       await methods.get(name)({
@@ -128,7 +133,7 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
   await server.service.start()
   const client = setup(server.root)
   vi.mocked(nativeDoctor).mockResolvedValue(report(true))
-  vi.spyOn(NativeCliGateway.prototype, "request").mockImplementation(async (method, params) => {
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method, params) => {
     if (method === "workboard.cards.list")
       return {
         cards: [
@@ -232,4 +237,120 @@ it("binds skill bootstrap to an authenticated administrator and exact reviewed d
   expect((await invoke(client, { digest: "incorrect" }))[0]).toBe(false)
   expect((await invoke(client))[0]).toBe(true)
   expect((await invoke(client))[0]).toBe(false)
+})
+
+it("protects skill evaluation and promotion with paused exact-policy operator authority", async () => {
+  const s = setup()
+  await s.service.start()
+  const { loadNativePolicy } = await import("../packages/core-runtime/src/native/doctor.js")
+  const { nativeSkillPolicyDigest } = await import("../packages/core-runtime/src/native/skills.js")
+  const policyDigest = nativeSkillPolicyDigest(loadNativePolicy(join(s.root, "policy.json")))
+  const client = { connect: { client: { id: "operator-cli" }, scopes: ["operator.admin"] } }
+  const invoke = async (method: string, identity: unknown = client, overrides = {}) => {
+    let response: any
+    await s.methods.get(method)({
+      params: { boardId: "app", policyDigest, reason: "Reviewed protected evaluation", ...overrides },
+      client: identity,
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    return response
+  }
+  for (const method of ["autocode.skill.evaluate", "autocode.skill.promote"]) {
+    expect((await invoke(method))[2].message).toMatch(/Pause execution/)
+  }
+  await s.call("autocode.pause")
+  for (const method of ["autocode.skill.evaluate", "autocode.skill.promote"]) {
+    expect((await invoke(method, null))[2].message).toMatch(/administrator/)
+    expect(
+      (await invoke(method, { connect: { client: { id: "operator-cli" }, scopes: ["operator.read"] } }))[2].message
+    ).toMatch(/administrator/)
+    expect((await invoke(method, client, { policyDigest: "stale" }))[2].message).toMatch(/exact skill policy/)
+  }
+  expect(
+    (await invoke("autocode.skill.evaluate", client, { evaluation: { policyDigest: "stale" } }))[2].message
+  ).toMatch(/Evaluation policy/)
+  const denied = await invoke("autocode.skill.promote", client, { candidateDigest: "missing", evaluationIds: [] })
+  expect(denied[0]).toBe(false)
+  expect(denied[2].message).toMatch(/baseline\/candidate missing/)
+})
+
+it("rejects operator request intake without explicit admin connection scope", async () => {
+  const s = setup()
+  await s.service.start()
+  for (const client of [undefined, { connect: { scopes: ["operator.read"] } }]) {
+    let response: any
+    await s.methods.get("autocode.requests.create")({
+      params: { boardId: "app", request: {} },
+      client,
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    expect(response[0]).toBe(false)
+    expect(response[2].message).toMatch(/admin scope/)
+  }
+  for (const identity of [{}, { client: { id: "" } }, { device: { id: " " } }]) {
+    let rejected: any
+    await s.methods.get("autocode.requests.create")({
+      params: { boardId: "app", request: {} },
+      client: { connect: { ...identity, scopes: ["operator.admin"] } },
+      respond: (...args: any[]) => {
+        rejected = args
+      }
+    })
+    expect(rejected[0]).toBe(false)
+    expect(rejected[2].message).toMatch(/identity required/)
+  }
+  let authorized: any
+  await s.methods.get("autocode.requests.create")({
+    params: { boardId: "app", request: {} },
+    client: { connect: { client: { id: "operator-cli" }, scopes: ["operator.admin"] } },
+    respond: (...args: any[]) => {
+      authorized = args
+    }
+  })
+  expect(authorized[2].message).toMatch(/quality investigations/)
+})
+
+it("passes verified device identity with client identity fallback to request auditing", async () => {
+  const s = setup()
+  await s.service.start()
+  const intake = await import("../packages/core-runtime/src/native/requests.js")
+  const create = vi.spyOn(intake, "createNativeOperatorRequest").mockResolvedValue({ id: "request" } as any)
+  for (const [identity, expected] of [
+    [{ device: { id: "verified-device" }, client: { id: "operator-cli" } }, "verified-device"],
+    [{ client: { id: "operator-cli" } }, "operator-cli"]
+  ] as const) {
+    let response: any
+    await s.methods.get("autocode.requests.create")({
+      params: { boardId: "app", request: { title: "source brief" } },
+      client: { connect: { ...identity, scopes: ["operator.admin"] } },
+      respond: (...args: any[]) => {
+        response = args
+      }
+    })
+    expect(response[0]).toBe(true)
+    expect(create).toHaveBeenLastCalledWith(expect.any(NativeAutonomyRuntime), { title: "source brief" }, expected)
+  }
+})
+
+it("declares only versioned session-bound factory tools and rejects revoked host calls", async () => {
+  const s = setup()
+  await s.service.start()
+  const registration = s.registrations[0]
+  expect(registration.factory.contextVersion).toBe(2)
+  expect(registration.options.confinement).toBe("session-bound")
+  expect(registration.options.names).toContain("autocode_context")
+  const assertInvocationCurrent = vi.fn(() => {
+    throw new Error("Host invocation revoked")
+  })
+  const tool = registration.factory
+    .create({ agentId: "research", sessionKey: "session", assertInvocationCurrent })
+    .find((t: any) => t.name === "autocode_context")
+  await expect(tool.execute("call", { boardId: "app", contextId: "context" })).rejects.toThrow(
+    "Host invocation revoked"
+  )
+  expect(nativeDoctor).not.toHaveBeenCalled()
 })

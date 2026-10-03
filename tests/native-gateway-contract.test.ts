@@ -30,3 +30,36 @@ it("accepts the installed Workboard idle execution state without marking it runn
   const card = { id: "c", title: "Ended", status: "blocked", execution: { status: "idle" } }
   expect(await nativeCards(gateway({ cards: [card] }), "app")).toEqual([card])
 })
+
+it("bounds production-length stage keys while retaining every identity binding", async () => {
+  const sent: string[] = []
+  const remote: NativeGateway = {
+    request: async (_method, input) => {
+      const key = String(input.idempotencyKey)
+      if (key.length > 160) throw new Error("Workboard key exceeds 160 characters")
+      sent.push(key)
+      return { card: { id: key, title: "Stage", status: "blocked" } } as any
+    }
+  }
+  const workflow = "a".repeat(64),
+    head = "b".repeat(40),
+    policy = "c".repeat(64)
+  const verify = `workflow:${workflow}:Verify:${head}:${workflow}:attempt:4:${policy}`
+  for (const key of [
+    verify,
+    verify,
+    verify.replace("attempt:4", "attempt:5"),
+    verify.replace(policy, "d".repeat(64)),
+    `workflow:${workflow}:Review:${head}:${"e".repeat(64)}`,
+    `workflow:${workflow}:Review:${head}:${"f".repeat(64)}`,
+    "x".repeat(160)
+  ]) {
+    const input = { idempotencyKey: key }
+    await nativeCard(remote, input)
+    expect(input.idempotencyKey).toBe(key)
+  }
+  expect(sent[0]).toBe(sent[1])
+  expect(new Set([sent[0], ...sent.slice(2)]).size).toBe(6)
+  expect(sent.every((key) => key.length <= 160)).toBe(true)
+  expect(sent.at(-1)).toBe("x".repeat(160))
+})

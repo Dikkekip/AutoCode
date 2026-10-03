@@ -22,6 +22,32 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 const command = { argv: ["/bin/sh", "-c", "exit 0"], cwd: ".", timeoutSeconds: 5 }
+it.each([0, -1, 63, 4097, 256.5, "1024"])("rejects an unsafe Docker process capacity %s", async (pidsLimit) => {
+  const config = { backend: "docker", image: `sha256:${"a".repeat(64)}`, inputFiles: ["source.txt"], pidsLimit }
+  expect(() => validateNativeVerificationSandbox(config)).toThrow(/pidsLimit/)
+  await expect(
+    executeDockerSandboxedCommand(["/bin/true"], {
+      image: config.image,
+      workspace: "/tmp",
+      cwd: "/work",
+      timeoutMs: 1000,
+      pidsLimit: pidsLimit as number
+    })
+  ).rejects.toThrow(/pidsLimit/)
+})
+it("retains process capacity in validated Docker policy and rejects it for bubblewrap", () => {
+  const config = { backend: "docker", image: `sha256:${"a".repeat(64)}`, inputFiles: ["source.txt"] }
+  expect(validateNativeVerificationSandbox(config)).not.toHaveProperty("pidsLimit")
+  expect(validateNativeVerificationSandbox({ ...config, pidsLimit: 1024 })).toHaveProperty("pidsLimit", 1024)
+  expect(() =>
+    validateNativeVerificationSandbox({
+      backend: "bubblewrap",
+      rootFilesystem: "/opt/root",
+      inputFiles: ["source.txt"],
+      pidsLimit: 1024
+    })
+  ).toThrow(/pidsLimit/)
+})
 it("inherits only allowlisted build variables", () => {
   expect(
     allowlistedEnvironment(BUILD_ENVIRONMENT_ALLOWLIST, {
@@ -114,6 +140,34 @@ const executeIsolated = (argv: string[], options: Parameters<typeof executeSandb
     ? executeDockerSandboxedCommand(argv, { ...options, image: dockerImage })
     : executeSandboxedCommand(argv, options)
 integration("Kernel verification isolation", () => {
+  it("passes exact changed paths through a host-owned manifest without exposing Git metadata", async () => {
+    const repo = temp(),
+      evidence = temp()
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "pipe" }).toString().trim()
+    git("init")
+    git("config", "commit.gpgsign", "false")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test")
+    writeFileSync(join(repo, "source.txt"), "source")
+    git("add", "source.txt")
+    git("commit", "-m", "source")
+    const headSha = git("rev-parse", "HEAD")
+    const result = await runNativeCommand(
+      {
+        ...command,
+        argv: ["/bin/sh", "-c", "test ! -e /work/.git && cat /work/.openclaw-verification/changed-files.json"]
+      },
+      repo,
+      join(evidence, "manifest.json"),
+      sandbox,
+      undefined,
+      undefined,
+      { headSha, changedFiles: ["source.txt"] }
+    )
+    expect(result.exitCode).toBe(0)
+    expect(JSON.parse(result.stdout)).toEqual({ version: 1, headSha, changedFiles: ["source.txt"] })
+    expect(existsSync(join(repo, ".openclaw-verification"))).toBe(false)
+  })
   it("hides secrets, blocks host writes and receipt tampering, preserves build variables", async () => {
     const repo = temp(),
       evidence = temp(),
@@ -154,7 +208,7 @@ integration("Kernel verification isolation", () => {
       else process.env.CI = oldCI
     }
   })
-  it("enforces cancellation, timeout and output bounds", async () => {
+  it("cancels the verifier and its surviving children", async () => {
     const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     const controller = new AbortController()
     const running = executeIsolated(["/bin/sh", "-c", "(sleep 1; echo survived > /work/survived) & wait"], {
@@ -165,9 +219,15 @@ integration("Kernel verification isolation", () => {
     await expect(running).rejects.toMatchObject({ outcome: "cancelled" })
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(existsSync(join(options.workspace, "survived"))).toBe(false)
+  })
+  it("enforces the command timeout", async () => {
+    const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     await expect(executeIsolated(["/bin/sh", "-c", "sleep 30"], { ...options, timeoutMs: 100 })).rejects.toMatchObject({
       outcome: "timeout"
     })
+  })
+  it("enforces the command output bound", async () => {
+    const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
     await expect(
       executeIsolated(["/bin/sh", "-c", "yes flood"], { ...options, maxBufferBytes: 1024 })
     ).rejects.toMatchObject({ outcome: "output_limit" })

@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs"
 import { isAbsolute } from "node:path"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
-import { redactLogText } from "@openclaw/domain"
+import { nativeCoderAgentIds, redactLogText } from "@openclaw/domain"
 import { nativeContentDigest } from "./provenance.js"
 
 export interface NativeHealthReceipt {
@@ -19,7 +19,8 @@ export function assertNativeDeploymentPolicy(policy: NativeAutonomyPolicy) {
   const p = policy.deployment
   if (
     !p?.targetId ||
-    !/^[a-f0-9]{64}$/.test(p.artifactSha256 ?? "") ||
+    (!p.prepare && !/^[a-f0-9]{64}$/.test(p.artifactSha256 ?? "")) ||
+    (!!p.prepare && !!p.artifactSha256) ||
     !/^[a-f0-9]{40,64}$/.test(p.previousKnownGood?.revision ?? "") ||
     !/^[a-f0-9]{64}$/.test(p.previousKnownGood?.artifactSha256 ?? "") ||
     !p.observationSeconds ||
@@ -32,7 +33,7 @@ export function assertNativeDeploymentPolicy(policy: NativeAutonomyPolicy) {
     if (
       p.rollback ||
       !plan ||
-      plan.reviewedBy === policy.coderAgentId ||
+      nativeCoderAgentIds(policy).includes(plan.reviewedBy) ||
       !isAbsolute(plan.artifact) ||
       nativeContentDigest(readFileSync(plan.artifact)) !== plan.sha256
     )

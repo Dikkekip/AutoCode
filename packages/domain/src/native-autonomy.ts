@@ -30,7 +30,7 @@ export type NativeVerificationSandbox = {
   inputFiles: string[]
   /** Operator-reviewed source exceptions pinned to immutable Git blobs. */
   reviewedSourceFiles?: Array<{ path: string; blobSha: string; reviewedBy: string }>
-} & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string })
+} & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string; pidsLimit?: number })
 
 export interface NativeAcceptanceBinding {
   criterion: string
@@ -62,16 +62,33 @@ export interface NativeAutonomyPolicy {
   baseBranch: string
   plannerAgentId: string
   coderAgentId: string
+  /** Optional reviewed pool, including coderAgentId. Each coder retains an isolated workspace. */
+  coderAgentIds?: string[]
+  /** Reviewed role pools. Load balancing never crosses a task's selected tier. */
+  coderRouting?: {
+    simple: string[]
+    routine: string[]
+    veryComplex: string[]
+    simplePaths: string[]
+    veryComplexPaths: string[]
+  }
   reviewerAgentId: string
   workerConcurrency: number
+  verificationConcurrency?: number
   personasPerRound: number
   maxTasksPerRound: number
   dedupeWindowHours: number
   discoveryDailyRoundLimit: number
   personas: NativePersonaGoal[]
-  requiredCi?: { checks: Array<{ name: string; appId: number }>; maxAgeSeconds: number }
+  requiredCi?: {
+    checks: Array<{ name: string; appId: number }>
+    maxAgeSeconds: number
+    requireBranchProtection?: boolean
+  }
   verificationAuthority?: {
     reviewedRevision: string
+    /** Require authenticated commit-bound independent design review for every candidate. */
+    independentCandidateReview?: boolean
     approvedChanges?: Array<{ path: string; blobSha: string; reviewedBy: string }>
     acceptance: NativeAcceptanceBinding[]
   }
@@ -82,6 +99,8 @@ export interface NativeAutonomyPolicy {
     environment?: "staging" | "production"
     targetId?: string
     artifactSha256?: string
+    /** Trusted host preparation builds and stages the exact merged revision. */
+    prepare?: NativeCommand
     previousKnownGood?: { revision: string; artifactSha256: string }
     observationSeconds?: number
     reconciliationSeconds?: number
@@ -166,7 +185,51 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
   }
   const coderAgentId = text(r.coderAgentId, "coderAgentId")
   const reviewerAgentId = text(r.reviewerAgentId, "reviewerAgentId")
+  const coderAgentIds = r.coderAgentIds === undefined ? undefined : strings(r.coderAgentIds, "coderAgentIds")
+  if (
+    coderAgentIds &&
+    (coderAgentIds.length > 8 ||
+      new Set(coderAgentIds).size !== coderAgentIds.length ||
+      !coderAgentIds.includes(coderAgentId))
+  )
+    throw new Error("Coder pool must contain the primary coder and at most 8 distinct identities")
+  if (
+    coderAgentIds?.some(
+      (id) =>
+        id === reviewerAgentId ||
+        id === r.plannerAgentId ||
+        personas.some((p) => id === (p.investigationAgentId ?? p.personaId))
+    )
+  )
+    throw new Error("Coder pool requires independent planner, reviewer and research identities")
   if (coderAgentId === reviewerAgentId) throw new Error("Reviewer must be independent of coder")
+  let coderRouting: NativeAutonomyPolicy["coderRouting"]
+  if (r.coderRouting !== undefined) {
+    const routing = record(r.coderRouting)
+    const pool = coderAgentIds ?? [coderAgentId]
+    const simple = strings(routing.simple, "simple coder pool")
+    const routine = strings(routing.routine, "routine coder pool")
+    const veryComplex = strings(routing.veryComplex, "very complex coder pool")
+    const assigned = [...simple, ...routine, ...veryComplex]
+    if (
+      new Set(assigned).size !== assigned.length ||
+      assigned.some((id) => !pool.includes(id)) ||
+      pool.some((id) => !assigned.includes(id)) ||
+      !routine.includes(coderAgentId)
+    )
+      throw new Error("Coder routing must partition the reviewed pool and keep the primary coder in routine")
+    coderRouting = {
+      simple,
+      routine,
+      veryComplex,
+      simplePaths:
+        routing.simplePaths?.length === 0 ? [] : strings(routing.simplePaths, "simple paths").map(nativeRelativePath),
+      veryComplexPaths:
+        routing.veryComplexPaths?.length === 0
+          ? []
+          : strings(routing.veryComplexPaths, "very complex paths").map(nativeRelativePath)
+    }
+  }
   const verification = (Array.isArray(r.verification) ? r.verification : []).map(command)
   if (!verification.length) throw new Error("Native autonomy requires verification commands")
   const ids = verification.map(nativeVerificationRuleId)
@@ -214,8 +277,13 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     baseBranch: text(r.baseBranch, "baseBranch"),
     plannerAgentId: text(r.plannerAgentId, "plannerAgentId"),
     coderAgentId,
+    ...(coderAgentIds ? { coderAgentIds } : {}),
+    ...(coderRouting ? { coderRouting } : {}),
     reviewerAgentId,
-    workerConcurrency: integer(r.workerConcurrency, 1, 2),
+    workerConcurrency: integer(r.workerConcurrency, 1, 8),
+    ...(r.verificationConcurrency === undefined
+      ? {}
+      : { verificationConcurrency: integer(r.verificationConcurrency, 0, 8) }),
     personasPerRound: integer(r.personasPerRound, 3, 10),
     maxTasksPerRound: integer(r.maxTasksPerRound, 6, 6),
     dedupeWindowHours: integer(r.dedupeWindowHours, 72, 720),
@@ -228,6 +296,9 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
       : {
           verificationAuthority: {
             reviewedRevision: text(r.verificationAuthority.reviewedRevision, "reviewed policy revision"),
+            ...(r.verificationAuthority.independentCandidateReview === true
+              ? { independentCandidateReview: true }
+              : {}),
             approvedChanges: (r.verificationAuthority.approvedChanges ?? []).map((a: any) => ({
               path: nativeRelativePath(text(a.path, "approved authority path")),
               blobSha: text(a.blobSha, "approved authority blob"),
@@ -273,6 +344,7 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
           ...(r.deployment.targetId === undefined
             ? {}
             : { targetId: text(r.deployment.targetId, "deployment target") }),
+          ...(r.deployment.prepare ? { prepare: command(r.deployment.prepare) } : {}),
           ...(r.deployment.artifactSha256 === undefined
             ? {}
             : { artifactSha256: text(r.deployment.artifactSha256, "deployment artifact digest") }),
@@ -308,6 +380,8 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
 
 export function validateNativeRequiredCi(value: unknown): NonNullable<NativeAutonomyPolicy["requiredCi"]> {
   const r = record(value)
+  if (r.requireBranchProtection !== undefined && typeof r.requireBranchProtection !== "boolean")
+    throw new Error("requireBranchProtection must be a boolean")
   if (!Array.isArray(r.checks) || !r.checks.length) throw new Error("Required CI checks must be non-empty")
   const checks = r.checks.map((entry: unknown) => {
     const c = record(entry)
@@ -315,7 +389,11 @@ export function validateNativeRequiredCi(value: unknown): NonNullable<NativeAuto
   })
   if (new Set(checks.map((c) => `${c.appId}:${c.name}`)).size !== checks.length)
     throw new Error("Duplicate required CI check")
-  return { checks, maxAgeSeconds: integer(r.maxAgeSeconds, 86400, 604800) }
+  return {
+    checks,
+    maxAgeSeconds: integer(r.maxAgeSeconds, 86400, 604800),
+    ...(r.requireBranchProtection === false ? { requireBranchProtection: false } : {})
+  }
 }
 
 export interface NativeProposal {
@@ -327,6 +405,7 @@ export interface NativeProposal {
   acceptance: string[]
   alternatives: string[]
   implementationPrompt: string
+  complexity?: { tier: "simple" | "routine" | "very-complex"; rationale: string }
   quality?: import("./native-quality.js").NativeProposalQuality
 }
 export function validateNativeProposal(value: unknown, policy: NativeAutonomyPolicy): NativeProposal {
@@ -338,6 +417,12 @@ export function validateNativeProposal(value: unknown, policy: NativeAutonomyPol
     throw new Error("Proposal exceeds persona path authority")
   }
   if (!Array.isArray(r.evidence) || !r.evidence.length) throw new Error("Proposal needs repository evidence")
+  let complexity: NativeProposal["complexity"]
+  if (r.complexity !== undefined) {
+    const value = record(r.complexity)
+    if (!["simple", "routine", "very-complex"].includes(value.tier)) throw new Error("Invalid task complexity tier")
+    complexity = { tier: value.tier, rationale: text(value.rationale, "complexity rationale") }
+  }
   return {
     personaId: persona.personaId,
     goal: r.goal,
@@ -352,7 +437,8 @@ export function validateNativeProposal(value: unknown, policy: NativeAutonomyPol
     allowedPaths,
     acceptance: strings(r.acceptance, "acceptance"),
     alternatives: strings(r.alternatives, "alternatives"),
-    implementationPrompt: text(r.implementationPrompt, "implementationPrompt")
+    implementationPrompt: text(r.implementationPrompt, "implementationPrompt"),
+    ...(complexity ? { complexity } : {})
   }
 }
 export function nativeProposalKey(proposal: NativeProposal): string {
@@ -524,6 +610,11 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
   const image = r.backend === "docker" ? text(r.image, "sandbox image") : ""
   if (r.backend === "docker" && !/^sha256:[a-f0-9]{64}$/.test(image))
     throw new Error("Docker verification requires an immutable local image ID")
+  if (
+    r.pidsLimit !== undefined &&
+    (r.backend !== "docker" || !Number.isInteger(r.pidsLimit) || Number(r.pidsLimit) < 64 || Number(r.pidsLimit) > 4096)
+  )
+    throw new Error("Docker verification pidsLimit must be an integer between 64 and 4096")
   const rootFilesystem = r.backend === "bubblewrap" ? text(r.rootFilesystem, "sandbox rootFilesystem") : ""
   if (r.backend === "bubblewrap" && (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/"))
     throw new Error("Sandbox needs a dedicated root filesystem")
@@ -560,6 +651,17 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
   const reviewed = reviewedSourceFiles.length ? { reviewedSourceFiles } : {}
   return r.backend === "docker"
-    ? { backend: "docker", image, inputFiles, ...reviewed }
+    ? {
+        backend: "docker",
+        image,
+        inputFiles,
+        ...reviewed,
+        ...(r.pidsLimit === undefined ? {} : { pidsLimit: r.pidsLimit as number })
+      }
     : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
+}
+
+/** Retain the legacy single-coder policy when no pool was configured. */
+export function nativeCoderAgentIds(policy: NativeAutonomyPolicy): readonly string[] {
+  return policy.coderAgentIds ?? [policy.coderAgentId]
 }

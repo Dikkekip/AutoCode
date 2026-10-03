@@ -1,0 +1,7 @@
+# Add focused timeline keyboard coverage to the reviewed shell coverage image.
+# Verify BASE_VERIFIER_IMAGE's local sha256 ID before building.
+ARG BASE_VERIFIER_IMAGE=native-verifier:shell-inbox-coverage-20260928
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-timeline-shortcut-tests.sh /opt/openclaw/checks/timeline-shortcut-ownership
+RUN chmod 0555 /opt/openclaw/checks/timeline-shortcut-ownership

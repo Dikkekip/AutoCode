@@ -50,8 +50,9 @@ Review the generated JSON:
 | personas | Goals, success observations, owned paths, weights, and custom ideationPrompt briefs. |
 | quality.skillPath | A readable absolute path to prompt-engineering-expert/SKILL.md. |
 | verification | Host-run commands covering permitted changes. Replace the sample pnpm test when necessary. |
-| plannerAgentId, coderAgentId, reviewerAgentId | Registered roles; the reviewer must differ from the coder. |
-| workerConcurrency | Keep one during the pilot. |
+| plannerAgentId, coderAgentId, reviewerAgentId | Registered roles; the reviewer must differ from every coder. |
+| coderAgentIds | Optional pool of up to eight distinct coder IDs, including coderAgentId; each must be independent of planner, reviewer and research roles. Omit for the existing single-coder behavior. |
+| workerConcurrency | Integer from one to eight; keep one during the pilot. Increasing this alone does not create coder identities. |
 | deployment | Deployment and application-workflow verification commands; initially null. |
 
 For an existing dispatcher project, use its .openclaw/profile.json as input. Conversion preserves persona instructions and lane rules but does not migrate task state. Policies without a quality object retain the earlier native behavior.
@@ -64,10 +65,20 @@ Use your installed OpenClaw's supported agent/configuration commands. Inspect re
 openclaw agents list --json
 ~~~
 
-For each persona, register the dedicated investigationAgentId from the policy. For the minimal profile this is native-research-pm-general. Preserve the intended persona mission and existing model selection. Give research roles only this tool configuration:
+For each persona, register the dedicated investigationAgentId from the policy. For the minimal profile this is native-research-pm-general. Profile conversion creates the policy mapping; it does not register or configure the agent. Preserve the intended persona mission and existing model selection. Configure each research agent with a session sandbox and the following narrow tools:
 
 ~~~json
 {
+  "sandbox": {
+    "mode": "all",
+    "scope": "session",
+    "workspaceAccess": "ro",
+    "docker": {
+      "network": "none",
+      "readOnlyRoot": true,
+      "user": "1000:1000"
+    }
+  },
   "tools": {
     "allow": [
       "autocode_context",
@@ -75,13 +86,19 @@ For each persona, register the dedicated investigationAgentId from the policy. F
       "autocode_propose",
       "autocode_investigation_finish",
       "workboard_complete",
-      "workboard_heartbeat"
-    ]
+      "workboard_heartbeat",
+      "workboard_block"
+    ],
+    "sandbox": {
+      "tools": {
+        "allow": ["autocode_context", "autocode_inspect", "autocode_propose", "autocode_investigation_finish", "workboard_complete", "workboard_heartbeat", "workboard_block"]
+      }
+    }
   }
 }
 ~~~
 
-Do not add shell, editing, spawning, alsoAllow, or provider-specific overrides. Research runs in scratch workspaces and reads committed files through the inspection tool. Readiness checks inspect these permissions.
+Set the sandbox image to your reviewed immutable image digest, and use the runtime user's numeric UID/GID. An existing confined read-only reviewer sandbox can supply these settings. Do not add host mounts, shell, editing, spawning, alsoAllow, or provider-specific overrides. Research runs in scratch workspaces and reads committed files through the inspection tool. The tool allowlist does not enable a sandbox. Readiness checks verify the effective read-only session sandbox as well as the seven tools; Workboard independently enforces confinement at dispatch.
 
 The planner needs proposal, admission, and deferral tools. The coder needs autocode_submit. The reviewer needs autocode_design_review and autocode_review. All worker roles need native completion/heartbeat tools. See the [native tool reference](native-autonomy.md#plugin-and-native-scheduling).
 

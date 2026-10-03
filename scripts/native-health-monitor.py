@@ -1,0 +1,135 @@
+#!/usr/bin/env python3
+"""Read native execution evidence without restarting or changing any work."""
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+
+
+def summarize(board, status, cards, jobs, now, gateway=None):
+    issues = []
+    gateway_evidence = None
+    if gateway is not None:
+        runtime = gateway.get("modelRuntime")
+        gateway_evidence = {
+            "modelRuntime": runtime,
+            "modelRuntimeReported": runtime is not None,
+            "modelCatalog": gateway.get("workerPools", {}).get("modelCatalog"),
+        }
+        # OpenClaw clears this optional startup projection on config publication.
+        # Its absence is an evidence gap, not a reported runtime failure.
+        if runtime is not None and (runtime.get("degraded") or runtime.get("pendingAgents")):
+            issues.append("gateway model runtime is degraded or agents are pending preparation")
+    control = status.get("control", {})
+    if not status.get("enabled") or control.get("paused") or control.get("frozen"):
+        issues.append("native execution disabled, paused, or frozen")
+    schedules = []
+    for role in ("discover", "dispatch", "reconcile"):
+        name = f"autocode:{board}:{role}"
+        job = next((j for j in jobs if j.get("name") == name), None)
+        if not job:
+            issues.append(f"missing schedule: {role}")
+            continue
+        state = job.get("state", {})
+        schedules.append({"role": role, "enabled": job.get("enabled"),
+                          "lastRunStatus": state.get("lastRunStatus"),
+                          "lastRunAtMs": state.get("lastRunAtMs"),
+                          "runningAtMs": state.get("runningAtMs")})
+        if not job.get("enabled"):
+            issues.append(f"disabled schedule: {role}")
+        elif state.get("lastRunStatus") == "error" and not state.get("runningAtMs"):
+            issues.append(f"failed schedule: {role}")
+        elif not state.get("runningAtMs") and now - (state.get("lastRunAtMs") or 0) > 900_000:
+            issues.append(f"schedule has no recent run: {role}")
+    active = []
+    ready = []
+    waiting = []
+    has_running = any(c.get("status") == "running" for c in cards)
+    for card in cards:
+        if card.get("status") == "running":
+            execution = card.get("execution") or {}
+            active.append({"id": card["id"], "title": card.get("title"),
+                           "model": execution.get("model"), "runId": execution.get("runId"),
+                           "sessionKey": execution.get("sessionKey")})
+        elif card.get("status") == "ready":
+            ready.append(card["id"])
+            if now - card.get("updatedAt", now) > 900_000 and not has_running:
+                issues.append(f"ready card has waited over 15 minutes without a running worker: {card['id']}")
+        elif card.get("status") == "todo":
+            waiting.append(card["id"])
+            if now - card.get("updatedAt", now) > 900_000 and not has_running:
+                issues.append(f"todo card has waited over 15 minutes without a running worker: {card['id']}")
+        elif (card.get("status") == "review"
+              and card.get("title", "").startswith("Select persona ideas:")
+              and (card.get("execution") or {}).get("status") != "running"
+              and now - card.get("updatedAt", now) > 900_000):
+            issues.append(f"unfinished persona selection has blocked discovery for over 15 minutes: {card['id']}")
+    workflows = [{"id": w["id"], "title": w.get("title"), "blocker": w.get("blocker")}
+                 for w in status.get("workflows", []) if w.get("blocker")]
+    current = [w for w in status.get("workflows", [])
+               if not w.get("deployedSha") and w.get("lifecycle", {}).get("state") != "cancelled"]
+    if current and all(w.get("blocker") for w in current):
+        issues.append("all unfinished workflows are blocked; schedules or research activity cannot deliver a release")
+    elif current and not active and not ready and not waiting:
+        # Verification and release may run in the reconciler, without a card worker.
+        stranded = [w["id"] for w in current if not w.get("blocker")
+                    and w.get("lifecycle", {}).get("state") in ("implementation", "design_wait", "review")]
+        if stranded:
+            issues.append("workflows are waiting for workers but no work is runnable: " + ", ".join(stranded))
+    pipeline = {name: sum(bool(w.get(field)) for w in status.get("workflows", []))
+                for name, field in (("candidates", "candidateSha"), ("verified", "verifiedSha"),
+                                    ("merged", "mergedSha"), ("deployed", "deployedSha"))}
+    return {"observedAtMs": now, "boardId": board,
+            "health": "attention" if issues else "observed",
+            "issues": issues, "schedules": schedules, "runningCards": active,
+            "readyCards": ready, "waitingCards": waiting, "counts": status.get("counts", {}),
+            "blockedWorkflows": workflows,
+            "pipeline": pipeline,
+            "gateway": gateway_evidence,
+            "evidenceLimit": "Card running state is not process liveness or proof of successful implementation/release. Missing modelRuntime is unreported readiness, not proof of health."}
+
+
+def collect(command, method, params):
+    result = subprocess.run([command, "gateway", "call", method, "--json", "--timeout", "30000",
+                             "--params", json.dumps(params)], capture_output=True, text=True, timeout=45)
+    if result.returncode:
+        # Tool errors may contain sensitive provider details; retain only method/code.
+        raise RuntimeError(f"{method} failed with exit code {result.returncode}")
+    return json.loads(result.stdout)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--openclaw", required=True)
+    parser.add_argument("--board", required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    args = parser.parse_args()
+    now = int(time.time() * 1000)
+    try:
+        status = collect(args.openclaw, "autocode.status", {"boardId": args.board})
+        cards = collect(args.openclaw, "workboard.cards.list", {"boardId": args.board})["cards"]
+        jobs = collect(args.openclaw, "cron.list", {"includeDisabled": True})["jobs"]
+        gateway = collect(args.openclaw, "status", {"includeChannelSummary": False})
+        report = summarize(args.board, status, cards, jobs, now, gateway)
+    except (OSError, RuntimeError, subprocess.TimeoutExpired, ValueError, KeyError) as error:
+        report = {"observedAtMs": now, "boardId": args.board, "health": "unknown",
+                  "issues": [str(error) if isinstance(error, RuntimeError) else type(error).__name__]}
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(dir=args.output.parent, prefix=".native-health-")
+    try:
+        with os.fdopen(fd, "w") as stream:
+            json.dump(report, stream, indent=2)
+            stream.write("\n")
+        os.replace(name, args.output)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    print(json.dumps({"health": report["health"], "issues": report["issues"], "output": str(args.output)}))
+    return 1 if report["health"] == "unknown" else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

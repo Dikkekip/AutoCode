@@ -1,0 +1,11 @@
+# Extend the reviewed timeline image with exact current feature suites.
+# Verify BASE_VERIFIER_IMAGE's local sha256 ID before building.
+ARG BASE_VERIFIER_IMAGE=native-verifier:timeline-coverage-20260928
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-current-feature-tests.sh /opt/openclaw/checks/whatsapp-search-keyboard
+COPY native-current-feature-tests.sh /opt/openclaw/checks/ingestion-task-status-recovery
+COPY SearchPanel.base-3b806029.tsx /opt/openclaw/baselines/SearchPanel.base-3b806029.tsx
+RUN chmod 0555 /opt/openclaw/checks/whatsapp-search-keyboard \
+    /opt/openclaw/checks/ingestion-task-status-recovery && \
+    chmod 0444 /opt/openclaw/baselines/SearchPanel.base-3b806029.tsx

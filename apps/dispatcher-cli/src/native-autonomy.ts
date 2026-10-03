@@ -4,15 +4,16 @@ import {
   applyNativeMigration,
   inspectNativeSkill,
   loadNativePolicy,
-  NativeCliGateway,
   NativeEvidenceStore,
   type NativeMigrationPlan,
+  NativeSdkGateway,
   nativeDoctor,
   nativePolicyFromProfile,
   planNativeMigration
 } from "@openclaw/core-runtime"
 import { validateProjectProfile } from "@openclaw/project-profiles"
 import type { Command } from "commander"
+import { retryContendedDiscovery } from "./native-discovery-retry.js"
 
 export function registerNativeAutonomyCommands(program: Command, io: { stdout: (message: string) => void }): void {
   const root = program
@@ -22,7 +23,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
     .option("--openclaw <command>", "OpenClaw executable", "openclaw")
   const settings = () => ({
     policy: loadNativePolicy(resolve(root.opts().policy)),
-    gateway: new NativeCliGateway(root.opts().openclaw)
+    gateway: new NativeSdkGateway(root.opts().openclaw)
   })
   const output = (value: unknown) => io.stdout(`${JSON.stringify(value, null, 2)}\n`)
   root
@@ -64,14 +65,56 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
       output(report)
       if (!report.ok) process.exitCode = 1
     })
-  for (const name of ["status", "discover", "reconcile", "pause", "resume", "freeze"] as const)
+  for (const name of ["status", "discover", "dispatch", "reconcile", "pause", "resume", "freeze"] as const)
     root
       .command(name)
       .option("--json", "JSON output", true)
       .action(async () => {
         const { policy, gateway } = settings()
-        output(await gateway.request(`autocode.${name}`, { boardId: policy.boardId }))
+        const request = () =>
+          gateway.request<{ created: string[]; reason?: string }>(`autocode.${name}`, { boardId: policy.boardId })
+        output(name === "discover" ? await retryContendedDiscovery(request) : await request())
       })
+  const policyRefresh = root
+    .command("policy-refresh")
+    .description("Review and apply a paused native policy refresh without restarting the Gateway")
+  policyRefresh.command("plan").action(async () => {
+    const { policy, gateway } = settings()
+    output(await gateway.request("autocode.policy.refresh.plan", { boardId: policy.boardId }))
+  })
+  policyRefresh
+    .command("apply")
+    .requiredOption("--plan <file>", "Exact reviewed refresh plan JSON")
+    .requiredOption("--reason <text>", "Operator rationale")
+    .action(async (options) => {
+      const { policy, gateway } = settings()
+      output(
+        await gateway.request("autocode.policy.refresh.apply", {
+          boardId: policy.boardId,
+          plan: JSON.parse(readFileSync(resolve(options.plan), "utf8")),
+          reason: options.reason
+        })
+      )
+    })
+  const requests = root
+    .command("requests")
+    .description("Queue source-bound operator work for real native investigation")
+  requests.command("list").action(async () => {
+    const { policy, gateway } = settings()
+    output(await gateway.request("autocode.requests.list", { boardId: policy.boardId }))
+  })
+  requests
+    .command("create")
+    .requiredOption("--file <file>", "JSON operator request brief")
+    .action(async (options) => {
+      const { policy, gateway } = settings()
+      output(
+        await gateway.request("autocode.requests.create", {
+          boardId: policy.boardId,
+          request: JSON.parse(readFileSync(resolve(options.file), "utf8"))
+        })
+      )
+    })
   root
     .command("quality")
     .description("Explain native investigation and review outcomes")
@@ -179,7 +222,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
     })
   root
     .command("install-automations")
-    .description("Create disabled native discovery and reconciliation automations")
+    .description("Create disabled native discovery, dispatch and reconciliation automations")
     .requiredOption("--cli <file>", "Absolute built dispatcher CLI entrypoint")
     .requiredOption("--node <file>", "Absolute compatible Node executable")
     .action(async (options) => {
@@ -198,7 +241,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
           offset = page.nextOffset
         }
         const ids: Record<string, string> = {}
-        for (const kind of ["discover", "reconcile"]) {
+        for (const kind of ["discover", "dispatch", "reconcile"]) {
           const declarationKey = `autocode:${policy.boardId}:${kind}`
           const payload = {
             kind: "command",
@@ -213,7 +256,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
               kind
             ],
             cwd: policy.repository,
-            timeoutSeconds: 7200
+            timeoutSeconds: kind === "dispatch" ? 300 : 7200
           }
           const previous = jobs.find((j: any) => j.declarationKey === declarationKey)
           if (previous) {
@@ -231,7 +274,14 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
             enabled: false,
             schedule: {
               kind: "cron",
-              expr: kind === "discover" ? (policy.quality ? "0 * * * *" : "0 */2 * * *") : "*/5 * * * *",
+              expr:
+                kind === "discover"
+                  ? policy.quality
+                    ? "0 * * * *"
+                    : "0 */2 * * *"
+                  : kind === "dispatch"
+                    ? "* * * * *"
+                    : "*/5 * * * *",
               tz: "UTC"
             },
             sessionTarget: "isolated",
@@ -244,7 +294,11 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
             throw new Error("Native cron.add did not return a durable job identity")
           ids[kind] = jobId
         }
-        store.put("automation", policy.boardId, { discoveryJobId: ids.discover, reconcileJobId: ids.reconcile })
+        store.put("automation", policy.boardId, {
+          discoveryJobId: ids.discover,
+          dispatchJobId: ids.dispatch,
+          reconcileJobId: ids.reconcile
+        })
         output({ jobs: ids, note: "New jobs are disabled. Existing jobs retain operator state." })
       } finally {
         store.close()

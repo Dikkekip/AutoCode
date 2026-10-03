@@ -1,0 +1,7 @@
+# Add hearing run sheet coverage to the prior reviewed coverage image.
+# Resolve and verify BASE_VERIFIER_IMAGE's local sha256 ID before building.
+ARG BASE_VERIFIER_IMAGE=native-verifier:coverage-20260928
+FROM ${BASE_VERIFIER_IMAGE}
+USER 0
+COPY native-bundle-hearing-tests.sh /opt/openclaw/checks/bundle-hearing-runsheet
+RUN chmod 0555 /opt/openclaw/checks/bundle-hearing-runsheet

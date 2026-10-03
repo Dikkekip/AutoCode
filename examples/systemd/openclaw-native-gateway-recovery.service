@@ -1,0 +1,9 @@
+[Unit]
+Description=Recover a persistently wedged OpenClaw Workboard
+After=openclaw-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /path/to/AutoCode/scripts/native-gateway-recovery.mjs --openclaw /path/to/openclaw --board your-board --state %h/.openclaw/native-gateway-recovery.json --apply
+TimeoutStartSec=480
+UMask=0077

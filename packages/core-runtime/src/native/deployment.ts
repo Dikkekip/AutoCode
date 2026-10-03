@@ -28,7 +28,8 @@ export async function reconcileNativeDeployment(
   io: NativeReleaseIO
 ): Promise<void> {
   const { store, policy } = runtime,
-    p = assertNativeDeploymentPolicy(policy),
+    configured = assertNativeDeploymentPolicy(policy),
+    p = { ...configured },
     now = io.now ?? Date.now
   const attemptId = w.lifecycle!.attemptId,
     targetKey = nativeContentDigest(p.targetId),
@@ -43,6 +44,12 @@ export async function reconcileNativeDeployment(
   }>("deployment-target", targetKey)
   if (target && target.state !== "healthy" && (target.workflowId !== id || target.attemptId !== attemptId))
     throw new NativeReleasePending("Deployment target is owned by another unresolved workflow")
+  // A standing preparation policy follows the last independently confirmed target.
+  // Fixed-artifact policies retain their original exact known-good behavior.
+  if (p.prepare && target?.state === "healthy" && target.workflowId !== id) {
+    if (!target.revision || !target.artifactSha256) throw new Error("Known-good target identity missing")
+    p.previousKnownGood = { revision: target.revision, artifactSha256: target.artifactSha256 }
+  }
   if (
     target?.state === "healthy" &&
     target.workflowId !== id &&
@@ -64,6 +71,54 @@ export async function reconcileNativeDeployment(
     AUTOCODE_ATTEMPT_ID: attemptId,
     AUTOCODE_REPOSITORY: policy.repository
   })
+  if (p.prepare) {
+    const identityKey = `${id}:${attemptId}:artifact`
+    type Prepared = {
+      targetId: string
+      revision: string
+      artifactSha256: string
+      staged: boolean
+      previousKnownGood: { revision: string; artifactSha256: string }
+      evidence: { path: string; sha256: string }
+    }
+    let prepared = store.get<Prepared>("deployment-artifact", identityKey)
+    if (!prepared) {
+      runtime.control.assert()
+      runtime.reserveBudget(id, attemptId, "deployment", identityKey)
+      const result = await io.command(
+        p.prepare,
+        policy.repository,
+        resolve(artifacts, "prepare.json"),
+        env(w.mergedSha!, "")
+      )
+      if (result.exitCode !== 0) throw new NativeReleasePending("Release preparation has not succeeded")
+      const receipt = JSON.parse(result.stdout)
+      if (
+        receipt.targetId !== p.targetId ||
+        receipt.revision !== w.mergedSha ||
+        !/^[a-f0-9]{64}$/.test(receipt.artifactSha256 ?? "") ||
+        receipt.staged !== true
+      )
+        throw new Error("Prepared artifact does not match the exact staged release")
+      prepared = {
+        ...receipt,
+        previousKnownGood: p.previousKnownGood,
+        evidence: { path: result.artifact, sha256: nativeContentDigest(readFileSync(result.artifact)) }
+      }
+      store.put("deployment-artifact", identityKey, prepared)
+    }
+    if (
+      !prepared ||
+      prepared.targetId !== p.targetId ||
+      prepared.revision !== w.mergedSha ||
+      prepared.staged !== true ||
+      !/^[a-f0-9]{64}$/.test(prepared.artifactSha256) ||
+      nativeContentDigest(readFileSync(prepared.evidence.path)) !== prepared.evidence.sha256
+    )
+      throw new Error("Prepared release evidence changed")
+    p.artifactSha256 = prepared.artifactSha256
+    p.previousKnownGood = prepared.previousKnownGood
+  }
   const observe = async (revision: string, artifactSha256: string, kind: string) => {
     const result = await io.command(
       p.check,

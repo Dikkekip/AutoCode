@@ -1,3 +1,4 @@
+import { nativeCoderAgentIds } from "@openclaw/domain"
 // New: narrow authorization for host-supplied OpenClaw plugin tool factory context.
 // Public context source: openclaw/openclaw v2026.9.1 src/plugins/tool-types.ts.
 import { nativeCards } from "./gateway.js"
@@ -34,10 +35,10 @@ export async function authorizeNativeTool(
   const agentId = context.agentId!
   const policy = runtime.policy
   if (planning.has(name) && agentId !== policy.plannerAgentId) deny("assigned planner required")
-  if (name === "autocode_submit" && agentId !== policy.coderAgentId) deny("assigned coder required")
+  if (name === "autocode_submit" && !nativeCoderAgentIds(policy).includes(agentId)) deny("assigned coder required")
   if (
     ["autocode_review", "autocode_design_review"].includes(name) &&
-    (agentId !== policy.reviewerAgentId || agentId === policy.coderAgentId)
+    (agentId !== policy.reviewerAgentId || nativeCoderAgentIds(policy).includes(agentId))
   )
     deny("independent reviewer required")
   if (research.has(name) && !policy.personas.some((p) => (p.investigationAgentId ?? p.personaId) === agentId))
@@ -66,8 +67,16 @@ export async function authorizeNativeTool(
   const card = assigned[0]!
   let targetCardId: string | undefined
   if (name === "autocode_context") {
-    const record = runtime.store.get<{ cardId: string; agentId: string }>("card-context", args.contextId)
-    if (record?.agentId === agentId) targetCardId = record.cardId
+    const record = runtime.store.get<{ cardId?: string; agentId: string; idempotencyKey?: string }>(
+      "card-context",
+      args.contextId
+    )
+    if (record?.agentId === agentId)
+      targetCardId =
+        record.cardId ??
+        (record.idempotencyKey && card.metadata?.automation?.idempotencyKey === record.idempotencyKey
+          ? card.id
+          : undefined)
   } else if (research.has(name)) {
     const personaId = name === "autocode_propose" ? args.proposal?.personaId : args.personaId
     const entry = runtime.store.get<{ cardId: string; agentId: string }>(

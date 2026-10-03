@@ -128,3 +128,49 @@ it.each(["DREAMS.md", "memory/dreaming/session.md"])("rejects staged runtime not
   execFileSync("git", ["add", path], { cwd: s.worktree })
   await expect(commitNativeCandidate(s.policy, s.worktree, ["**"], "Unsafe", () => {})).rejects.toThrow(/scope/)
 })
+
+const toolArtifacts = [".local/share/vitest/.vitest-secret-token", ".npm/_update-notifier-last-checked"]
+it("leaves private untracked test artifacts untouched and outside the scoped commit", async () => {
+  const s = setup()
+  for (const path of toolArtifacts) {
+    mkdirSync(join(s.worktree, path, ".."), { recursive: true })
+    writeFileSync(join(s.worktree, path), "private tool state")
+  }
+  writeFileSync(join(s.worktree, "code.ts"), "export const value = 2\n")
+  const sha = await commitNativeCandidate(s.policy, s.worktree, ["code.ts"], "Fix", () => {})
+  expect((await inspectNativeCandidate(s.policy, s.worktree, ["code.ts"])).files).toEqual(["code.ts"])
+  for (const path of toolArtifacts) {
+    expect(readFileSync(join(s.worktree, path), "utf8")).toBe("private tool state")
+    expect(s.git("ls-tree", "-r", "--name-only", sha!)).not.toContain(path)
+  }
+})
+it.each(toolArtifacts)("rejects staged private tool state even with broad scope: %s", async (path) => {
+  const s = setup(),
+    head = s.git("rev-parse", "candidate")
+  mkdirSync(join(s.worktree, path, ".."), { recursive: true })
+  writeFileSync(join(s.worktree, path), "private tool state")
+  execFileSync("git", ["add", path], { cwd: s.worktree })
+  await expect(commitNativeCandidate(s.policy, s.worktree, ["**"], "Unsafe", () => {})).rejects.toThrow(/scope/)
+  expect(s.git("rev-parse", "candidate")).toBe(head)
+})
+it("keeps adjacent untracked package files subject to admitted scope", async () => {
+  const s = setup()
+  mkdirSync(join(s.worktree, ".npm"))
+  writeFileSync(join(s.worktree, ".npm/other.txt"), "unrelated")
+  await expect(commitNativeCandidate(s.policy, s.worktree, ["code.ts"], "Unsafe", () => {})).rejects.toThrow(/scope/)
+})
+
+it.each(["modified", "deleted"])("rejects %s tracked private tool artifacts", async (change) => {
+  const s = setup(),
+    path = toolArtifacts[0]!
+  mkdirSync(join(s.repo, path, ".."), { recursive: true })
+  writeFileSync(join(s.repo, path), "tracked fixture")
+  s.git("add", path)
+  s.git("commit", "-m", "tracked private artifact fixture")
+  execFileSync("git", ["merge", "main"], { cwd: s.worktree, stdio: "pipe" })
+  const head = s.git("rev-parse", "candidate")
+  if (change === "deleted") rmSync(join(s.worktree, path))
+  else writeFileSync(join(s.worktree, path), "changed private state")
+  await expect(commitNativeCandidate(s.policy, s.worktree, ["**"], "Unsafe", () => {})).rejects.toThrow(/scope/)
+  expect(s.git("rev-parse", "candidate")).toBe(head)
+})

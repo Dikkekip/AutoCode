@@ -40,7 +40,7 @@ This is a capability and limitation map for the current native runtime. Workboar
 | 32 | Existing evidence-based selector plus reviewed exploration capacity | Scores express reviewed preferences; they are not fabricated performance measurements. |
 | 33 | Bounded problem/workflow/scope/evidence and resolution-aware dedupe | New evidence/reversals can reopen; exact operator overrides expire. |
 | 34 | Revision-bound ranged reads and bounded context packs | Literal static links and filename heuristics are labelled; no complete semantic impact guarantee. |
-| 35 | Protected measured capability requirements for fixed native roles | Unknown capabilities/fallbacks fail closed. Dynamic model escalation remains disabled. |
+| 35 | Protected measured capability requirements and reviewed native coder tiers | Unknown capabilities/fallbacks fail closed. Optional simple/routine/very complex pools preserve role authority and never downshift because of worker load. |
 | 36 | Atomic project/day/workflow/attempt reservations and actual/unknown settlement | Missing usage is held conservatively; no fabricated provider cost or cooldown bypass. |
 | 37 | Immutable skill snapshots and independently reviewed evaluation/promotion/rollback | Controlled comparisons cannot certify live skill efficacy. |
 | 38 | Existing module/profile extraction and boundary checks retained | Legacy runtime remains available under explicit ownership; no wholesale rewrite. |

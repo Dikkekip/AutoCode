@@ -3,7 +3,7 @@ import { createHash } from "node:crypto"
 import { lstatSync, readFileSync, realpathSync } from "node:fs"
 import { isAbsolute, relative, sep } from "node:path"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
-import { nativePolicyDigest } from "@openclaw/domain"
+import { nativeCoderAgentIds, nativePolicyDigest } from "@openclaw/domain"
 import { type NativeHumanAuthority, requireNativeHuman } from "./governance.js"
 import type { NativeEvidenceStore } from "./store.js"
 export interface NativeCapabilities {
@@ -163,7 +163,7 @@ export function assertConfiguredNativeCapabilities(
   const decisions = []
   for (const agentId of new Set([
     policy.plannerAgentId,
-    policy.coderAgentId,
+    ...nativeCoderAgentIds(policy),
     policy.reviewerAgentId,
     ...policy.personas.map((p) => p.investigationAgentId ?? p.personaId)
   ])) {
@@ -194,7 +194,7 @@ export function approveNativeCapabilityRequirements(
 ) {
   requireNativeHuman(authority, [
     policy.plannerAgentId,
-    policy.coderAgentId,
+    ...nativeCoderAgentIds(policy),
     policy.reviewerAgentId,
     ...policy.personas.flatMap((p) => [p.personaId, p.investigationAgentId ?? p.personaId])
   ])
@@ -216,7 +216,7 @@ export function configuredNativeModels(config: any, policy: NativeAutonomyPolicy
   const models: Record<string, string> = {}
   for (const id of new Set([
     policy.plannerAgentId,
-    policy.coderAgentId,
+    ...nativeCoderAgentIds(policy),
     policy.reviewerAgentId,
     ...policy.personas.map((p) => p.investigationAgentId ?? p.personaId)
   ])) {

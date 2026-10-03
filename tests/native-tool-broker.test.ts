@@ -108,3 +108,37 @@ it("resolves the board from assignment and refuses ambiguous cross-board session
     /one active assigned board/
   )
 })
+
+it("authorizes each pooled coder only for its own active workflow and preserves independent review", async () => {
+  const s = setup()
+  s.runtime.policy.coderAgentIds = ["coder", "coder-2"]
+  s.cards[0].agentId = "coder-2"
+  s.store.put("workflow", "owned", { implementationCardId: s.cards[0].id })
+  s.store.put("workflow", "other", { implementationCardId: "another-card" })
+  const context = { ...s.context, agentId: "coder-2" }
+  await expect(
+    authorizeNativeTool(s.runtime, "autocode_submit", { boardId: "board", workflowId: "owned" }, context)
+  ).resolves.toBeUndefined()
+  await expect(
+    authorizeNativeTool(s.runtime, "autocode_submit", { boardId: "board", workflowId: "other" }, context)
+  ).rejects.toThrow(/not assigned/)
+  await expect(
+    authorizeNativeTool(s.runtime, "autocode_review", { boardId: "board", workflowId: "owned" }, context)
+  ).rejects.toThrow(/independent reviewer/)
+})
+
+it("separates inline planner round IDs from issued card-bound context IDs", async () => {
+  const s = setup()
+  await expect(
+    authorizeNativeTool(s.runtime, "autocode_proposals", { boardId: "board", roundId: "round" }, s.context)
+  ).resolves.toBeUndefined()
+  for (const contextId of ["round", "planner-card"]) {
+    await expect(
+      authorizeNativeTool(s.runtime, "autocode_context", { boardId: "board", contextId }, s.context)
+    ).rejects.toThrow(/not assigned/)
+  }
+  s.store.put("card-context", "issued-context", { cardId: "planner-card", agentId: "planner", notes: "assigned" })
+  await expect(
+    authorizeNativeTool(s.runtime, "autocode_context", { boardId: "board", contextId: "issued-context" }, s.context)
+  ).resolves.toBeUndefined()
+})

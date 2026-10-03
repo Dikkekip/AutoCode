@@ -765,6 +765,7 @@ export async function executeDockerSandboxedCommand(
   argv: string[],
   options: {
     image: string
+    pidsLimit?: number
     workspace: string
     cwd: string
     timeoutMs: number
@@ -774,6 +775,9 @@ export async function executeDockerSandboxedCommand(
   }
 ) {
   if (!/^sha256:[a-f0-9]{64}$/.test(options.image)) throw new Error("Immutable Docker image ID required")
+  const pidsLimit = options.pidsLimit ?? 256
+  if (!Number.isInteger(pidsLimit) || pidsLimit < 64 || pidsLimit > 4096)
+    throw new Error("Docker verification pidsLimit must be an integer between 64 and 4096")
   if (!options.workspace.startsWith("/") || options.workspace.includes(",")) throw new Error("Invalid source mount")
   if (options.cwd !== "/work" && !options.cwd.startsWith("/work/")) throw new Error("Invalid sandbox working directory")
   const name = `autocode-verification-${randomUUID()}`
@@ -789,6 +793,7 @@ export async function executeDockerSandboxedCommand(
       [
         "run",
         "--rm",
+        "--init",
         "--pull=never",
         "--name",
         name,
@@ -796,7 +801,7 @@ export async function executeDockerSandboxedCommand(
         "--read-only",
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
-        "--pids-limit=256",
+        `--pids-limit=${pidsLimit}`,
         "--memory=4g",
         "--cpus=2",
         "--user",

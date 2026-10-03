@@ -153,7 +153,7 @@ export async function releaseNativeWorkflow(
   const candidate = w.candidate!
   assertNativeReleaseGate({
     headSha: candidate.headSha,
-    authorAgentId: policy.coderAgentId,
+    authorAgentId: w.submission?.agentId ?? policy.coderAgentId,
     reviewerAgentId: policy.reviewerAgentId,
     verification: w.verification ?? null,
     review: w.review ?? null
@@ -171,8 +171,11 @@ export async function releaseNativeWorkflow(
     w.review.verificationDigest !== nativeVerificationDigest(w.verification!)
   )
     throw new Error("Review belongs to another verification attempt")
-  assertNativeVerificationEvidence(policy, candidate, w.verification!, w.proposal.acceptance)
-  await assertNativeVerificationAuthority(policy, candidate, io.git)
+  const candidateReview = runtime.quality.designApproved(w)
+    ? { headSha: candidate.headSha, reviewedBy: policy.reviewerAgentId }
+    : undefined
+  assertNativeVerificationEvidence(policy, candidate, w.verification!, w.proposal.acceptance, candidateReview)
+  await assertNativeVerificationAuthority(policy, candidate, io.git, candidateReview)
   if (
     (await io.git(candidate.cwd, "rev-parse", "HEAD")) !== candidate.headSha ||
     (await io.git(candidate.cwd, "status", "--porcelain", "--untracked-files=no"))

@@ -1,0 +1,25 @@
+# Supply local references checked against reviewed image IDs for both arguments.
+# Configure the resulting immutable sha256 image ID in the native policy.
+ARG DEPENDENCIES_IMAGE
+ARG VERIFIER_IMAGE
+FROM ${DEPENDENCIES_IMAGE} AS dependencies
+FROM ${VERIFIER_IMAGE}
+USER 0
+# Match the Linux monospace font used by the reviewed Playwright snapshots.
+# Playwright's minimal browser dependencies otherwise fall back to WenQuanYi.
+RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core=2.37-6 \
+    && rm -rf /var/lib/apt/lists/* && fc-cache -f
+COPY --from=dependencies /opt/ui-node_modules /opt/ui-node_modules
+COPY --from=dependencies /opt/deps-source/apps/reports-ui/package-lock.json /opt/openclaw/reports-ui.package-lock.json
+COPY native-ui-component-tests.sh /opt/openclaw/checks/ui-components
+COPY native-browser-tests.sh /opt/openclaw/checks/legacy-004
+COPY native-browser-tests.sh /opt/openclaw/checks/legacy-005
+COPY native-browser-tests.sh /opt/openclaw/checks/legacy-010
+COPY native-browser-tests.sh /opt/openclaw/checks/legacy-015
+COPY native-feature-component-tests.sh /opt/openclaw/checks/legacy-009
+COPY native-feature-component-tests.sh /opt/openclaw/checks/legacy-014
+COPY native-critical-oracle-repair.py /opt/openclaw/checks/native-critical-oracle-repair.py
+RUN python3 /opt/openclaw/checks/native-critical-oracle-repair.py
+RUN chmod 0555 /opt/openclaw/checks/ui-components /opt/openclaw/checks/legacy-004 /opt/openclaw/checks/legacy-005 \
+    /opt/openclaw/checks/legacy-010 /opt/openclaw/checks/legacy-015 \
+    /opt/openclaw/checks/legacy-009 /opt/openclaw/checks/legacy-014
