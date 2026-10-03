@@ -2219,6 +2219,18 @@ export class NativeAutonomyRuntime {
               const card = cards.find((c) => c.id === w.implementationCardId)
               if (!card || ["running", "ready", "scheduled"].includes(card.status)) return
               if (
+                card.status === "blocked" &&
+                !card.execution &&
+                typeof card.metadata?.failureCount === "number" &&
+                card.metadata.failureCount > 0
+              ) {
+                w.blocker =
+                  "Implementation could not start; inspect Workboard failure diagnostics and use operator recovery"
+                this.transitionWorkflow(id, w, "blocked")
+                this.store.event("implementation.start-failed", id, { cardId: card.id })
+                return
+              }
+              if (
                 !card.execution ||
                 !["failed", "cancelled", "review", "completed", "done", "blocked", "timed_out", "timeout"].includes(
                   card.execution.status ?? ""

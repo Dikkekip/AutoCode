@@ -282,6 +282,7 @@ export interface NativeCard {
   updatedAt?: number
   execution?: { sessionKey?: string; runId?: string; status?: string; startedAt?: number }
   metadata?: {
+    failureCount?: number
     claim?: { ownerId?: string; expiresAt?: number }
     links?: Array<{ type: string; targetCardId?: string }>
     comments?: Array<{ body?: string; createdAt?: number }>

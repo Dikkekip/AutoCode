@@ -41,6 +41,32 @@ function fixture() {
     })
   return { store, other, runtime, second, seed, gateway }
 }
+it.each([0, 1])("reports an unstarted blocked worker only when startup failure count is %s", async (failures) => {
+  const s = fixture()
+  s.seed("unstarted")
+  const workflow = s.store.get<any>("workflow", "unstarted")
+  delete workflow.candidate
+  s.store.put("workflow", "unstarted", workflow)
+  s.gateway.request = async () =>
+    ({
+      cards: [
+        {
+          id: "unstarted:implementation",
+          title: "Implementation",
+          status: "blocked",
+          metadata: { failureCount: failures }
+        }
+      ]
+    }) as any
+  await s.runtime.reconcile()
+  const observed = s.store.get<any>("workflow", "unstarted")
+  expect(Boolean(observed.blocker)).toBe(failures > 0)
+  if (failures) {
+    expect(observed.lifecycle.state).toBe("blocked")
+    expect(observed.blocker).toMatch(/could not start/)
+  }
+  expect(observed.candidate).toBeUndefined()
+})
 it("lets an independent workflow progress while the first step remains pending and releases the board lease", async () => {
   const s = fixture()
   s.seed("a")

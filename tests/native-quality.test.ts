@@ -667,7 +667,7 @@ describe("native quality investigations", () => {
     expect(s.gateway.cards[0].id).toBe(first)
     expect(s.gateway.cards[0].status).toBe("done")
   })
-  it("skips completed no-op investigations until owned code or goals change", async () => {
+  it("skips recent completed no-op investigations until owned code or goals change", async () => {
     const s = setup()
     await s.runtime.discover()
     for (const id of ["ux", "backend", "legal"]) {
@@ -679,6 +679,30 @@ describe("native quality investigations", () => {
     expect((await s.runtime.discover()).reason).toMatch(/unchanged/)
     s.policy.personas[0]!.goals.push("New goal")
     expect((await s.runtime.discover()).created).toHaveLength(2)
+  })
+  it("revisits unchanged persona goals after the dedupe window and supplies prior findings", async () => {
+    const s = setup()
+    await s.runtime.discover()
+    for (const id of ["ux", "backend", "legal"]) {
+      const c = s.start(id)
+      await s.runtime.quality.finish(c.agent, c.session, c.roundId, id, "no_op", "No evidence-backed gap")
+      c.card.status = "done"
+      const key = `${c.roundId}:${id}`
+      const value = s.store.get<Investigation>("investigation", key)!
+      s.store.put("investigation", key, {
+        ...value,
+        finishedAt: Date.now() - (s.policy.dedupeWindowHours + 1) * 3_600_000
+      })
+    }
+    s.gateway.cards.at(-1).status = "done"
+    expect((await s.runtime.discover()).created).toHaveLength(4)
+    const newest = s.gateway.cards.filter((card) => card.title === "Investigate: ux").at(-1)!
+    const context = s.store.get<any>("card-context", JSON.parse(newest.notes).contextId)
+    expect(JSON.parse(context.notes).previousInvestigations[0]).toMatchObject({
+      outcome: "no_op",
+      reason: "No evidence-backed gap"
+    })
+    expect((await s.runtime.discover()).reason).toMatch(/round still active/)
   })
   it("defers missing skill and journals failed and timed-out sessions", async () => {
     const s = setup()
