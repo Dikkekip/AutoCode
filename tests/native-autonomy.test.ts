@@ -523,7 +523,7 @@ describe("native autonomy policy and creative provenance", () => {
     try {
       const runtime = new NativeAutonomyRuntime(p, gateway, store)
       expect(await runtime.reconcile()).toEqual({ advanced: 0, paused: true })
-      await expect(runtime.discover()).rejects.toThrow(/paused/)
+      expect(await runtime.discover()).toEqual({ created: [], reason: "paused" })
       expect(gateway.calls).toEqual([])
     } finally {
       store.close()

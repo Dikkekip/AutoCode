@@ -122,7 +122,10 @@ it("repoints existing automation commands after relocation without changing oper
   })
   await s.run("install-automations", "--cli", "/new/dispatcher.js", "--node", "/new/node")
   expect(jobs.map((job) => job.enabled)).toEqual([true, false, false])
-  for (const job of jobs) expect(job.payload.argv.slice(0, 2)).toEqual(["/new/node", "/new/dispatcher.js"])
+  for (const job of jobs) {
+    expect(job.payload.argv.slice(0, 2)).toEqual(["/new/node", "/new/dispatcher.js"])
+    expect(job.payload.argv.at(-1)).toBe("--scheduled")
+  }
   expect(request.mock.calls.filter(([method]) => method === "cron.update")).toHaveLength(2)
   jobs.find((job) => job.id === "dispatch")!.schedule.expr = "*/3 * * * *"
   request.mockClear()

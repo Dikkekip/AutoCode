@@ -888,6 +888,10 @@ export class NativeAutonomyRuntime {
     assertNativeMode(this.policy, "investigate")
     if (!this.hasOwnership) return this.withOwnership(() => this.discover())
     if (!this.control.active) return this.control.run(() => this.discover())
+    // Scheduled discovery is a no-op while paused, matching reconciliation.
+    // A pause is operator state, not an automation failure that should consume
+    // the scheduler's consecutive-error budget.
+    if (this.isPaused()) return { created: [], reason: "paused" }
     if (this.policy.quality) return this.quality.discover()
     this.assertEnabled()
     const lease = this.store.acquire("discovery", 120_000)
