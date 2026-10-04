@@ -56,8 +56,10 @@ export async function runScheduledNativeCommand<T>(
   const wait = options.wait ?? sleep
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
   const retryDelayMs = options.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS
-  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) throw new Error("Scheduled retry attempts must be positive")
-  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0) throw new Error("Scheduled retry delay must be non-negative")
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1)
+    throw new Error("Scheduled retry attempts must be positive")
+  if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs < 0)
+    throw new Error("Scheduled retry delay must be non-negative")
 
   for (let attempt = 1; ; attempt++) {
     try {
