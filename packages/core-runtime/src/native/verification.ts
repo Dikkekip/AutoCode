@@ -29,6 +29,7 @@ import {
   nativeCoderAgentIds,
   nativePathAllowed,
   nativePolicyDigest,
+  nativeSandboxInputPathAllowed,
   nativeVerificationRuleId,
   redactLogText,
   validateNativeAutonomyPolicy,
@@ -526,11 +527,21 @@ export async function nativeCandidateSandbox(
     (await nativeGit(candidate.cwd, "ls-tree", "-r", "--name-only", "-z", candidate.headSha)).split("\0")
   )
   const changed = new Set(candidate.files)
+  for (const root of policy.verificationSandbox.sourceRoots ?? [])
+    if (![...present].some((path) => path.startsWith(`${root}/`)))
+      throw new Error(`Sandbox source root has no committed descendants: ${root}`)
+  const sourceInputs = [...present].filter(
+    (path) =>
+      path &&
+      policy.verificationSandbox!.sourceRoots?.some((root) => path.startsWith(`${root}/`)) &&
+      nativeSandboxInputPathAllowed(path)
+  )
   return validateNativeVerificationSandbox({
     ...policy.verificationSandbox,
     inputFiles: [
       ...new Set([
         ...policy.verificationSandbox.inputFiles.filter((path) => !changed.has(path) || present.has(path)),
+        ...sourceInputs.sort(),
         ...candidate.files.filter((path) => present.has(path))
       ])
     ]

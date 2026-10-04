@@ -2,6 +2,8 @@ import { execFile } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
 
+const MAX_FILES = 10_000
+const MAX_TOTAL_BYTES = 256 * 1024 * 1024
 const MAX_BLOB = 64 * 1024 * 1024
 const BATCH_BYTES = 16 * 1024 * 1024
 const gitEnvironment = {
@@ -40,11 +42,13 @@ export async function snapshotNativeInputs(
   }
   check()
   if (!/^[a-f0-9]{40,64}$/.test(sha)) throw new Error("Snapshot requires an exact commit")
+  if (inputFiles.length > MAX_FILES) throw new Error("Sandbox input exceeds file count limit")
   const requested = new Set(inputFiles)
   if (requested.size !== inputFiles.length) throw new Error("Duplicate sandbox input")
   const tree = await git(root, ["ls-tree", "-r", "-z", "-l", sha], 32 * 1024 * 1024, signal)
   check()
   const entries = new Map<string, { file: string; oid: string; size: number; executable: boolean }>()
+  let totalBytes = 0
   for (const entry of tree.toString("utf8").split("\0")) {
     const tab = entry.indexOf("\t")
     const file = entry.slice(tab + 1)
@@ -53,6 +57,8 @@ export async function snapshotNativeInputs(
     if (!match) throw new Error(`Sandbox input is not a committed regular file: ${file}`)
     const size = Number(match[3])
     if (!Number.isSafeInteger(size) || size > MAX_BLOB) throw new Error(`Sandbox input exceeds blob limit: ${file}`)
+    totalBytes += size
+    if (totalBytes > MAX_TOTAL_BYTES) throw new Error("Sandbox input exceeds total byte limit")
     const path = relative(workspace, resolve(workspace, file))
     if (!path || path === ".." || path.startsWith("../") || isAbsolute(file) || isAbsolute(path))
       throw new Error("Sandbox input escapes snapshot")

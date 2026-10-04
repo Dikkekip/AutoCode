@@ -28,6 +28,9 @@ export interface NativeCommand {
 export type NativeVerificationSandbox = {
   /** Exact committed regular files made available to the build. No directories or globs. */
   inputFiles: string[]
+  /** Reviewed source directories whose committed descendants track repository evolution.
+   * Credential and policy paths remain excluded; reviewed blob exceptions stay explicit. */
+  sourceRoots?: string[]
   /** Operator-reviewed source exceptions pinned to immutable Git blobs. */
   reviewedSourceFiles?: Array<{ path: string; blobSha: string; reviewedBy: string }>
 } & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string; pidsLimit?: number })
@@ -619,6 +622,10 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
   if (r.backend === "bubblewrap" && (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/"))
     throw new Error("Sandbox needs a dedicated root filesystem")
   const inputFiles = strings(r.inputFiles, "sandbox inputFiles").map(nativeRelativePath)
+  const sourceRoots =
+    r.sourceRoots === undefined ? [] : strings(r.sourceRoots, "sandbox sourceRoots").map(nativeRelativePath)
+  if (new Set(sourceRoots).size !== sourceRoots.length || sourceRoots.some((p) => !nativeSandboxInputPathAllowed(p)))
+    throw new Error("Sandbox source roots must be contained directories excluding credentials and policy paths")
   const reviewedSourceFiles: NonNullable<NativeVerificationSandbox["reviewedSourceFiles"]> = []
   if (r.reviewedSourceFiles !== undefined) {
     if (!Array.isArray(r.reviewedSourceFiles)) throw new Error("Invalid reviewed sandbox source files")
@@ -638,18 +645,12 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
       reviewedSourceFiles.push({ path, blobSha, reviewedBy })
     }
   }
-  if (
-    inputFiles.some(
-      (p) =>
-        p === "." ||
-        /[*?[\]{}]/.test(p) ||
-        p.split("/").some((part) => /^(\.git|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*\.pem)$/i.test(part)) ||
-        (p.split("/").some((part) => /(?:policy|policies|credentials|secrets)/i.test(part)) &&
-          !reviewedSourceFiles.some((entry) => entry.path === p))
-    )
-  )
+  if (inputFiles.some((p) => !nativeSandboxInputPathAllowed(p, reviewedSourceFiles)))
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
-  const reviewed = reviewedSourceFiles.length ? { reviewedSourceFiles } : {}
+  const reviewed = {
+    ...(reviewedSourceFiles.length ? { reviewedSourceFiles } : {}),
+    ...(sourceRoots.length ? { sourceRoots } : {})
+  }
   return r.backend === "docker"
     ? {
         backend: "docker",
@@ -659,6 +660,22 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
         ...(r.pidsLimit === undefined ? {} : { pidsLimit: r.pidsLimit as number })
       }
     : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
+}
+
+/** The same admission rule applies to explicit inputs and source-root expansion. */
+export function nativeSandboxInputPathAllowed(path: string, reviewed: Array<{ path: string }> = []): boolean {
+  return (
+    Boolean(path) &&
+    path !== "." &&
+    !path.includes("\0") &&
+    !isAbsolute(path) &&
+    normalize(path) === path &&
+    !path.split("/").includes("..") &&
+    !/[*?[\]{}]/.test(path) &&
+    !path.split("/").some((part) => /^(\.git|\.openclaw|\.codex|\.ssh|\.aws|\.env(?:\..*)?|.*\.pem)$/i.test(part)) &&
+    (!path.split("/").some((part) => /(?:policy|policies|credentials|secrets)/i.test(part)) ||
+      reviewed.some((entry) => entry.path === path))
+  )
 }
 
 /** Retain the legacy single-coder policy when no pool was configured. */
