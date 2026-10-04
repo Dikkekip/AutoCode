@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest"
 
 const { execFile } = vi.hoisted(() => ({ execFile: vi.fn() }))
 vi.mock("node:child_process", () => ({ execFile }))
+
 import { snapshotNativeInputs } from "../packages/core-runtime/src/native/snapshot.js"
 
 const roots: string[] = []
