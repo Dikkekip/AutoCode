@@ -14,6 +14,7 @@ import {
 import { validateProjectProfile } from "@openclaw/project-profiles"
 import type { Command } from "commander"
 import { retryContendedDiscovery } from "./native-discovery-retry.js"
+import { runScheduledNativeCommand } from "./native-scheduled-contention.js"
 
 export function registerNativeAutonomyCommands(program: Command, io: { stdout: (message: string) => void }): void {
   const root = program
@@ -69,11 +70,17 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
     root
       .command(name)
       .option("--json", "JSON output", true)
-      .action(async () => {
+      .option("--scheduled", "Retry shared-state contention and defer an exhausted scheduler tick", false)
+      .action(async (options) => {
         const { policy, gateway } = settings()
         const request = () =>
           gateway.request<{ created: string[]; reason?: string }>(`autocode.${name}`, { boardId: policy.boardId })
-        output(name === "discover" ? await retryContendedDiscovery(request) : await request())
+        const execute = () => (name === "discover" ? retryContendedDiscovery(request) : request())
+        output(
+          options.scheduled && ["discover", "dispatch", "reconcile"].includes(name)
+            ? await runScheduledNativeCommand(name as "discover" | "dispatch" | "reconcile", request)
+            : await execute()
+        )
       })
   const policyRefresh = root
     .command("policy-refresh")
@@ -253,7 +260,8 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
               resolve(root.opts().policy),
               "--openclaw",
               root.opts().openclaw,
-              kind
+              kind,
+              "--scheduled"
             ],
             cwd: policy.repository,
             timeoutSeconds: kind === "dispatch" ? 300 : 7200

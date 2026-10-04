@@ -283,7 +283,7 @@ test("CLI reloads the gateway after apply and never prints credentials", (t) => 
       }
     )
   const output = invoke()
-  assert.deepEqual(JSON.parse(readFileSync(log, "utf8")), ["secrets", "reload"])
+  assert.deepEqual(JSON.parse(readFileSync(log, "utf8")), ["secrets", "reload", "--timeout", "120000"])
   assert.equal(JSON.parse(output).reloaded, true)
   assert.equal(JSON.parse(output).accounts.length, 3)
   assert.doesNotMatch(output, /fixture-refresh|access_token|refresh_token/)

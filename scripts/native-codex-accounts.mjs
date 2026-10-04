@@ -217,8 +217,8 @@ async function main() {
     })
     if (args.includes("--reload") && existsSync(pendingReload)) {
       // Disk writes alone leave the gateway using its previous auth snapshot.
-      execFileSync(binary, ["secrets", "reload"], {
-        timeout: 120_000,
+      execFileSync(binary, ["secrets", "reload", "--timeout", "120000"], {
+        timeout: 150_000,
         stdio: ["ignore", "ignore", "pipe"],
         maxBuffer: 1024 * 1024
       })

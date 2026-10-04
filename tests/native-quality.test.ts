@@ -1654,7 +1654,7 @@ it("queues immutable source-bound operator requests while paused and rejects mis
   await expect(createNativeOperatorRequest(s.runtime, { ...brief, agentId: "coder" }, "operator")).rejects.toThrow(
     /Unknown/
   )
-  await expect(s.runtime.discover()).rejects.toThrow(/paused/)
+  await expect(s.runtime.discover()).resolves.toEqual({ created: [], reason: "paused" })
   expect(s.gateway.cards).toHaveLength(0)
   expect(s.store.list("operator-request")).toHaveLength(1)
 })
