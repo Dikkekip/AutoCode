@@ -888,6 +888,8 @@ export class NativeAutonomyRuntime {
     assertNativeMode(this.policy, "investigate")
     if (!this.hasOwnership) return this.withOwnership(() => this.discover())
     if (!this.control.active) return this.control.run(() => this.discover())
+    // A paused scheduler tick is a successful no-op, consistent with dispatch and reconcile.
+    if (this.isPaused()) return { created: [], reason: "paused" }
     if (this.policy.quality) return this.quality.discover()
     this.assertEnabled()
     const lease = this.store.acquire("discovery", 120_000)
