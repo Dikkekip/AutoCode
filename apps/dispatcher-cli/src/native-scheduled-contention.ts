@@ -63,7 +63,15 @@ export async function runScheduledNativeCommand<T>(
 
   for (let attempt = 1; ; attempt++) {
     try {
-      return await request()
+      const result = await request()
+      const reconcileBusy =
+        kind === "discover" &&
+        typeof result === "object" &&
+        result !== null &&
+        "reason" in result &&
+        result.reason === "reconciliation already running"
+      if (!reconcileBusy || attempt >= maxAttempts) return result
+      await wait(retryDelayMs)
     } catch (error) {
       if (isNativeAutonomyPaused(error)) {
         return {

@@ -37,6 +37,22 @@ describe("scheduled native state-lifecycle contention", () => {
     expect(wait).toHaveBeenCalledWith(5)
   })
 
+  it("shares one discovery retry budget across reconcile leases and state owners", async () => {
+    const request = vi
+      .fn<() => Promise<{ created: string[]; reason?: string }>>()
+      .mockResolvedValueOnce({ created: [], reason: "reconciliation already running" })
+      .mockRejectedValueOnce(new Error("another OpenClaw process owns state-lifecycle"))
+      .mockResolvedValueOnce({ created: [], reason: "reconciliation already running" })
+    const wait = vi.fn(async () => undefined)
+
+    await expect(runScheduledNativeCommand("discover", request, { wait, maxAttempts: 3 })).resolves.toEqual({
+      created: [],
+      reason: "reconciliation already running"
+    })
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(wait).toHaveBeenCalledTimes(2)
+  })
+
   it("does not hide unrelated RPC failures", async () => {
     const failure = new Error("Gateway authorization unavailable")
     const request = vi.fn(async () => {

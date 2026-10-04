@@ -78,7 +78,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
         const execute = () => (name === "discover" ? retryContendedDiscovery(request) : request())
         output(
           options.scheduled && ["discover", "dispatch", "reconcile"].includes(name)
-            ? await runScheduledNativeCommand(name as "discover" | "dispatch" | "reconcile", execute)
+            ? await runScheduledNativeCommand(name as "discover" | "dispatch" | "reconcile", request)
             : await execute()
         )
       })
