@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it } from "vitest"
@@ -74,6 +74,52 @@ it("keeps secret paths and unreviewed policy source out of candidate additions",
     await expect(nativeCandidateSandbox(policy, { cwd: f.root, headSha: sha, files: [file] })).rejects.toThrow(
       /excluding credentials/
     )
+})
+
+it("includes committed dependencies added after the baseline manifest only within reviewed source roots", async () => {
+  const f = fixture(),
+    destination = temp()
+  mkdirSync(join(f.root, "src"))
+  writeFileSync(join(f.root, "src/view.ts"), "import { copy } from './copy.js'\n")
+  writeFileSync(join(f.root, "src/copy.ts"), "export const copy = 'committed'\n")
+  writeFileSync(join(f.root, "src/secrets.ts"), "private source")
+  writeFileSync(join(f.root, "src/.env"), "TOKEN=private")
+  writeFileSync(join(f.root, "outside.ts"), "not admitted")
+  const sha = f.commit()
+  writeFileSync(join(f.root, "src/copy.ts"), "uncommitted replacement")
+  writeFileSync(join(f.root, "src/untracked.ts"), "private working file")
+  const policy = {
+    verificationSandbox: {
+      backend: "docker",
+      image: `sha256:${"a".repeat(64)}`,
+      inputFiles: ["src/view.ts"],
+      sourceRoots: ["src"]
+    }
+  } as any
+  const sandbox = await nativeCandidateSandbox(policy, { cwd: f.root, headSha: sha, files: ["src/view.ts"] })
+  await snapshotNativeInputs(f.root, destination, sha, sandbox!.inputFiles)
+  expect(readFileSync(join(destination, "src/copy.ts"), "utf8")).toContain("'committed'")
+  for (const file of ["src/secrets.ts", "src/.env", "outside.ts", "src/untracked.ts"])
+    expect(existsSync(join(destination, file))).toBe(false)
+  expect(policy.verificationSandbox.inputFiles).toEqual(["src/view.ts"])
+})
+
+it("rejects source-root symlinks instead of reading their targets", async () => {
+  const f = fixture()
+  mkdirSync(join(f.root, "src"))
+  writeFileSync(join(f.root, "outside.ts"), "private")
+  symlinkSync("../outside.ts", join(f.root, "src/link.ts"))
+  const sha = f.commit()
+  const policy = {
+    verificationSandbox: {
+      backend: "docker",
+      image: `sha256:${"a".repeat(64)}`,
+      inputFiles: [],
+      sourceRoots: ["src"]
+    }
+  } as any
+  const sandbox = await nativeCandidateSandbox(policy, { cwd: f.root, headSha: sha, files: [] })
+  await expect(snapshotNativeInputs(f.root, temp(), sha, sandbox!.inputFiles)).rejects.toThrow(/regular file/)
 })
 
 it("snapshots thousands of explicitly selected committed files without per-file processes", async () => {

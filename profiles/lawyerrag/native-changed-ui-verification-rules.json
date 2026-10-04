@@ -1,0 +1,21 @@
+[
+  {
+    "id": "changed-feature-tests",
+    "argv": ["/opt/openclaw/checks/changed-feature-tests"],
+    "cwd": ".",
+    "timeoutSeconds": 1800,
+    "paths": [
+      "apps/reports-ui/src/features/**/*.test.tsx",
+      "apps/reports-ui/src/features/**/*.test.ts",
+      "apps/reports-ui/src/components/**/*.test.tsx",
+      "apps/reports-ui/src/components/**/*.test.ts"
+    ]
+  },
+  {
+    "id": "ui-types",
+    "argv": ["/opt/openclaw/checks/ui-types"],
+    "cwd": ".",
+    "timeoutSeconds": 600,
+    "paths": ["apps/reports-ui/src/**/*.ts", "apps/reports-ui/src/**/*.tsx"]
+  }
+]

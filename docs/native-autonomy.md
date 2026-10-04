@@ -32,6 +32,10 @@ Sandboxed roles need Autocode and Workboard tools allowed in both the role tool 
 
 The submission broker rejects outside-scope files and symlinks, snapshots bounded regular source files through checked file descriptors, and uses Git plumbing with hooks and filters disabled. It preserves untracked runtime persona notes locally and excludes them from the candidate. An ended implementation without a submission becomes an explicit recovery blocker; retry preserves the prior attempt and requires an operator recovery decision.
 
+Verification sandbox `inputFiles` admits exact baseline files. Optional reviewed `sourceRoots` admits committed descendants of named source directories, resolved at the candidate's exact head. Use this for source trees that gain dependencies between releases, such as `apps/reports-ui/src`; an old baseline manifest otherwise omits new imported modules and can fail builds unrelated to the candidate. Root expansion never reads untracked or modified working files, follows symlinks, or admits credential and policy paths. Sensitive source exceptions remain explicit inputs pinned to reviewed Git blobs. Changing roots changes the protected policy digest and requires the existing policy, capability, and skill activation review.
+
+The LawyerRAG changed-test selector covers both `src/features` and `src/components`, including PDF handoff regressions. Its standing rule must select changed component tests as well as feature tests; the image alone cannot expand rule coverage. It reads the host-written head-bound manifest, selects committed changed tests or existing companions, and fails if no test is selected. Existing build, boundary, browser, and independent acceptance gates remain required.
+
 Verification and review rejection allow at most two repair handoffs against the preserved worktree. With `verificationAuthority.independentCandidateReview` enabled, commit-bound design changes also use this shared repair limit. The repair receives the structured findings, retains the rejected candidate and review receipt, and requires fresh design approval, verification and final acceptance. Reviewers receive the policy-selected commands and per-file coverage as a plan, never as execution evidence. Missing proof, an empty patch, outside-scope changes, changed candidate code, missing reviewer, unresolved external effects, and exhausted repair budgets block progress. The native path fails closed on failing tests; it does not infer success from summary text or automatically waive baseline failures.
 
 If committed design evidence is truncated or redacted and the reviewer requests
@@ -552,3 +556,5 @@ other cards are not accepted. Coders do not need host Git metadata to submit edi
 GitHub check runs are paginated using ordinary REST requests, including on CLI
 versions without `--slurp`. Branch-protection requirements are still mandatory;
 an unavailable branch-protection API does not silently authorize a release.
+
+Committed sandbox inputs are capped at 10,000 files and 256 MiB in total before any blob is read or copied. Source-only changes without a colocated test remain subject to build, type, boundary, browser and independent review checks; the focused test rule applies when a changed test is selected.

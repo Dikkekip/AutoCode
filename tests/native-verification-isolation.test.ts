@@ -249,6 +249,18 @@ it("requires explicit immutable Docker image authority and safe inputs", () => {
   )
 })
 
+it("preserves reviewed source roots and rejects broad or sensitive roots", () => {
+  const config = {
+    backend: "docker",
+    image: `sha256:${"a".repeat(64)}`,
+    inputFiles: ["package.json"],
+    sourceRoots: ["apps/ui/src"]
+  }
+  expect(validateNativeVerificationSandbox(config).sourceRoots).toEqual(["apps/ui/src"])
+  for (const root of [".", "../src", "/src", "src/**", ".env", "src/credentials", "src/policies"])
+    expect(() => validateNativeVerificationSandbox({ ...config, sourceRoots: [root] })).toThrow()
+})
+
 it("admits reviewed source modules by exact blob without allowing credential or policy data", () => {
   const image = `sha256:${"a".repeat(64)}`
   const source = "libs/common/src/secrets.py"
