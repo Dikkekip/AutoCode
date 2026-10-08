@@ -69,7 +69,7 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
           "--timeout",
           "180000",
           "--params",
-          JSON.stringify({ boardId: board, ...params })
+          JSON.stringify(method === "config.get" ? params : { boardId: board, ...params })
         ],
         190_000
       )
@@ -77,6 +77,10 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
     if (result?.ok === false) throw new Error(`Maintenance RPC ${method} failed`)
     return result
   }
+  const configResult = call("config.get")
+  const projects = (configResult.config ?? configResult.parsed)?.plugins?.entries?.autocode?.config?.projects
+  if (!Array.isArray(projects) || projects.length !== 1)
+    throw new Error("Automatic Gateway maintenance requires one registered native project")
   const status = call("autocode.status")
   if (status.boardId !== board || typeof status.control?.revision !== "string")
     throw new Error("Maintenance status unavailable")

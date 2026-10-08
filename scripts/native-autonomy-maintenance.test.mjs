@@ -47,6 +47,10 @@ test("restart closes admission, preserves ownership through restart, resumes onl
     }
     const method = args[2],
       params = JSON.parse(args.at(-1))
+    if (method === "config.get")
+      return JSON.stringify({
+        config: { plugins: { entries: { autocode: { config: { projects: ["/test/native.json"] } } } } }
+      })
     if (method === "autocode.status") return JSON.stringify(live)
     if (method === "workboard.cards.list") return JSON.stringify({ cards })
     if (method === "autocode.pause") {

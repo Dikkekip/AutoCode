@@ -16,7 +16,8 @@ approval. The monitor leaves reconciliation to the native schedules.
 
 `scripts/native-autonomy-maintenance.mjs` requires `--openclaw`, `--board` and `--state`.
 Without `--apply` it previews a decision and makes no state or control changes. Persistent
-Gateway RSS pressure must span ten minutes and at least three observations. CPU load
+Automatic Gateway maintenance requires a single registered native project; multi-project
+Gateways need a coordinated drain. Gateway RSS pressure must span ten minutes and at least three observations. CPU load
 alone never triggers restart. Running or pending cards, live native leases, operation
 journals, and verification memory reservations block restart. Admission is paused with
 an expected control revision and execution evidence is checked again. A race returns
