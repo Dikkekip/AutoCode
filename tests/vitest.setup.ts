@@ -1,5 +1,29 @@
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { vi } from "vitest"
+
+// Scheduler tests must not depend on the developer/CI host's current pressure.
+// Resource safeguard tests supply their own sampler and still exercise the real guard.
+vi.mock("../packages/core-runtime/src/native/resource-pressure.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../packages/core-runtime/src/native/resource-pressure.js")>()
+  class DeterministicResourceGuard extends actual.NativeResourceGuard {
+    constructor(
+      config?: ConstructorParameters<typeof actual.NativeResourceGuard>[0],
+      sample = () => ({
+        totalBytes: 64 * 1024 ** 3,
+        availableBytes: 48 * 1024 ** 3,
+        gatewayRssBytes: 256 * 1024 ** 2,
+        memoryFullAvg10: 0,
+        cpuCount: 8,
+        loadAverage1m: 0
+      }),
+      now = Date.now
+    ) {
+      super(config, sample, now)
+    }
+  }
+  return { ...actual, NativeResourceGuard: DeterministicResourceGuard }
+})
 
 const isolatedCodexRoot = join(tmpdir(), `openclaw-vitest-codex-${process.pid}`)
 

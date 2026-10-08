@@ -1,0 +1,10 @@
+[Unit]
+Description=Drain-safe native AutoCode maintenance
+
+[Service]
+Type=oneshot
+# Supply an absolute checkout path and board in the operator environment file.
+EnvironmentFile=%h/.config/autocode-maintenance.env
+ExecStart=/usr/bin/flock -n %h/.openclaw/autocode-maintenance.lock /usr/bin/node ${AUTOCODE_FRAMEWORK}/scripts/native-autonomy-maintenance.mjs --openclaw ${OPENCLAW_COMMAND} --board ${AUTOCODE_BOARD_ID} --state %h/.openclaw/autocode-maintenance.json --apply
+TimeoutStartSec=900
+UMask=0077

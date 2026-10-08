@@ -107,9 +107,17 @@ it("still executes committed input and creates a fresh receipt in a new parent d
   expect(lstatSync(artifact).mode & 0o777).toBe(0o600)
 })
 
-it("passes the policy's bounded process capacity to the isolated verifier", async () => {
+it("passes the policy's bounded resource capacity to the isolated verifier", async () => {
   const execute = vi.spyOn(osAdapters, "executeDockerSandboxedCommand").mockResolvedValue({ stdout: "", stderr: "" })
   const root = repository()
-  await runNativeCommand(command, root, join(root, "receipt.json"), { ...sandbox, pidsLimit: 1024 })
-  expect(execute).toHaveBeenCalledWith(command.argv, expect.objectContaining({ pidsLimit: 1024, image: sandbox.image }))
+  await runNativeCommand(command, root, join(root, "receipt.json"), {
+    ...sandbox,
+    pidsLimit: 1024,
+    memoryMb: 3072,
+    cpus: 1
+  })
+  expect(execute).toHaveBeenCalledWith(
+    command.argv,
+    expect.objectContaining({ pidsLimit: 1024, memoryMb: 3072, cpus: 1, image: sandbox.image })
+  )
 })

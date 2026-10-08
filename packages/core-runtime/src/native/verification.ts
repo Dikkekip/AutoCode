@@ -471,7 +471,9 @@ export async function runNativeCommand(
           ? executeDockerSandboxedCommand(command.argv, {
               ...options,
               image: config.image,
-              ...(config.pidsLimit === undefined ? {} : { pidsLimit: config.pidsLimit })
+              ...(config.pidsLimit === undefined ? {} : { pidsLimit: config.pidsLimit }),
+              ...(config.memoryMb === undefined ? {} : { memoryMb: config.memoryMb }),
+              ...(config.cpus === undefined ? {} : { cpus: config.cpus })
             })
           : executeSandboxedCommand(command.argv, { ...options, rootFilesystem })
       },

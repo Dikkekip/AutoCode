@@ -125,6 +125,37 @@ export function mergeAccounts(store, accounts, order) {
   return changed
 }
 
+// OpenClaw owns OAuth refresh. Expired CLI copies must not displace newer
+// native credentials or make a healthy native pool look unavailable.
+export function inspectNativePool({ agentIds, entries, stateDir, config, sdk, now = Date.now() }) {
+  const profiles = new Set()
+  for (const agentId of agentIds) {
+    const agentDir = entries[agentId]?.agentDir ?? join(stateDir, "agents", agentId, "agent")
+    const store = sdk.ensureAuthProfileStore(agentDir, {
+      readOnly: true,
+      syncExternalCli: false,
+      externalCli: { mode: "none" },
+      config
+    })
+    const order = sdk.resolveAuthProfileOrder({ cfg: config, store, provider: "openai" })
+    const usable = order.filter((id) => {
+      const credential = store.profiles[id]
+      return (
+        id.startsWith(prefix) &&
+        credential?.provider === "openai" &&
+        credential.type === "oauth" &&
+        typeof credential.access === "string" &&
+        credential.access.length > 0 &&
+        credential.expires > now + 5 * 60_000
+      )
+    })
+    if (!usable.length) throw new Error("No usable native Codex account for a configured agent")
+    for (const id of usable) profiles.add(id)
+  }
+  if (!agentIds.length) throw new Error("No configured OpenAI agents")
+  return { agents: agentIds.length, profiles: profiles.size }
+}
+
 export async function synchronize({
   accounts,
   orders,
@@ -200,6 +231,18 @@ async function main() {
     return (typeof model === "string" ? model : model?.primary)?.startsWith("openai/")
   })
   if (!agentIds.length) throw new Error("No configured OpenAI agents")
+  if (!accounts.length) {
+    const binary = process.env.OPENCLAW_COMMAND ?? execFileSync("which", ["openclaw"], { encoding: "utf8" }).trim()
+    const root = process.env.OPENCLAW_PACKAGE_ROOT ?? dirname(realpathSync(binary))
+    const sdk = await import(pathToFileURL(join(root, "dist/plugin-sdk/provider-auth.js")).href)
+    const nativePool = inspectNativePool({ agentIds, entries, stateDir, config, sdk })
+    if (existsSync(join(stateDir, "codex-account-pool.reload-pending")))
+      throw new Error("Native account reload is still pending")
+    console.log(
+      JSON.stringify({ applied: false, reloaded: false, skipped: "native-pool-current-cli-expired", nativePool })
+    )
+    return
+  }
   const orders = planOrders(accounts, agentIds)
   let reloaded = false
   if (args.includes("--apply")) {
