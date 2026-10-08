@@ -136,3 +136,9 @@ it("defers dispatch and verification without losing queued work, then retries af
   expect((await runtime.reconcile({ dispatchOnly: true })).dispatch?.startedCardIds).toEqual(["queued"])
   expect(request).toHaveBeenCalledWith("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 2 })
 })
+
+it("reserves the configured verifier limit when it exceeds the worker estimate", () => {
+  const guard = new NativeResourceGuard({ minAvailableMiB: 3072 }, () => ({ ...healthy(), availableBytes: 6000 * MiB }))
+  expect(guard.inspect()).toMatchObject({ allowed: true, workerBytes: 2048 * MiB })
+  expect(guard.inspect(4096 * MiB)).toMatchObject({ allowed: false, reasons: ["host-memory"], workerBytes: 4096 * MiB })
+})

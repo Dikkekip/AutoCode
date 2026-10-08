@@ -1745,7 +1745,11 @@ export class NativeAutonomyRuntime {
     return this.store.withLease(lease, ttlMs, action)
   }
   async withCapacity<T>(pool: "verification" | "release", limit: number, action: () => Promise<T>): Promise<T | null> {
-    const pressure = this.resourceAdmission(pool)
+    const verifierBytes =
+      pool === "verification" && this.policy.verificationSandbox?.backend === "docker"
+        ? (this.policy.verificationSandbox.memoryMb ?? 4096) * 1024 * 1024
+        : undefined
+    const pressure = this.resourceAdmission(pool, verifierBytes)
     if (!pressure.allowed) return null
     for (let slot = 0; slot < limit; slot++) {
       const lease = this.store.acquire(`capacity:${pool}:${slot}`, 120_000)
@@ -1760,8 +1764,8 @@ export class NativeAutonomyRuntime {
     }
     return null
   }
-  private resourceAdmission(operation: string) {
-    const pressure = this.resources.inspect()
+  private resourceAdmission(operation: string, requiredWorkerBytes?: number) {
+    const pressure = this.resources.inspect(requiredWorkerBytes)
     if (!pressure.allowed) this.store.event("resource.deferred", this.policy.boardId, { operation, ...pressure })
     return pressure
   }

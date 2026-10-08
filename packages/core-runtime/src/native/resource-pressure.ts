@@ -67,7 +67,7 @@ export class NativeResourceGuard {
     }
   }
 
-  inspect() {
+  inspect(requiredWorkerBytes?: number) {
     const now = this.now()
     const config = this.config
     try {
@@ -91,7 +91,8 @@ export class NativeResourceGuard {
         throw new Error("Invalid resource sample")
       const reserveBytes = (config?.minAvailableMiB ?? Math.max(512, (sample.totalBytes / MiB) * 0.15)) * MiB
       const maxRssBytes = (config?.maxGatewayRssMiB ?? Math.min(3072, (sample.totalBytes / MiB) * 0.25)) * MiB
-      const workerBytes = (config?.workerReserveMiB ?? 2048) * MiB
+      const workerBytes = Math.max((config?.workerReserveMiB ?? 2048) * MiB, requiredWorkerBytes ?? 0)
+      if (!Number.isFinite(workerBytes) || workerBytes <= 0) throw new Error("Invalid operation memory budget")
       const loadPercent = (sample.loadAverage1m / sample.cpuCount) * 100
       const reasons: string[] = []
       if (sample.availableBytes - reservedBytes < reserveBytes + workerBytes) reasons.push("host-memory")
