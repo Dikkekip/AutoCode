@@ -5,7 +5,7 @@ import { dirname } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const SERVICE = "openclaw-gateway.service"
-export function idle(status, cards) {
+export function idle(status, cards, now = Date.now()) {
   // Missing or uncertain execution evidence blocks maintenance.
   return (
     Array.isArray(cards) &&
@@ -19,17 +19,23 @@ export function idle(status, cards) {
         !["todo", "ready", "review", "blocked", "scheduled", "done", "cancelled"].includes(c.status) ||
         c.status === "running" ||
         ["running", "pending"].includes(c.execution?.status) ||
-        c.metadata?.automation?.launch?.phase === "pending"
+        c.metadata?.automation?.launch?.phase === "pending" ||
+        (c.metadata?.claim?.expiresAt ?? 0) > now
     )
   )
 }
 export function decide(previous, status, now) {
-  const pressure = status.resourcePressure?.reasons?.includes("gateway-memory") === true
-  const observations = pressure ? (previous.observations ?? 0) + 1 : 0
-  const firstPressureAt = pressure ? (previous.firstPressureAt ?? now) : null
+  const sameProcess = previous.gatewayPid === status.gatewayPid
+  const pressure =
+    Number.isSafeInteger(status.gatewayPid) &&
+    status.gatewayPid > 0 &&
+    status.resourcePressure?.reasons?.includes("gateway-memory") === true
+  const observations = pressure ? (sameProcess ? (previous.observations ?? 0) : 0) + 1 : 0
+  const firstPressureAt = pressure ? (sameProcess ? (previous.firstPressureAt ?? now) : now) : null
   return {
     ...previous,
     observations,
+    gatewayPid: status.gatewayPid,
     firstPressureAt,
     eligible:
       pressure &&
@@ -92,8 +98,13 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
   save()
   if (status.control.paused || status.control.frozen) return { action: "preserve-operator-pause" }
   if (!state.eligible) return { action: "observe", observations: state.observations }
-  const cards = call("workboard.cards.list").cards
-  if (!idle(status, cards)) return { action: "wait-for-accepted-work" }
+  const listCards = () => {
+    const board = call("workboard.cards.list")
+    if (board.hasMore === true || board.nextCursor != null) throw new Error("Maintenance cannot use a partial board")
+    return board.cards
+  }
+  const cards = listCards()
+  if (!idle(status, cards, now)) return { action: "wait-for-accepted-work" }
   if (!apply) return { action: "restart-preview" }
   const paused = call("autocode.pause", { expectedRevision: status.control.revision })
   if (typeof paused.revision !== "string" || paused.paused !== true)
@@ -107,12 +118,15 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
     save()
     return { action: "preserve-operator-control" }
   }
-  if (!idle(drained, call("workboard.cards.list").cards)) {
+  if (!idle(drained, listCards(), now)) {
     call("autocode.resume", { expectedRevision: state.ownedRevision })
     delete state.ownedRevision
     save()
     return { action: "accepted-work-raced-maintenance" }
   }
+  const currentPid = Number(command("systemctl", ["--user", "show", SERVICE, "-p", "MainPID", "--value"]).trim())
+  if (drained.gatewayPid !== status.gatewayPid || currentPid !== status.gatewayPid)
+    throw new Error("Gateway process changed; restart withheld")
   state.lastRestartAt = now
   save()
   command("systemctl", ["--user", "restart", SERVICE], 390_000)

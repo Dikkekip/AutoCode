@@ -872,6 +872,7 @@ export class NativeAutonomyRuntime {
     return {
       boardId: this.policy.boardId,
       enabled: this.policy.enabled,
+      gatewayPid: process.pid,
       resourcePressure: this.resources.inspect(),
       control: this.control.state,
       counts: cards.reduce<Record<string, number>>((acc, c) => {

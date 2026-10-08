@@ -7,6 +7,7 @@ import { decide, idle, run } from "./native-autonomy-maintenance.mjs"
 
 const status = () => ({
   boardId: "test",
+  gatewayPid: 123,
   control: { paused: false, revision: "initial" },
   activeLeases: [],
   operations: [],
@@ -18,6 +19,7 @@ test("memory pressure requires sustained observations and cooldown; CPU pressure
   assert.equal(s.eligible, false)
   s = decide(s, status(), 10_600_000)
   assert.equal(s.eligible, true)
+  assert.equal(decide(s, { ...status(), gatewayPid: 456 }, 10_900_000).eligible, false)
   assert.equal(decide({ ...s, lastRestartAt: 10_600_000 }, status(), 10_900_000).eligible, false)
   assert.equal(decide(s, { resourcePressure: { reasons: ["cpu-load"] } }, 11_000_000).eligible, false)
 })
@@ -28,6 +30,7 @@ test("active cards, reservations, leases and missing evidence block maintenance"
   assert.equal(idle({ ...status(), activeLeases: [{}] }, []), false)
   assert.equal(idle({ ...status(), resourcePressure: { reservedBytes: 1 } }, []), false)
   assert.equal(idle({ control: {} }, []), false)
+  assert.equal(idle(status(), [{ status: "ready", metadata: { claim: { expiresAt: Date.now() + 60000 } } }]), false)
 })
 test("restart closes admission, preserves ownership through restart, resumes only its exact pause", () => {
   const dir = mkdtempSync(join(tmpdir(), "native-maintenance-"))
@@ -37,6 +40,7 @@ test("restart closes admission, preserves ownership through restart, resumes onl
     restarted = 0,
     resumed = 0
   const command = (program, args) => {
+    if (program === "systemctl" && args.includes("show")) return "123\n"
     if (program === "systemctl") {
       restarted++
       return ""
