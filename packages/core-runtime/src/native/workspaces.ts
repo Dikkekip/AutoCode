@@ -108,6 +108,7 @@ export class NativeWorkspaceGateway implements NativeGateway {
     const cards = (await nativeCards(this.gateway, this.policy.boardId)).filter(
       (c) => c.status === "ready" && c.agentId && !busy.has(c.agentId)
     )
+    const deferred: Array<{ cardId: string; reason: "worktree-capacity" }> = []
     const started: unknown[] = []
     const startedCardIds: string[] = []
     const maximum = Math.min(this.policy.workerConcurrency, Number(params.maxStarts) || 1)
@@ -141,13 +142,34 @@ export class NativeWorkspaceGateway implements NativeGateway {
         if (busyPaths.has(legacyPath)) continue
       }
       this.authorize()
-      started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+      try {
+        started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+      } catch (error) {
+        if (
+          workspace.kind !== "worktree" ||
+          !/Insufficient disk space near .+ for worktree allocation:/.test(String(error))
+        )
+          throw error
+        const after = (await nativeCards(this.gateway, this.policy.boardId)).find((item) => item.id === card.id)
+        // Allocation failure is retryable only when no new run was accepted.
+        if (
+          !after ||
+          after.status !== "ready" ||
+          after.runId !== card.runId ||
+          after.sessionKey !== card.sessionKey ||
+          ["running", "pending"].includes(after.execution?.status ?? "")
+        )
+          throw error
+        deferred.push({ cardId: card.id, reason: "worktree-capacity" })
+        continue
+      }
       startedCardIds.push(card.id)
       busy.add(card.agentId)
       if (legacyPath) busyPaths.add(legacyPath)
     }
     return {
       started,
+      ...(deferred.length ? { deferred } : {}),
       ...(startedCardIds.length ? { startedCardIds } : {})
     } as T
   }

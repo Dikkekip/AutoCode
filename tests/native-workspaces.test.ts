@@ -337,3 +337,32 @@ it.each([
   ).rejects.toThrow("listing unavailable")
   expect(s.calls.some(([method]) => method === "workboard.cards.start")).toBe(false)
 })
+
+it("defers an unchanged unstarted card when managed worktree allocation reports disk pressure", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.start")
+      throw new Error("Insufficient disk space near /worktrees for worktree allocation: 12 GiB available")
+    return original(method, params)
+  })
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).toEqual({
+    started: [],
+    deferred: [{ cardId: "card", reason: "worktree-capacity" }]
+  })
+  expect(s.card.status).toBe("ready")
+})
+it("never treats an accepted or uncertain run as a disk deferral", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.start") {
+      s.card.status = "running"
+      throw new Error("Insufficient disk space near /worktrees for worktree allocation: 12 GiB available")
+    }
+    return original(method, params)
+  })
+  await expect(s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).rejects.toThrow(
+    "Insufficient disk space"
+  )
+})

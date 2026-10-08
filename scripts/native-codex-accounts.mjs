@@ -163,11 +163,33 @@ export async function synchronize({
   entries,
   sdk,
   onChange = () => {},
+  authorizedProfileIds = accounts.map((account) => account.profileId),
+  now = Date.now(),
   retryDelay = () => new Promise((resolve) => setTimeout(resolve, 2000))
 }) {
   let changed = false
+  const nativeFallbacks = new Set()
+  const preserveNativeFallbacks = (store) => {
+    for (const id of authorizedProfileIds) {
+      const credential = store.profiles[id]
+      const identity = payload(credential?.access ?? "")[claimsKey] ?? {}
+      const key = id.startsWith(prefix) ? Buffer.from(id.slice(prefix.length), "base64url").toString() : ""
+      if (
+        credential?.type === "oauth" &&
+        credential.provider === "openai" &&
+        credential.expires > now + 5 * 60_000 &&
+        identity.chatgpt_user_id &&
+        identity.chatgpt_account_id &&
+        key === `${identity.chatgpt_user_id}::${identity.chatgpt_account_id}` &&
+        credential.accountId === identity.chatgpt_account_id
+      )
+        nativeFallbacks.add(id)
+    }
+  }
   const update = (store, credentials, order) => {
-    const updated = mergeAccounts(store, credentials, order)
+    preserveNativeFallbacks(store)
+    const effectiveOrder = [...new Set([...order, ...nativeFallbacks])]
+    const updated = mergeAccounts(store, credentials, effectiveOrder)
     if (updated) {
       // Record reload debt before the SDK commits, including partial failures.
       onChange()
@@ -198,7 +220,11 @@ export async function synchronize({
     const updated = await updateWithRetry({
       agentDir,
       stateDir,
-      saveOptions: { filterExternalAuthProfiles: false, syncExternalCli: false, preserveOrderProfileIds: order },
+      saveOptions: {
+        filterExternalAuthProfiles: false,
+        syncExternalCli: false,
+        preserveOrderProfileIds: [...new Set([...order, ...nativeFallbacks])]
+      },
       updater: (store) => update(store, [], order)
     })
     if (!updated) throw new Error(`Unable to update Codex account order for ${agentId}`)
@@ -253,6 +279,9 @@ async function main() {
     await synchronize({
       accounts,
       orders,
+      authorizedProfileIds: JSON.parse(readFileSync(join(accountsDir, "registry.json"), "utf8"))
+        .accounts.filter((account) => account.auth_mode === "chatgpt")
+        .map((account) => `${prefix}${Buffer.from(account.account_key).toString("base64url")}`),
       stateDir,
       entries,
       sdk,

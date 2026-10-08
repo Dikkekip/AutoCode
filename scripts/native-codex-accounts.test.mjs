@@ -393,3 +393,32 @@ test("CLI reloads the gateway after apply and never prints credentials", (t) => 
   assert.equal(JSON.parse(invoke()).reloaded, true)
   assert.equal(existsSync(pending), false)
 })
+
+test("a partial CLI pool retains fresh registered native fallbacks without copying them into agent stores", async (t) => {
+  const all = readAccounts(fixture(t).dir, now)
+  const shared = {
+    profiles: { [all[1].profileId]: all[1].credential, [all[2].profileId]: { ...all[2].credential, expires: now - 1 } }
+  }
+  const agent = { profiles: {} }
+  const sdk = {
+    updateAuthProfileStoreWithLock: async (p) => {
+      const store = p.sharedStoreWrite ? shared : agent
+      p.updater(store)
+      return store
+    }
+  }
+  const fallbackBefore = structuredClone(shared.profiles[all[1].profileId])
+  await synchronize({
+    accounts: [all[0]],
+    orders: [{ agentId: "coder", order: [all[0].profileId] }],
+    authorizedProfileIds: all.map((a) => a.profileId),
+    now,
+    stateDir: "/fixture",
+    entries: {},
+    sdk
+  })
+  assert.deepEqual(agent.order.openai, [all[0].profileId, all[1].profileId])
+  assert.deepEqual(agent.profiles, {})
+  assert.deepEqual(shared.profiles[all[1].profileId], fallbackBefore)
+  assert.deepEqual(shared.order.openai, [all[0].profileId, all[1].profileId])
+})
