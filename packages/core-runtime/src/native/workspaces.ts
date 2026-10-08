@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs"
+import { realpathSync, statfsSync } from "node:fs"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
@@ -141,6 +141,28 @@ export class NativeWorkspaceGateway implements NativeGateway {
         legacyPath = realpathSync(workspace.path)
         if (busyPaths.has(legacyPath)) continue
       }
+      const previousComment = card.metadata?.comments?.at(-1)?.body ?? ""
+      const diskHold =
+        /^Dispatcher could not start worker: Insufficient disk space near (.+) for worktree allocation: .+; approximately ([\d.]+) (GiB|MiB) required including safety reserve\./.exec(
+          previousComment
+        )
+      if (workspace.kind === "worktree" && diskHold && !card.runId && !card.sessionKey && !card.execution) {
+        let available = 0
+        try {
+          const volume = statfsSync(diskHold[1]!)
+          available = volume.bavail * volume.bsize
+        } catch {
+          /* Unavailable capacity stays deferred. */
+        }
+        const minimum = Number(diskHold[2]) * (diskHold[3] === "GiB" ? 1024 ** 3 : 1024 ** 2) + 1024 ** 3
+        if (!Number.isFinite(minimum) || available < minimum) {
+          deferred.push({ cardId: card.id, reason: "worktree-capacity" })
+          continue
+        }
+      }
+      const previousFailureCount = card.metadata?.failureCount ?? 0
+      const previousRunId = card.runId,
+        previousSessionKey = card.sessionKey
       this.authorize()
       try {
         started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
@@ -151,15 +173,34 @@ export class NativeWorkspaceGateway implements NativeGateway {
         )
           throw error
         const after = (await nativeCards(this.gateway, this.policy.boardId)).find((item) => item.id === card.id)
-        // Allocation failure is retryable only when no new run was accepted.
+        // Allocation failure is retryable only when no run was accepted. Workboard
+        // may have blocked the card before returning the pre-allocation failure.
         if (
           !after ||
-          after.status !== "ready" ||
-          after.runId !== card.runId ||
-          after.sessionKey !== card.sessionKey ||
-          ["running", "pending"].includes(after.execution?.status ?? "")
+          after.runId !== previousRunId ||
+          after.sessionKey !== previousSessionKey ||
+          after.runId ||
+          after.sessionKey ||
+          after.execution ||
+          (after.metadata?.automation as any)?.launch
         )
           throw error
+        if (after.status === "blocked") {
+          const diagnostic = /Insufficient disk space near .+ for worktree allocation:.*$/.exec(String(error))?.[0]
+          if (
+            !diagnostic ||
+            after.metadata?.comments?.at(-1)?.body !== `Dispatcher could not start worker: ${diagnostic}` ||
+            after.metadata.failureCount !== previousFailureCount + 1 ||
+            !Number.isFinite(after.updatedAt)
+          )
+            throw error
+          this.authorize()
+          await this.gateway.request("workboard.cards.update", {
+            id: card.id,
+            expectedUpdatedAt: after.updatedAt,
+            patch: { status: "ready" }
+          })
+        } else if (after.status !== "ready") throw error
         deferred.push({ cardId: card.id, reason: "worktree-capacity" })
         continue
       }

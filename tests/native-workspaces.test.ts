@@ -366,3 +366,36 @@ it("never treats an accepted or uncertain run as a disk deferral", async () => {
     "Insufficient disk space"
   )
 })
+
+it("restores only the exact unaccepted capacity failure and holds retries from its persisted diagnostic", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  const error = `Insufficient disk space near ${s.root} for worktree allocation: 12 GiB available; approximately 10000 GiB required including safety reserve. Free caches or archive/remove unused worktrees, then retry.`
+  let starts = 0
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.start") {
+      starts++
+      s.card.status = "blocked"
+      s.card.updatedAt = 20
+      Object.assign(s.card.metadata, {
+        failureCount: 1,
+        comments: [{ body: `Dispatcher could not start worker: ${error}`, createdAt: 20 }]
+      })
+      throw new Error(error)
+    }
+    if (method === "workboard.cards.update") {
+      expect(params).toEqual({ id: "card", expectedUpdatedAt: 20, patch: { status: "ready" } })
+      s.card.status = "ready"
+      return { card: s.card }
+    }
+    return original(method, params)
+  })
+  expect(
+    (await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board" })).deferred
+  ).toHaveLength(1)
+  expect(s.card.status).toBe("ready")
+  expect(
+    (await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board" })).deferred
+  ).toHaveLength(1)
+  expect(starts).toBe(1)
+})
