@@ -38,13 +38,19 @@ export class NativeWorkspaceGateway implements NativeGateway {
         if (card.agentId) busy.add(card.agentId)
       }
     }
-    const busyPaths = new Set(
-      all.cards
-        .filter((c) => c.status === "running")
-        .map((c) => c.metadata?.automation?.workspace?.path)
-        .filter((path): path is string => Boolean(path))
-        .map((path) => realpathSync(path))
-    )
+    const busyPaths = new Set<string>()
+    let unknownBusyPath = false
+    for (const card of all.cards.filter((c) => c.status === "running")) {
+      const path = card.metadata?.automation?.workspace?.path
+      if (!path) continue
+      try {
+        busyPaths.add(realpathSync(path))
+      } catch {
+        // Keep that agent busy, and fail closed for shared directory candidates.
+        // Workboard-created isolated worktrees need not resolve another run's path.
+        unknownBusyPath = true
+      }
+    }
     const pending = await nativeCards(this.gateway, this.policy.boardId)
     const heldClaims = new Map(
       pending
@@ -117,7 +123,7 @@ export class NativeWorkspaceGateway implements NativeGateway {
     const cards = (await nativeCards(this.gateway, this.policy.boardId)).filter(
       (c) => c.status === "ready" && c.agentId && !busy.has(c.agentId)
     )
-    const deferred: Array<{ cardId: string; reason: "worktree-capacity" }> = []
+    const deferred: Array<{ cardId: string; reason: "worktree-capacity" | "workspace-unavailable" }> = []
     const started: unknown[] = []
     const startedCardIds: string[] = []
     const maximum = Math.min(this.policy.workerConcurrency, Number(params.maxStarts) || 1)
@@ -145,9 +151,18 @@ export class NativeWorkspaceGateway implements NativeGateway {
           throw new Error("Managed worktree source does not match native policy")
       } else {
         if (!workspace.path) throw new Error("Native workspace path unavailable")
+        if (unknownBusyPath) {
+          deferred.push({ cardId: card.id, reason: "workspace-unavailable" })
+          continue
+        }
         // Existing directory cards retain their native Workboard confinement checks.
         // Never rewrite role configuration to make a preserved candidate writable.
-        legacyPath = realpathSync(workspace.path)
+        try {
+          legacyPath = realpathSync(workspace.path)
+        } catch {
+          deferred.push({ cardId: card.id, reason: "workspace-unavailable" })
+          continue
+        }
         if (busyPaths.has(legacyPath)) continue
       }
       const previousComment = card.metadata?.comments?.at(-1)?.body ?? ""
