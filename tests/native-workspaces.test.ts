@@ -66,6 +66,33 @@ it.each([
     false
   ],
   ["unknown", { status: "done", endedAt: 12 }, false],
+  [
+    "wrong agent",
+    {
+      agentId: "other",
+      status: "done",
+      hasActiveRun: false,
+      hasActiveSubagentRun: false,
+      activeRunIds: [],
+      endedAt: 12
+    },
+    false
+  ],
+  [
+    "timeout",
+    { status: "timeout", hasActiveRun: false, hasActiveSubagentRun: false, activeRunIds: [], endedAt: 12 },
+    true
+  ],
+  [
+    "killed",
+    { status: "killed", hasActiveRun: false, hasActiveSubagentRun: false, activeRunIds: [], endedAt: 12 },
+    true
+  ],
+  [
+    "active timeout",
+    { status: "timeout", hasActiveRun: true, hasActiveSubagentRun: false, activeRunIds: ["live"], endedAt: 12 },
+    false
+  ],
   ["missing", null, false]
 ])("only releases a coder claim with explicit terminal session proof: %s", async (_name, session, released) => {
   const s = setup()
@@ -87,7 +114,16 @@ it.each([
         ]
       }
     }
-    if (method === "sessions.list") return { sessions: session ? [{ key: "agent:coder:old", ...session }] : [] } as any
+    if (method === "sessions.list") {
+      expect(params).toEqual({ agentId: "coder", search: "agent:coder:old", limit: 10 })
+      // Model a busy agent with more sessions than the old 100-row lookup:
+      // only a targeted search returns the terminal session retaining its claim.
+      const historical = session ? [{ key: "agent:coder:old", agentId: "coder", ...session }] : []
+      const newer = Array.from({ length: 101 }, (_, i) => ({ key: `agent:coder:new-${i}`, agentId: "coder" }))
+      return {
+        sessions: params.search === "agent:coder:old" ? historical : [...newer, ...historical].slice(0, params.limit)
+      } as any
+    }
     return original(method, params)
   })
   await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
@@ -336,4 +372,66 @@ it.each([
     s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
   ).rejects.toThrow("listing unavailable")
   expect(s.calls.some(([method]) => method === "workboard.cards.start")).toBe(false)
+})
+
+it("defers an unchanged unstarted card when managed worktree allocation reports disk pressure", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.start")
+      throw new Error("Insufficient disk space near /worktrees for worktree allocation: 12 GiB available")
+    return original(method, params)
+  })
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).toEqual({
+    started: [],
+    deferred: [{ cardId: "card", reason: "worktree-capacity" }]
+  })
+  expect(s.card.status).toBe("ready")
+})
+it("never treats an accepted or uncertain run as a disk deferral", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.start") {
+      s.card.status = "running"
+      throw new Error("Insufficient disk space near /worktrees for worktree allocation: 12 GiB available")
+    }
+    return original(method, params)
+  })
+  await expect(s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).rejects.toThrow(
+    "Insufficient disk space"
+  )
+})
+
+it("restores only the exact unaccepted capacity failure and holds retries from its persisted diagnostic", async () => {
+  const s = setup()
+  const original = s.gateway.request.getMockImplementation()!
+  const error = `Insufficient disk space near ${s.root} for worktree allocation: 12 GiB available; approximately 10000 GiB required including safety reserve. Free caches or archive/remove unused worktrees, then retry.`
+  let starts = 0
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.start") {
+      starts++
+      s.card.status = "blocked"
+      s.card.updatedAt = 20
+      Object.assign(s.card.metadata, {
+        failureCount: 1,
+        comments: [{ body: `Dispatcher could not start worker: ${error}`, createdAt: 20 }]
+      })
+      throw new Error(error)
+    }
+    if (method === "workboard.cards.update") {
+      expect(params).toEqual({ id: "card", expectedUpdatedAt: 20, patch: { status: "ready" } })
+      s.card.status = "ready"
+      return { card: s.card }
+    }
+    return original(method, params)
+  })
+  expect(
+    (await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board" })).deferred
+  ).toHaveLength(1)
+  expect(s.card.status).toBe("ready")
+  expect(
+    (await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board" })).deferred
+  ).toHaveLength(1)
+  expect(starts).toBe(1)
 })

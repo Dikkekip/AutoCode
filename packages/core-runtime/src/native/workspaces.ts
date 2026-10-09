@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs"
+import { realpathSync, statfsSync } from "node:fs"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
@@ -65,11 +65,20 @@ export class NativeWorkspaceGateway implements NativeGateway {
       if (!["blocked", "done", "cancelled", "review"].includes(card.status)) continue
       busy.add(ownerId)
       if (!card.sessionKey) continue
-      const result = await this.gateway.request<any>("sessions.list", { agentId: ownerId, limit: 100 })
-      const session = result.sessions?.find((s: any) => s.key === card.sessionKey)
+      // An agent's historical session can fall outside the newest page. Search
+      // for the exact owned key instead of letting unrelated sessions hide it.
+      const result = await this.gateway.request<any>("sessions.list", {
+        agentId: ownerId,
+        search: card.sessionKey,
+        limit: 10
+      })
+      const matches = Array.isArray(result.sessions)
+        ? result.sessions.filter((s: any) => s.key === card.sessionKey && s.agentId === ownerId)
+        : []
+      const session = matches.length === 1 ? matches[0] : undefined
       if (
         !session ||
-        !["done", "completed", "failed", "cancelled", "timed_out"].includes(session.status) ||
+        !["done", "completed", "failed", "cancelled", "timed_out", "timeout", "killed"].includes(session.status) ||
         session.hasActiveRun !== false ||
         session.hasActiveSubagentRun !== false ||
         !Array.isArray(session.activeRunIds) ||
@@ -108,6 +117,7 @@ export class NativeWorkspaceGateway implements NativeGateway {
     const cards = (await nativeCards(this.gateway, this.policy.boardId)).filter(
       (c) => c.status === "ready" && c.agentId && !busy.has(c.agentId)
     )
+    const deferred: Array<{ cardId: string; reason: "worktree-capacity" }> = []
     const started: unknown[] = []
     const startedCardIds: string[] = []
     const maximum = Math.min(this.policy.workerConcurrency, Number(params.maxStarts) || 1)
@@ -140,14 +150,76 @@ export class NativeWorkspaceGateway implements NativeGateway {
         legacyPath = realpathSync(workspace.path)
         if (busyPaths.has(legacyPath)) continue
       }
+      const previousComment = card.metadata?.comments?.at(-1)?.body ?? ""
+      const diskHold =
+        /^Dispatcher could not start worker: Insufficient disk space near (.+) for worktree allocation: .+; approximately ([\d.]+) (GiB|MiB) required including safety reserve\./.exec(
+          previousComment
+        )
+      if (workspace.kind === "worktree" && diskHold && !card.runId && !card.sessionKey && !card.execution) {
+        let available = 0
+        try {
+          const volume = statfsSync(diskHold[1]!)
+          available = volume.bavail * volume.bsize
+        } catch {
+          /* Unavailable capacity stays deferred. */
+        }
+        const minimum = Number(diskHold[2]) * (diskHold[3] === "GiB" ? 1024 ** 3 : 1024 ** 2) + 1024 ** 3
+        if (!Number.isFinite(minimum) || available < minimum) {
+          deferred.push({ cardId: card.id, reason: "worktree-capacity" })
+          continue
+        }
+      }
+      const previousFailureCount = card.metadata?.failureCount ?? 0
+      const previousRunId = card.runId,
+        previousSessionKey = card.sessionKey
       this.authorize()
-      started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+      try {
+        started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+      } catch (error) {
+        if (
+          workspace.kind !== "worktree" ||
+          !/Insufficient disk space near .+ for worktree allocation:/.test(String(error))
+        )
+          throw error
+        const after = (await nativeCards(this.gateway, this.policy.boardId)).find((item) => item.id === card.id)
+        // Allocation failure is retryable only when no run was accepted. Workboard
+        // may have blocked the card before returning the pre-allocation failure.
+        if (
+          !after ||
+          after.runId !== previousRunId ||
+          after.sessionKey !== previousSessionKey ||
+          after.runId ||
+          after.sessionKey ||
+          after.execution ||
+          (after.metadata?.automation as any)?.launch
+        )
+          throw error
+        if (after.status === "blocked") {
+          const diagnostic = /Insufficient disk space near .+ for worktree allocation:.*$/.exec(String(error))?.[0]
+          if (
+            !diagnostic ||
+            after.metadata?.comments?.at(-1)?.body !== `Dispatcher could not start worker: ${diagnostic}` ||
+            after.metadata.failureCount !== previousFailureCount + 1 ||
+            !Number.isFinite(after.updatedAt)
+          )
+            throw error
+          this.authorize()
+          await this.gateway.request("workboard.cards.update", {
+            id: card.id,
+            expectedUpdatedAt: after.updatedAt,
+            patch: { status: "ready" }
+          })
+        } else if (after.status !== "ready") throw error
+        deferred.push({ cardId: card.id, reason: "worktree-capacity" })
+        continue
+      }
       startedCardIds.push(card.id)
       busy.add(card.agentId)
       if (legacyPath) busyPaths.add(legacyPath)
     }
     return {
       started,
+      ...(deferred.length ? { deferred } : {}),
       ...(startedCardIds.length ? { startedCardIds } : {})
     } as T
   }

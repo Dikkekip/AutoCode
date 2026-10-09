@@ -65,6 +65,7 @@ import { prepareNativeRecoveryIntent } from "./recovery-intent.js"
 import { NativeReleasePending, releaseNativeWorkflow } from "./release.js"
 import { type NativeRepairObservation, nativeRepairObservation, planNativeRepair } from "./repair.js"
 import { nativeRepairSupersessionClosed, supersedeLegacyNativeRepairIntent } from "./repair-intent.js"
+import { NativeResourceGuard } from "./resource-pressure.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
@@ -125,13 +126,16 @@ export interface NativeWorkflow {
 }
 export class NativeAutonomyRuntime {
   readonly control: NativeControl
+  readonly resources: NativeResourceGuard
   readonly humanInput?: NativeHumanInput
   constructor(
     readonly policy: NativeAutonomyPolicy,
     readonly gateway: NativeGateway,
     readonly store: NativeEvidenceStore,
-    humanInput?: NativeHumanInputConfig
+    humanInput?: NativeHumanInputConfig,
+    resources = new NativeResourceGuard(policy.resourceControls)
   ) {
+    this.resources = resources
     this.control = new NativeControl(store, () => policy.enabled)
     if (humanInput) this.humanInput = new NativeHumanInput(this, humanInput)
     this.gateway = {
@@ -151,7 +155,22 @@ export class NativeAutonomyRuntime {
             !["scheduled", "blocked", "done"].includes(String(params.status)))
         )
           this.control.assert()
-        if (method === "workboard.cards.dispatchWithOptions") await this.authorizeDispatch(gateway)
+        if (method === "workboard.cards.dispatchWithOptions") {
+          const pressure = this.resourceAdmission(method)
+          if (!pressure.allowed)
+            return { started: [], startedCardIds: [], deferred: [], resourcePressure: pressure } as any
+          params = {
+            ...params,
+            maxStarts: Math.min(
+              Number(params.maxStarts ?? this.policy.workerConcurrency),
+              this.policy.workerConcurrency,
+              pressure.startCapacity
+            )
+          }
+          const maxStarts = Number(params.maxStarts)
+          if (!Number.isSafeInteger(maxStarts) || maxStarts < 1) throw new Error("Invalid native dispatch capacity")
+          await this.authorizeDispatch(gateway)
+        }
         return gateway.request(method, params)
       }
     }
@@ -853,6 +872,8 @@ export class NativeAutonomyRuntime {
     return {
       boardId: this.policy.boardId,
       enabled: this.policy.enabled,
+      gatewayPid: process.pid,
+      resourcePressure: this.resources.inspect(),
       control: this.control.state,
       counts: cards.reduce<Record<string, number>>((acc, c) => {
         acc[c.status] = (acc[c.status] ?? 0) + 1
@@ -861,7 +882,8 @@ export class NativeAutonomyRuntime {
       workflows: this.store
         .list<NativeWorkflow>("workflow")
         .filter(({ value }) => !value.archivedAt)
-        .map(({ id, value }) => ({
+        .map(({ id, value, updatedAt }) => ({
+          updatedAt,
           lifecycle: value.lifecycle ?? upgradeNativeLifecycle(id, value),
           reservesScope: this.reservesScope(value),
           recovery: value.recovery ?? null,
@@ -881,6 +903,9 @@ export class NativeAutonomyRuntime {
           designApproved: this.quality.designApproved(value),
           blocker: value.blocker ?? null
         })),
+      activeLeases: this.store.db
+        .prepare("SELECT id,expires_at AS expiresAt FROM native_locks WHERE expires_at > ?")
+        .all(Date.now()),
       operations: this.store.list("operation")
     }
   }
@@ -1720,11 +1745,29 @@ export class NativeAutonomyRuntime {
     return this.store.withLease(lease, ttlMs, action)
   }
   async withCapacity<T>(pool: "verification" | "release", limit: number, action: () => Promise<T>): Promise<T | null> {
+    const verifierBytes =
+      pool === "verification" && this.policy.verificationSandbox?.backend === "docker"
+        ? (this.policy.verificationSandbox.memoryMb ?? 4096) * 1024 * 1024
+        : undefined
+    const pressure = this.resourceAdmission(pool, verifierBytes)
+    if (!pressure.allowed) return null
     for (let slot = 0; slot < limit; slot++) {
       const lease = this.store.acquire(`capacity:${pool}:${slot}`, 120_000)
-      if (lease) return this.store.withLease(lease, 120_000, action)
+      if (lease) {
+        const release = this.resources.reserve(pressure.workerBytes!)
+        try {
+          return await this.store.withLease(lease, 120_000, action)
+        } finally {
+          release()
+        }
+      }
     }
     return null
+  }
+  private resourceAdmission(operation: string, requiredWorkerBytes?: number) {
+    const pressure = this.resources.inspect(requiredWorkerBytes)
+    if (!pressure.allowed) this.store.event("resource.deferred", this.policy.boardId, { operation, ...pressure })
+    return pressure
   }
   async advanceWorkflow(id: string): Promise<number> {
     const lease = this.store.acquire(`workflow:${id}`, 120_000)
@@ -2144,6 +2187,7 @@ export class NativeAutonomyRuntime {
       deferredCount: number
       deferred: Array<{ cardId: string; reason: "worktree-capacity" }>
       failedCount?: number
+      resourcePressure?: ReturnType<NativeResourceGuard["inspect"]>
       failures?: Array<{ cardId: string; error: string }>
     }
   }> {
@@ -2310,6 +2354,7 @@ export class NativeAutonomyRuntime {
               startedCardIds,
               deferredCount: deferred.length,
               deferred,
+              ...(result.resourcePressure ? { resourcePressure: result.resourcePressure } : {}),
               ...(failures.length ? { failedCount: failures.length, failures } : {})
             }
           }

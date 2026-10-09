@@ -48,6 +48,25 @@ it("retains process capacity in validated Docker policy and rejects it for bubbl
     })
   ).toThrow(/pidsLimit/)
 })
+it("retains bounded Docker CPU and memory policy and rejects unsafe capacities", () => {
+  const config = { backend: "docker", image: `sha256:${"a".repeat(64)}`, inputFiles: ["source.txt"] }
+  expect(validateNativeVerificationSandbox({ ...config, memoryMb: 3072, cpus: 1 })).toMatchObject({
+    memoryMb: 3072,
+    cpus: 1
+  })
+  for (const memoryMb of [0, 511, 16_385, 1024.5, "2048"])
+    expect(() => validateNativeVerificationSandbox({ ...config, memoryMb })).toThrow(/memoryMb/)
+  for (const cpus of [0, 0.24, 8.01, Number.NaN, "1"])
+    expect(() => validateNativeVerificationSandbox({ ...config, cpus })).toThrow(/cpus/)
+  expect(() =>
+    validateNativeVerificationSandbox({
+      backend: "bubblewrap",
+      rootFilesystem: "/opt/root",
+      inputFiles: ["source.txt"],
+      memoryMb: 1024
+    })
+  ).toThrow(/memoryMb/)
+})
 it("inherits only allowlisted build variables", () => {
   expect(
     allowlistedEnvironment(BUILD_ENVIRONMENT_ALLOWLIST, {

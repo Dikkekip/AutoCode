@@ -591,7 +591,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     async ({ params, respond }: any) => {
       try {
         const r = runtime(params.boardId)
-        const control = r.control.change(true)
+        const control = r.control.change(true, params.expectedRevision)
         respond(true, { ...control, note: "No new dispatch or promotion; accepted native runs remain visible." })
       } catch (error) {
         respond(false, undefined, { code: "autocode_error", message: String(error) })
@@ -606,6 +606,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
         const r = runtime(params.boardId)
         if (!r.policy.enabled) throw new Error("Policy is disabled; enable the reviewed native policy before resuming")
         const revision = r.control.state.revision
+        if (params.expectedRevision !== undefined && params.expectedRevision !== revision)
+          throw new Error("Control changed since maintenance pause; preserving operator decision")
         assertNativeSkillBinding(r)
         const readiness = await nativeDoctor(r.policy, gateway)
         if (!readiness.ok) throw new Error(`Resume blocked: ${JSON.stringify(readiness.checks.filter((c) => !c.ok))}`)

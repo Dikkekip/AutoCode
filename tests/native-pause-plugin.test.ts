@@ -54,10 +54,10 @@ async function setup(enabled = true) {
     store.close()
     rmSync(repository, { recursive: true, force: true })
   })
-  const call = async (name: string) => {
+  const call = async (name: string, params: Record<string, unknown> = {}) => {
     expect(methods.get(name)!.scope).toBe("operator.admin")
     const respond = vi.fn()
-    await methods.get(name)!.handler({ params: { boardId: "app" }, respond })
+    await methods.get(name)!.handler({ params: { boardId: "app", ...params }, respond })
     return respond.mock.calls[0]!
   }
   return { call, store }
@@ -106,5 +106,16 @@ it("leaves pause intact when readiness fails", async () => {
     checks: [{ name: "fixture", ok: false, detail: "unavailable" }]
   })
   expect((await s.call("autocode.resume"))[0]).toBe(false)
+  expect(s.store.get("control", "pause")).toEqual(before)
+})
+
+it("maintenance cannot override an operator revision changed before its RPC", async () => {
+  const s = await setup()
+  await s.call("autocode.pause")
+  const own = s.store.get<any>("control", "pause").revision
+  await s.call("autocode.pause")
+  const before = s.store.get("control", "pause")
+  expect((await s.call("autocode.resume", { expectedRevision: own }))[0]).toBe(false)
+  expect((await s.call("autocode.pause", { expectedRevision: own }))[0]).toBe(false)
   expect(s.store.get("control", "pause")).toEqual(before)
 })
