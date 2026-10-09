@@ -65,11 +65,20 @@ export class NativeWorkspaceGateway implements NativeGateway {
       if (!["blocked", "done", "cancelled", "review"].includes(card.status)) continue
       busy.add(ownerId)
       if (!card.sessionKey) continue
-      const result = await this.gateway.request<any>("sessions.list", { agentId: ownerId, limit: 100 })
-      const session = result.sessions?.find((s: any) => s.key === card.sessionKey)
+      // An agent's historical session can fall outside the newest page. Search
+      // for the exact owned key instead of letting unrelated sessions hide it.
+      const result = await this.gateway.request<any>("sessions.list", {
+        agentId: ownerId,
+        search: card.sessionKey,
+        limit: 10
+      })
+      const matches = Array.isArray(result.sessions)
+        ? result.sessions.filter((s: any) => s.key === card.sessionKey && s.agentId === ownerId)
+        : []
+      const session = matches.length === 1 ? matches[0] : undefined
       if (
         !session ||
-        !["done", "completed", "failed", "cancelled", "timed_out"].includes(session.status) ||
+        !["done", "completed", "failed", "cancelled", "timed_out", "timeout", "killed"].includes(session.status) ||
         session.hasActiveRun !== false ||
         session.hasActiveSubagentRun !== false ||
         !Array.isArray(session.activeRunIds) ||

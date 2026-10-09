@@ -66,6 +66,33 @@ it.each([
     false
   ],
   ["unknown", { status: "done", endedAt: 12 }, false],
+  [
+    "wrong agent",
+    {
+      agentId: "other",
+      status: "done",
+      hasActiveRun: false,
+      hasActiveSubagentRun: false,
+      activeRunIds: [],
+      endedAt: 12
+    },
+    false
+  ],
+  [
+    "timeout",
+    { status: "timeout", hasActiveRun: false, hasActiveSubagentRun: false, activeRunIds: [], endedAt: 12 },
+    true
+  ],
+  [
+    "killed",
+    { status: "killed", hasActiveRun: false, hasActiveSubagentRun: false, activeRunIds: [], endedAt: 12 },
+    true
+  ],
+  [
+    "active timeout",
+    { status: "timeout", hasActiveRun: true, hasActiveSubagentRun: false, activeRunIds: ["live"], endedAt: 12 },
+    false
+  ],
   ["missing", null, false]
 ])("only releases a coder claim with explicit terminal session proof: %s", async (_name, session, released) => {
   const s = setup()
@@ -87,7 +114,16 @@ it.each([
         ]
       }
     }
-    if (method === "sessions.list") return { sessions: session ? [{ key: "agent:coder:old", ...session }] : [] } as any
+    if (method === "sessions.list") {
+      expect(params).toEqual({ agentId: "coder", search: "agent:coder:old", limit: 10 })
+      // Model a busy agent with more sessions than the old 100-row lookup:
+      // only a targeted search returns the terminal session retaining its claim.
+      const historical = session ? [{ key: "agent:coder:old", agentId: "coder", ...session }] : []
+      const newer = Array.from({ length: 101 }, (_, i) => ({ key: `agent:coder:new-${i}`, agentId: "coder" }))
+      return {
+        sessions: params.search === "agent:coder:old" ? historical : [...newer, ...historical].slice(0, params.limit)
+      } as any
+    }
     return original(method, params)
   })
   await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
