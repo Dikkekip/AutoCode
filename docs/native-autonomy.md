@@ -24,6 +24,15 @@ An investigation is a real turn by a named persona. Weighted rotation chooses th
 
 Quality policy can set `planReview` to `"all"` to require an independent design-review verdict before every implementation starts; the default `"high-risk"` preserves risk-based review. Investigation `implementationPrompt` values are ordered plans covering architecture, steps, expected files, risks, and verification. The planner admits a plan, the coder executes it within the admitted scope, and the independent reviewer remains the final commit-bound judge. Persona exploration stays read-only and sequential, while repeated repair can route to the reviewed very-complex coder tier; neither behavior creates unrestricted agent fan-out.
 
+The reviewed prompt skill may be a native skill bundle. The
+`skills/autocode-persona-loop` bundle keeps discovery persona-led and composes
+error recovery, attempt reflection, minimal-fix, and proof-closure guidance.
+It intentionally contains no token or spend limiter: unattended throughput is
+controlled by native backpressure, bounded repair, and the host resource guard.
+Routine code and verification failures recover autonomously; only missing
+authority, credentials, destructive ambiguity, product decisions, or exhausted
+evidence-backed recovery require an operator.
+
 Completed investigations, including `no_op`, suppress unchanged research for `dedupeWindowHours` (72 hours by default). After that window, weighted rotation can revisit the persona's goals even if its files have not changed. A refreshed research turn receives up to three prior investigation summaries and must check unresolved assumptions or a different user journey before proposing another bounded implementation prompt. Existing proposal deduplication, active-round exclusion, daily limits and downstream backpressure still apply. Code or goal changes can trigger earlier investigation. Legacy investigations without a completion timestamp use their round's start time.
 
 An implementation card blocked by a startup failure without an execution is recorded as a blocked native workflow on reconciliation. This makes allocation failures visible in `autocode.status` and workflow explanations instead of showing an implementation that silently makes no progress. Preserve the card and diagnostics, resolve capacity or startup configuration, then use scoped operator recovery; reconciliation does not replay failed or uncertain execution.

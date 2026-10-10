@@ -516,6 +516,9 @@ describe("native quality investigations", () => {
       exitCode: 1,
       stdout: { content: "Synthetic fixture failure log", truncated: false }
     })
+    expect(context.instructions).toContain("evidence-backed causal hypothesis")
+    expect(context.instructions).toContain("materially differs from preserved attempts")
+    expect(context.instructions).toContain("smallest coherent correction")
   })
 
   it("exposes current blocked and legacy scope reservations without treating them as approval", async () => {
@@ -793,6 +796,12 @@ describe("native quality investigations", () => {
     const w = s.runtime.requireWorkflow(workflowId)
     const implementation = s.gateway.cards.find((card) => card.id === w.implementationCardId)
     expect(implementation.status).toBe("blocked")
+    const implementationPointer = JSON.parse(implementation.notes)
+    const implementationNotes = implementationPointer.contextId
+      ? JSON.parse(s.store.get<any>("card-context", implementationPointer.contextId).notes)
+      : implementationPointer
+    expect(implementationNotes.instructions.join(" ")).toContain("smallest coherent change")
+    expect(implementationNotes.instructions.join(" ")).toContain("selected causal hypothesis")
     const design = s.gateway.cards.find((card) => card.id === w.designCardId)
     design.status = "running"
     design.sessionKey = "design-session"
@@ -1295,6 +1304,8 @@ describe("native quality investigations", () => {
         complete: true
       })
       expect(notes.previousCandidate.content).toContain("+export const navigation = true")
+      expect(notes.instructions).toContain("evidence-backed causal hypothesis")
+      expect(notes.instructions).toContain("do not repeat an unchanged approach")
       await s.runtime.reconcile()
       expect(s.gateway.cards.filter((card) => card.title.startsWith("Repair "))).toHaveLength(1)
       expect(repairs[0].status).toBe("ready")
