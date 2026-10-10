@@ -782,7 +782,11 @@ export function registerNativeAutonomyPlugin(api: any): void {
               items: field,
               description: "Strings describing alternatives and why they were rejected or deferred."
             },
-            implementationPrompt: field,
+            implementationPrompt: {
+              type: "string",
+              description:
+                "Ordered implementation plan covering architecture, steps, expected files, risks, and verification."
+            },
             complexity: {
               type: "object",
               required: ["tier", "rationale"],

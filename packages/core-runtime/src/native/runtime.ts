@@ -968,7 +968,7 @@ export class NativeAutonomyRuntime {
             mission: persona,
             instructions: [
               "Investigate repository evidence for your own goals. Do not edit application or framework code.",
-              "Compare up to two distinct alternatives. Use autocode_propose with roundId and a proposal containing personaId, goal, title, evidence [{path,observation}], allowedPaths, acceptance, alternatives, implementationPrompt.",
+              "Compare up to two distinct alternatives. Use autocode_propose with roundId and a proposal containing personaId, goal, title, evidence [{path,observation}], allowedPaths, acceptance, alternatives, implementationPrompt. Make implementationPrompt an ordered plan covering architecture, steps, expected files, risks, and verification.",
               "No proposal is valid when there is no useful evidence-backed improvement. Record that conclusion.",
               "Use workboard_complete to finish this investigation, with evidence and proposal IDs."
             ],
@@ -997,7 +997,7 @@ export class NativeAutonomyRuntime {
           roundId,
           instructions: [
             "Read the completed persona investigations and use autocode_proposals for this round.",
-            "Compare evidence, user value, complexity, scope, and rejected alternatives. Admit only the strongest bounded slices using autocode_admit(proposalId, rationale).",
+            "Compare evidence, user value, complexity, scope, rejected alternatives, and the ordered implementation plan. Admit only plans whose architecture, steps, expected files, risks, and verification are internally consistent, using autocode_admit(proposalId, rationale).",
             "Do not invent proposals or concatenate every idea. No admissions is a valid result. Never edit code in this planning session.",
             "Complete the Workboard card with admitted IDs and reasons for deferred alternatives."
           ]
@@ -1150,6 +1150,7 @@ export class NativeAutonomyRuntime {
           ...entry.proposal,
           instructions: [
             "Implement this admitted scope in the managed worktree. The autocode_submit broker records the scoped commit; sandbox Git metadata is intentionally unavailable.",
+            "Follow the approved implementationPrompt plan. At a decision point, compare the recorded alternatives against current repository evidence; do not broaden scope or create unbounded fan-out.",
             "Call autocode_submit(workflowId, worktreePath) before workboard_complete. Do not push, merge, release, or deploy.",
             "Framework modifications require human review. Preserve unrelated work."
           ]
@@ -2135,7 +2136,7 @@ export class NativeAutonomyRuntime {
             verification: this.verificationForAgent(w.verification),
             proposal: w.proposal,
             instructions:
-              "Independently inspect the commit and acceptance criteria. Use autocode_review(workflowId, headSha, verdict, rationale, assessment), where assessment is {criteria:[{criterion,satisfied,evidence}],findings:[{blocking,description}]}. Address every acceptance criterion with concrete evidence. Then workboard_complete. Do not edit the candidate or deploy."
+              "Independently inspect the commit and acceptance criteria. Use autocode_review(workflowId, headSha, verdict, rationale, assessment), where assessment is {criteria:[{criterion,satisfied,evidence}],findings:[{blocking,description}]}. Address every acceptance criterion with concrete evidence and keep each finding to one concise line. Then workboard_complete. Do not edit the candidate or deploy."
           })
         )
         this.store.put("workflow", id, w)
