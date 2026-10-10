@@ -766,6 +766,8 @@ export async function executeDockerSandboxedCommand(
   options: {
     image: string
     pidsLimit?: number
+    memoryMb?: number
+    cpus?: number
     workspace: string
     cwd: string
     timeoutMs: number
@@ -778,6 +780,12 @@ export async function executeDockerSandboxedCommand(
   const pidsLimit = options.pidsLimit ?? 256
   if (!Number.isInteger(pidsLimit) || pidsLimit < 64 || pidsLimit > 4096)
     throw new Error("Docker verification pidsLimit must be an integer between 64 and 4096")
+  const memoryMb = options.memoryMb ?? 4096
+  if (!Number.isInteger(memoryMb) || memoryMb < 512 || memoryMb > 16_384)
+    throw new Error("Docker verification memoryMb must be an integer between 512 and 16384")
+  const cpus = options.cpus ?? 2
+  if (!Number.isFinite(cpus) || cpus < 0.25 || cpus > 8)
+    throw new Error("Docker verification cpus must be between 0.25 and 8")
   if (!options.workspace.startsWith("/") || options.workspace.includes(",")) throw new Error("Invalid source mount")
   if (options.cwd !== "/work" && !options.cwd.startsWith("/work/")) throw new Error("Invalid sandbox working directory")
   const name = `autocode-verification-${randomUUID()}`
@@ -802,8 +810,9 @@ export async function executeDockerSandboxedCommand(
         "--cap-drop=ALL",
         "--security-opt=no-new-privileges",
         `--pids-limit=${pidsLimit}`,
-        "--memory=4g",
-        "--cpus=2",
+        `--memory=${memoryMb}m`,
+        `--memory-swap=${memoryMb}m`,
+        `--cpus=${cpus}`,
         "--user",
         `${process.getuid!()}:${process.getgid!()}`,
         "--tmpfs",

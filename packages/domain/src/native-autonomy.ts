@@ -33,7 +33,18 @@ export type NativeVerificationSandbox = {
   sourceRoots?: string[]
   /** Operator-reviewed source exceptions pinned to immutable Git blobs. */
   reviewedSourceFiles?: Array<{ path: string; blobSha: string; reviewedBy: string }>
-} & ({ backend: "bubblewrap"; rootFilesystem: string } | { backend: "docker"; image: string; pidsLimit?: number })
+} & (
+  | { backend: "bubblewrap"; rootFilesystem: string }
+  | {
+      backend: "docker"
+      image: string
+      pidsLimit?: number
+      /** Hard container memory ceiling. Swap is disabled at the same ceiling. */
+      memoryMb?: number
+      /** Fractional Docker CPU quota. */
+      cpus?: number
+    }
+)
 
 export interface NativeAcceptanceBinding {
   criterion: string
@@ -78,6 +89,15 @@ export interface NativeAutonomyPolicy {
   reviewerAgentId: string
   workerConcurrency: number
   verificationConcurrency?: number
+  /** Host admission safeguards. Omitted values use conservative automatic defaults. */
+  resourceControls?: {
+    minAvailableMiB?: number
+    maxGatewayRssMiB?: number
+    workerReserveMiB?: number
+    maxMemoryPressurePercent?: number
+    maxCpuLoadPercent?: number
+    recoveryHoldSeconds?: number
+  }
   personasPerRound: number
   maxTasksPerRound: number
   dedupeWindowHours: number
@@ -160,6 +180,24 @@ function command(value: unknown): NativeCommand {
     ...(r.outputLimitBytes === undefined ? {} : { outputLimitBytes: integer(r.outputLimitBytes, 16777216, 67108864) }),
     ...(r.paths === undefined ? {} : { paths: strings(r.paths, "command paths").map(nativeRelativePath) })
   }
+}
+export function validateNativeResourceControls(value: unknown): NonNullable<NativeAutonomyPolicy["resourceControls"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid resource controls")
+  const controls = value as Record<string, unknown>
+  const result: NonNullable<NativeAutonomyPolicy["resourceControls"]> = {}
+  const bounded = (key: string, minimum: number, maximum: number) => {
+    const candidate = controls[key]
+    if (typeof candidate !== "number" || !Number.isInteger(candidate) || candidate < minimum || candidate > maximum)
+      throw new Error(`${key} must be an integer between ${minimum} and ${maximum}`)
+    return candidate
+  }
+  for (const key of ["minAvailableMiB", "maxGatewayRssMiB", "workerReserveMiB"] as const)
+    if (controls[key] !== undefined) result[key] = bounded(key, 64, 1_048_576)
+  if (controls.maxMemoryPressurePercent !== undefined)
+    result.maxMemoryPressurePercent = bounded("maxMemoryPressurePercent", 1, 100)
+  if (controls.maxCpuLoadPercent !== undefined) result.maxCpuLoadPercent = bounded("maxCpuLoadPercent", 25, 400)
+  if (controls.recoveryHoldSeconds !== undefined) result.recoveryHoldSeconds = bounded("recoveryHoldSeconds", 1, 3600)
+  return result
 }
 export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPolicy {
   const r = record(value)
@@ -287,6 +325,9 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     ...(r.verificationConcurrency === undefined
       ? {}
       : { verificationConcurrency: integer(r.verificationConcurrency, 0, 8) }),
+    ...(r.resourceControls === undefined
+      ? {}
+      : { resourceControls: validateNativeResourceControls(r.resourceControls) }),
     personasPerRound: integer(r.personasPerRound, 3, 10),
     maxTasksPerRound: integer(r.maxTasksPerRound, 6, 6),
     dedupeWindowHours: integer(r.dedupeWindowHours, 72, 720),
@@ -618,6 +659,16 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
     (r.backend !== "docker" || !Number.isInteger(r.pidsLimit) || Number(r.pidsLimit) < 64 || Number(r.pidsLimit) > 4096)
   )
     throw new Error("Docker verification pidsLimit must be an integer between 64 and 4096")
+  if (
+    r.memoryMb !== undefined &&
+    (r.backend !== "docker" || !Number.isInteger(r.memoryMb) || Number(r.memoryMb) < 512 || Number(r.memoryMb) > 16_384)
+  )
+    throw new Error("Docker verification memoryMb must be an integer between 512 and 16384")
+  if (
+    r.cpus !== undefined &&
+    (r.backend !== "docker" || !Number.isFinite(r.cpus) || Number(r.cpus) < 0.25 || Number(r.cpus) > 8)
+  )
+    throw new Error("Docker verification cpus must be between 0.25 and 8")
   const rootFilesystem = r.backend === "bubblewrap" ? text(r.rootFilesystem, "sandbox rootFilesystem") : ""
   if (r.backend === "bubblewrap" && (!isAbsolute(rootFilesystem) || normalize(rootFilesystem) === "/"))
     throw new Error("Sandbox needs a dedicated root filesystem")
@@ -657,7 +708,9 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
         image,
         inputFiles,
         ...reviewed,
-        ...(r.pidsLimit === undefined ? {} : { pidsLimit: r.pidsLimit as number })
+        ...(r.pidsLimit === undefined ? {} : { pidsLimit: r.pidsLimit as number }),
+        ...(r.memoryMb === undefined ? {} : { memoryMb: r.memoryMb as number }),
+        ...(r.cpus === undefined ? {} : { cpus: r.cpus as number })
       }
     : { backend: "bubblewrap", rootFilesystem, inputFiles, ...reviewed }
 }
