@@ -1794,3 +1794,11 @@ it("requires a fresh independent design review for routine candidates under stan
   delete w.candidate
   expect(s.runtime.quality.requiresDesign(w)).toBe(false)
 })
+
+it("requires independent plan review before routine implementation when configured", () => {
+  const s = setup()
+  s.runtime.policy.quality!.planReview = "all"
+  const w = { proposal: { quality: { risk: "routine" } } } as any
+  expect(s.runtime.quality.requiresDesign(w)).toBe(true)
+  expect(s.runtime.quality.designApproved(w)).toBe(false)
+})

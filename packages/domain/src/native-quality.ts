@@ -6,6 +6,8 @@ export interface NativeQualityPolicy {
   sessionSeconds: number
   admissionBudget?: NativeSelectionBudget
   explorationSlots?: number
+  /** Require independent review of the implementation plan before coding starts. */
+  planReview?: "high-risk" | "all"
   highRiskPaths: string[]
 }
 export interface NativeProposalQuality {
@@ -91,8 +93,11 @@ export function validateNativeQualityPolicy(value: any): NativeQualityPolicy {
   const explorationSlots = value.explorationSlots ?? 0
   if (!Number.isSafeInteger(explorationSlots) || explorationSlots < 0 || explorationSlots > 100)
     throw new Error("Invalid exploration slots")
+  const planReview = value.planReview ?? "high-risk"
+  if (!["high-risk", "all"].includes(planReview)) throw new Error("Invalid plan review policy")
   return {
     explorationSlots,
+    planReview,
     skillPath,
     sessionSeconds,
     admissionBudget,
