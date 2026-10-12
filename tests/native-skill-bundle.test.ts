@@ -3,9 +3,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 import { afterEach, describe, expect, it } from "vitest"
+import { nativeGovernanceDigest } from "../packages/core-runtime/src/native/governance.js"
+import { nativeSkillBindingStatus } from "../packages/core-runtime/src/native/policy-refresh.js"
 import { loadNativeSkillText, NATIVE_SKILL_MAX_BYTES } from "../packages/core-runtime/src/native/skill-bundle.js"
 import {
   bootstrapNativeSkill,
+  nativeSkillPolicyDigest,
   registerNativeSkill,
   resolveNativeSkill
 } from "../packages/core-runtime/src/native/skills.js"
@@ -109,5 +112,26 @@ describe("composed native skill snapshots", () => {
     expect(text).toContain("without an operator present")
     expect(text).not.toContain("daily cap")
     expect(text).not.toContain("token budget")
+  })
+  it("binds policy activation to every composed resource byte", () => {
+    const f = fixture()
+    f.manifest(["resources/repair.md"])
+    const policy: any = {
+      boardId: "board",
+      quality: { skillPath: f.path },
+      verification: [],
+      plannerAgentId: "planner",
+      coderAgentId: "coder",
+      reviewerAgentId: "reviewer"
+    }
+    const active = {
+      digest: nativeGovernanceDigest(loadNativeSkillText(f.path)),
+      policyDigest: nativeSkillPolicyDigest(policy),
+      contractVersion: 1
+    }
+    const runtime: any = { policy, store: { get: () => active } }
+    expect(nativeSkillBindingStatus(runtime)).toEqual({ ok: true, required: true })
+    writeFileSync(join(f.root, "resources/repair.md"), "Changed supporting instructions.")
+    expect(nativeSkillBindingStatus(runtime)).toEqual({ ok: false, required: true })
   })
 })

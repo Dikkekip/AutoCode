@@ -11,7 +11,8 @@ planner chooses among persona proposals; it does not replace their viewpoints.
 
 Apply the bundled recovery, reflection, minimal-fix, and proof-closure rules to
 every proposal. They constrain *how* work is attempted, not how much money or
-tokens may be spent. Host capacity and parallelism remain runtime policy.
+tokens may be spent. This bundle contains no token or spend limiter. Host
+capacity and parallelism remain runtime policy.
 
 ## Native handoff
 
