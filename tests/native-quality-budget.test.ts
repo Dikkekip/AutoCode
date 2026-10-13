@@ -6,6 +6,11 @@ const quality = { skillPath: "/skills/native-investigation/SKILL.md" }
 describe("finite native investigation session budget", () => {
   it("retains the 300-second default when no budget is supplied", () => {
     expect(validateNativeQualityPolicy(quality).sessionSeconds).toBe(300)
+    expect(validateNativeQualityPolicy(quality).planReview).toBe("high-risk")
+  })
+
+  it.each(["high-risk", "all"] as const)("accepts %s plan review", (planReview) => {
+    expect(validateNativeQualityPolicy({ ...quality, planReview }).planReview).toBe(planReview)
   })
 
   it.each([30, 300, 301, 599, 600])("accepts an explicit %i-second budget", (sessionSeconds) => {
@@ -44,5 +49,9 @@ describe("finite native investigation session budget", () => {
     { explorationSlots: 101 }
   ])("retains other quality validation guards with the extended budget", (invalid) => {
     expect(() => validateNativeQualityPolicy({ ...quality, sessionSeconds: 600, ...invalid })).toThrow()
+  })
+
+  it("rejects an unknown plan review policy", () => {
+    expect(() => validateNativeQualityPolicy({ ...quality, planReview: "sometimes" })).toThrow(/plan review policy/)
   })
 })

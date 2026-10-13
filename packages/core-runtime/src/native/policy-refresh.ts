@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync } from "node:fs"
+import { realpathSync } from "node:fs"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { assertExecutionOwnership } from "@openclaw/os-adapters"
@@ -9,6 +9,7 @@ import { nativeGovernanceDigest, requireNativeHuman } from "./governance.js"
 import { nativeRepairSupersessionClosed } from "./repair-intent.js"
 import type { NativeAutonomyRuntime } from "./runtime.js"
 import { nativeRuntimeGeneration } from "./runtime-lifetime.js"
+import { loadNativeSkillText } from "./skill-bundle.js"
 import { NATIVE_SKILL_CONTRACT_VERSION, nativeSkillPolicyDigest } from "./skills.js"
 
 export interface NativePolicyRefreshPlan {
@@ -52,7 +53,7 @@ function candidate(runtime: NativeAutonomyRuntime, file: string): NativeAutonomy
 }
 export function nativeSkillBindingStatus(runtime: NativeAutonomyRuntime, policy = runtime.policy) {
   if (!policy.quality) return { ok: true, required: false }
-  const digest = nativeGovernanceDigest(readFileSync(policy.quality.skillPath, "utf8"))
+  const digest = nativeGovernanceDigest(loadNativeSkillText(policy.quality.skillPath))
   const active = runtime.store.get<{ digest: string; policyDigest: string; contractVersion: number }>(
     "active-skill",
     policy.boardId

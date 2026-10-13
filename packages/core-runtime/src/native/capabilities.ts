@@ -61,7 +61,7 @@ function validateEvidence(value: NativeCapabilityEvidence) {
   )
     throw new Error("Invalid capability measurements")
 }
-function verifyArtifact(value: NativeCapabilityEvidence) {
+export function verifyNativeCapabilityArtifact(value: NativeCapabilityEvidence) {
   validateEvidence(value)
   if (
     !isAbsolute(value.artifact.path) ||
@@ -86,7 +86,7 @@ export function registerNativeCapabilityEvidence(
   const path = relative(realpathSync(artifactRoot), realpathSync(value.artifact.path))
   if (!isAbsolute(artifactRoot) || path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path))
     throw new Error("Capability artifact outside protected root")
-  verifyArtifact(value)
+  verifyNativeCapabilityArtifact(value)
   const id = digest(JSON.stringify(value))
   if (!store.get("capability-evidence", id))
     store.commit([{ kind: "capability-evidence", id, value, expectedVersion: 0 }], {
@@ -171,7 +171,7 @@ export function assertConfiguredNativeCapabilities(
       value = role && store.get<NativeCapabilityEvidence>("capability-evidence", role.evidenceId)
     if (!value || digest(JSON.stringify(value)) !== role.evidenceId || !models[agentId])
       throw new Error(`Live model evidence missing for configured role ${agentId}`)
-    verifyArtifact(value)
+    verifyNativeCapabilityArtifact(value)
     const result = nativeCapabilityEligibility(
       value,
       role.requirements,

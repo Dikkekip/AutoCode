@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "resources": [
+    "error-recovery.md",
+    "reflection.md",
+    "minimal-fix.md",
+    "proof-closure.md"
+  ]
+}
