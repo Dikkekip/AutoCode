@@ -191,6 +191,7 @@ it.each([
   "2026.9.1",
   "2026.9.2",
   "2026.9.6",
+  "2026.10.2",
   "2026.9.7",
   "2026.10.0"
 ])("checks the reviewed gateway release %s", async (version) => {
@@ -200,7 +201,7 @@ it.each([
   }
   const report = await nativeDoctor({ ...policy, repository: "/tmp" }, gateway, { platform: "darwin" })
   expect(report.checks.find((check) => check.name === "gateway-version")?.ok).toBe(
-    ["2026.9.1", "2026.9.2", "2026.9.6"].includes(version)
+    ["2026.9.1", "2026.9.2", "2026.9.6", "2026.10.2"].includes(version)
   )
 })
 

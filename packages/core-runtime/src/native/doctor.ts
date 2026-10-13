@@ -33,9 +33,9 @@ export async function nativeDoctor(
     const versioned = gateway as NativeGateway & { version?: () => Promise<string> }
     if (!versioned.version) throw new Error("Native Gateway version unavailable; use the supported CLI transport")
     const version = await versioned.version()
-    if (!["2026.9.1", "2026.9.2", "2026.9.6"].includes(version))
+    if (!["2026.9.1", "2026.9.2", "2026.9.6", "2026.10.2"].includes(version))
       throw new Error(
-        `Unsupported OpenClaw version ${version}; reviewed contract supports 2026.9.1, 2026.9.2 and 2026.9.6`
+        `Unsupported OpenClaw version ${version}; reviewed contract supports 2026.9.1, 2026.9.2, 2026.9.6 and 2026.10.2`
       )
     return `OpenClaw ${version}; runtime contract v${NATIVE_GATEWAY_CONTRACT_VERSION}`
   })
