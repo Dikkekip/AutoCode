@@ -46,7 +46,7 @@ export async function nativeDoctor(
       throw new Error("Native Workboard plugin is disabled; enable it and repair the plugin registry before restarting")
     if (Array.isArray(plugins?.deny) && plugins.deny.includes("workboard"))
       throw new Error("Native Workboard plugin is denied by plugin policy")
-    if (Array.isArray(plugins?.allow) && !plugins.allow.includes("workboard"))
+    if (Array.isArray(plugins?.allow) && plugins.allow.length > 0 && !plugins.allow.includes("workboard"))
       throw new Error("Native Workboard plugin is missing from the configured plugin allowlist")
     const result = nativeObject(await gateway.request("workboard.boards.list", {}), "Workboard boards.list")
     if (!Array.isArray(result.boards) || result.boards.some((b: any) => !b || typeof b.id !== "string" || !b.id))

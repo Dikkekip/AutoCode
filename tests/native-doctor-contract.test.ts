@@ -59,6 +59,22 @@ function roles() {
     }
   }
 }
+
+it("keeps an empty plugin allowlist unrestricted like the native plugin owner", async () => {
+  const config = { ...roles(), plugins: { allow: [], entries: { workboard: { enabled: true } } } }
+  const gateway = {
+    request: async <T = any>(method: string) =>
+      (method === "config.get"
+        ? { config }
+        : method === "workboard.boards.list"
+          ? { boards: [{ id: policy.boardId }] }
+          : method === "workboard.cards.list"
+            ? { cards: [] }
+            : {}) as T
+  }
+  const report = await nativeDoctor({ ...policy, repository: "/tmp" }, gateway, { platform: "darwin" })
+  expect(report.checks.find((c) => c.name === "workboard")?.ok).toBe(true)
+})
 const researchPolicy = {
   ...policy,
   personas: [{ personaId: "designer", investigationAgentId: "research-designer" }],

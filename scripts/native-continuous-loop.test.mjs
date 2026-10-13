@@ -28,7 +28,7 @@ function fixture(t) {
     board: "demo",
     statePath: join(directory, "loop.json"),
     apply: true,
-    now: 1_000_000,
+    clock: () => 1_000_000,
     command: (_program, args) => {
       const method = args[2]
       calls.push(method)
@@ -73,9 +73,9 @@ test("preview checks readiness without invoking any mutation", (t) => {
 test("advances work every tick and bounds idle discovery cadence", (t) => {
   const f = fixture(t)
   assert.deepEqual(run(f.options), { action: "discovered", advanced: 1, created: 1 })
-  assert.deepEqual(run({ ...f.options, now: 1_060_000 }), { action: "reconciled", advanced: 1 })
+  assert.deepEqual(run({ ...f.options, clock: () => 1_060_000 }), { action: "reconciled", advanced: 1 })
   assert.equal(f.calls.filter((m) => m === "autocode.discover").length, 1)
-  assert.equal(run({ ...f.options, now: 2_800_000 }).action, "discovered")
+  assert.equal(run({ ...f.options, clock: () => 2_800_000 }).action, "discovered")
 })
 
 test("lost discovery response preserves admission time and does not repeat the round", (t) => {
@@ -83,7 +83,24 @@ test("lost discovery response preserves admission time and does not repeat the r
   f.responses["autocode.discover"] = new Error("timeout after acceptance")
   assert.throws(() => run(f.options), /timeout after acceptance/)
   assert.equal(JSON.parse(readFileSync(f.options.statePath, "utf8")).lastDiscoveryAt, 1_000_000)
-  assert.equal(run({ ...f.options, now: 1_060_000 }).action, "reconciled")
+  assert.equal(run({ ...f.options, clock: () => 1_060_000 }).action, "reconciled")
+  assert.equal(f.calls.filter((m) => m === "autocode.discover").length, 1)
+})
+
+test("long reconciliation checkpoints discovery at admission, including a lost response", (t) => {
+  const f = fixture(t)
+  let now = 1_000_000
+  f.options.clock = () => now
+  f.responses["autocode.reconcile"] = () => {
+    now += 60 * 60_000
+    return { advanced: 1 }
+  }
+  f.responses["autocode.discover"] = new Error("timeout after acceptance")
+  assert.throws(() => run(f.options), /timeout after acceptance/)
+  assert.equal(JSON.parse(readFileSync(f.options.statePath, "utf8")).lastDiscoveryAt, now)
+  f.responses["autocode.reconcile"] = { advanced: 1 }
+  now += 60_000
+  assert.equal(run(f.options).action, "reconciled")
   assert.equal(f.calls.filter((m) => m === "autocode.discover").length, 1)
 })
 
@@ -156,5 +173,5 @@ test("idle resource pressure defers discovery without consuming its cadence chec
   assert.equal(run(f.options).action, "resource-deferred")
   assert.equal(f.calls.includes("autocode.discover"), false)
   f.responses["autocode.reconcile"] = { advanced: 1 }
-  assert.equal(run({ ...f.options, now: 1_060_000 }).action, "discovered")
+  assert.equal(run({ ...f.options, clock: () => 1_060_000 }).action, "discovered")
 })

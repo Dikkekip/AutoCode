@@ -10,7 +10,7 @@ function invoke(program, args, timeout) {
 
 // One tick uses the existing native execution owner; it never creates a second
 // dispatcher, rewrites evidence, resumes operator pauses, or restarts workers.
-export function run({ openclaw, board, statePath, apply = false, now = Date.now(), command = invoke }) {
+export function run({ openclaw, board, statePath, apply = false, clock = Date.now, command = invoke }) {
   const previous = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { version: 1, board }
   if (previous.version !== 1 || previous.board !== board) throw new Error("Loop state binding mismatch")
   if (
@@ -101,6 +101,7 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
   )
     throw new Error("Loop capacity evidence incomplete")
   const busy = (after.counts.ready ?? 0) > 0 || (after.counts.running ?? 0) > 0
+  const now = clock()
   const discoveryDue = !previous.lastDiscoveryAt || now - previous.lastDiscoveryAt >= 30 * 60_000
   if (busy || !discoveryDue) return { action: "reconciled", advanced: reconciled.advanced ?? 0, ...evidence }
   // Persist before discovery so a lost response does not generate another round.
