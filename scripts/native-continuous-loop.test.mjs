@@ -106,6 +106,30 @@ test("persisted effect records do not starve reconciliation of unrelated work", 
   assert.equal(f.calls.includes("autocode.discover"), false)
 })
 
+test("reports actual dispatch deferral while keeping private diagnostics out of tick logs", (t) => {
+  const f = fixture(t)
+  f.status.counts = { ready: 1 }
+  f.responses["autocode.reconcile"] = {
+    advanced: 0,
+    dispatch: {
+      startedCount: 0,
+      deferredCount: 1,
+      deferred: [{ cardId: "card", reason: "worktree-capacity", error: "/private/path" }],
+      resourcePressure: { reasons: ["gateway-memory", "/private/telemetry"] }
+    }
+  }
+  assert.deepEqual(run(f.options), {
+    action: "reconciled",
+    advanced: 0,
+    dispatch: {
+      startedCount: 0,
+      deferredCount: 1,
+      resourceReasons: ["gateway-memory"],
+      deferred: [{ cardId: "card", reason: "worktree-capacity" }]
+    }
+  })
+})
+
 test("a pause or new accepted work during reconciliation blocks discovery", (t) => {
   for (const change of [
     () => ({ control: { paused: true, frozen: false } }),

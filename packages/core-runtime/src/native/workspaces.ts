@@ -1,4 +1,4 @@
-import { realpathSync, statfsSync } from "node:fs"
+import { realpathSync } from "node:fs"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
@@ -165,25 +165,8 @@ export class NativeWorkspaceGateway implements NativeGateway {
         }
         if (busyPaths.has(legacyPath)) continue
       }
-      const previousComment = card.metadata?.comments?.at(-1)?.body ?? ""
-      const diskHold =
-        /^Dispatcher could not start worker: Insufficient disk space near (.+) for worktree allocation: .+; approximately ([\d.]+) (GiB|MiB) required including safety reserve\./.exec(
-          previousComment
-        )
-      if (workspace.kind === "worktree" && diskHold && !card.runId && !card.sessionKey && !card.execution) {
-        let available = 0
-        try {
-          const volume = statfsSync(diskHold[1]!)
-          available = volume.bavail * volume.bsize
-        } catch {
-          /* Unavailable capacity stays deferred. */
-        }
-        const minimum = Number(diskHold[2]) * (diskHold[3] === "GiB" ? 1024 ** 3 : 1024 ** 2) + 1024 ** 3
-        if (!Number.isFinite(minimum) || available < minimum) {
-          deferred.push({ cardId: card.id, reason: "worktree-capacity" })
-          continue
-        }
-      }
+      // Workboard owns current allocation requirements. A previous diagnostic
+      // may refer to retired setup hooks or a different source size.
       const previousFailureCount = card.metadata?.failureCount ?? 0
       const previousRunId = card.runId,
         previousSessionKey = card.sessionKey

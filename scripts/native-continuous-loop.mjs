@@ -59,9 +59,40 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
   // Reconcile includes bounded dispatch and advances verification/review/repair.
   // A timeout has unknown acceptance: do not issue another mutation in this tick.
   const reconciled = call("autocode.reconcile", 7_200_000)
+  const dispatch = reconciled.dispatch
+  const evidence = dispatch
+    ? {
+        dispatch: {
+          startedCount: Number.isSafeInteger(dispatch.startedCount) ? dispatch.startedCount : 0,
+          deferredCount: Number.isSafeInteger(dispatch.deferredCount) ? dispatch.deferredCount : 0,
+          resourceReasons: Array.isArray(dispatch.resourcePressure?.reasons)
+            ? dispatch.resourcePressure.reasons.filter((reason) =>
+                [
+                  "host-memory",
+                  "gateway-memory",
+                  "memory-stall",
+                  "cpu-load",
+                  "recovery-hold",
+                  "telemetry-unavailable"
+                ].includes(reason)
+              )
+            : [],
+          deferred: Array.isArray(dispatch.deferred)
+            ? dispatch.deferred
+                .slice(0, 32)
+                .filter(
+                  (item) =>
+                    /^[A-Za-z0-9:_-]{1,200}$/.test(item?.cardId ?? "") &&
+                    ["worktree-capacity", "workspace-unavailable"].includes(item?.reason)
+                )
+                .map(({ cardId, reason }) => ({ cardId, reason }))
+            : []
+        }
+      }
+    : {}
   const after = call("autocode.status")
-  if (!validate(after)) return { action: "preserve-operator-control", advanced: reconciled.advanced ?? 0 }
-  if (after.activeLeases.length) return { action: "wait-for-native-operation" }
+  if (!validate(after)) return { action: "preserve-operator-control", advanced: reconciled.advanced ?? 0, ...evidence }
+  if (after.activeLeases.length) return { action: "wait-for-native-operation", ...evidence }
   if (
     !after.counts ||
     ["ready", "running"].some((key) => !Number.isSafeInteger(after.counts[key] ?? 0) || (after.counts[key] ?? 0) < 0)
@@ -69,7 +100,7 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
     throw new Error("Loop capacity evidence incomplete")
   const busy = (after.counts.ready ?? 0) > 0 || (after.counts.running ?? 0) > 0
   const discoveryDue = !previous.lastDiscoveryAt || now - previous.lastDiscoveryAt >= 30 * 60_000
-  if (busy || !discoveryDue) return { action: "reconciled", advanced: reconciled.advanced ?? 0 }
+  if (busy || !discoveryDue) return { action: "reconciled", advanced: reconciled.advanced ?? 0, ...evidence }
   // Persist before discovery so a lost response does not generate another round.
   mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 })
   const temporary = `${statePath}.${process.pid}.tmp`
@@ -79,7 +110,12 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
   })
   renameSync(temporary, statePath)
   const discovery = call("autocode.discover", 7_200_000)
-  return { action: "discovered", advanced: reconciled.advanced ?? 0, created: discovery.created?.length ?? 0 }
+  return {
+    action: "discovered",
+    advanced: reconciled.advanced ?? 0,
+    created: discovery.created?.length ?? 0,
+    ...evidence
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
