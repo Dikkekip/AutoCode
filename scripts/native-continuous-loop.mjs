@@ -93,6 +93,8 @@ export function run({ openclaw, board, statePath, apply = false, now = Date.now(
   const after = call("autocode.status")
   if (!validate(after)) return { action: "preserve-operator-control", advanced: reconciled.advanced ?? 0, ...evidence }
   if (after.activeLeases.length) return { action: "wait-for-native-operation", ...evidence }
+  if (dispatch?.resourcePressure?.allowed === false || after.resourcePressure?.allowed === false)
+    return { action: "resource-deferred", advanced: reconciled.advanced ?? 0, ...evidence }
   if (
     !after.counts ||
     ["ready", "running"].some((key) => !Number.isSafeInteger(after.counts[key] ?? 0) || (after.counts[key] ?? 0) < 0)

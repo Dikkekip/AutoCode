@@ -146,3 +146,15 @@ test("a pause or new accepted work during reconciliation blocks discovery", (t) 
     assert.equal(f.calls.includes("autocode.discover"), false)
   }
 })
+
+test("idle resource pressure defers discovery without consuming its cadence checkpoint", (t) => {
+  const f = fixture(t)
+  f.responses["autocode.reconcile"] = {
+    advanced: 0,
+    dispatch: { startedCount: 0, deferredCount: 0, resourcePressure: { allowed: false, reasons: ["cpu-load"] } }
+  }
+  assert.equal(run(f.options).action, "resource-deferred")
+  assert.equal(f.calls.includes("autocode.discover"), false)
+  f.responses["autocode.reconcile"] = { advanced: 1 }
+  assert.equal(run({ ...f.options, now: 1_060_000 }).action, "discovered")
+})
