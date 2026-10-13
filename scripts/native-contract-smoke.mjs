@@ -9,34 +9,45 @@ import { pathToFileURL } from "node:url"
 
 const root = process.argv[2]
 if (!root) throw new Error("Pass the installed OpenClaw package root")
+const scratch = mkdtempSync(resolve(tmpdir(), "native-workboard-contract-"))
+const originalStateDirectory = process.env.OPENCLAW_STATE_DIR
+process.env.OPENCLAW_STATE_DIR = scratch
 const entry = resolve(root, "dist/extensions/workboard/index.js")
 const text = readFileSync(entry, "utf8")
-const match = text.match(/import \{([^}]*\bWorkboardStore\b[^}]*)\} from "([^"]+)"/)
-if (!match) throw new Error("Installed Workboard store export not found")
-const alias = match[1].match(/(\w+) as WorkboardStore/)[1]
-const module = await import(pathToFileURL(resolve(entry, "..", match[2])).href)
-const runtimeEntry = resolve(entry, "..", match[2])
-const runtimeText = readFileSync(runtimeEntry, "utf8")
-const sqliteImport = runtimeText.match(/import \{([^}]*\bcreateWorkboardSqliteStores\b[^}]*)\} from "([^"]+)"/)
-if (!sqliteImport) throw new Error("Installed Workboard SQLite factory export not found")
-const sqliteAlias = sqliteImport[1].match(/(\w+) as createWorkboardSqliteStores/)[1]
-const sqliteModule = await import(pathToFileURL(resolve(runtimeEntry, "..", sqliteImport[2])).href)
-const scratch = mkdtempSync(resolve(tmpdir(), "native-workboard-contract-"))
-const stores = sqliteModule[sqliteAlias]({
-  dbPath: resolve(scratch, "workboard.sqlite"),
-  workerModuleUrl: pathToFileURL(resolve(entry, "..", "src/sqlite-store.worker.js"))
-})
-const store = new module[alias](stores.cards, stores)
+async function installedExport(name) {
+  for (const match of text.matchAll(/import \{([^}]+)\} from "([^"]+)"/g)) {
+    const binding = match[1]
+      .split(",")
+      .map((value) => value.trim())
+      .find((value) => value === name || value.endsWith(` as ${name}`))
+    if (!binding) continue
+    const alias = binding.split(/\s+as\s+/)[0]
+    const module = await import(pathToFileURL(resolve(entry, "..", match[2])).href)
+    assert.equal(typeof module[alias], "function", `Installed ${name} export unavailable`)
+    return module[alias]
+  }
+  throw new Error(`Installed ${name} export not found`)
+}
+const WorkboardStore = await installedExport("WorkboardStore")
+const registerGatewayMethods = await installedExport("registerWorkboardGatewayMethods")
+const store = WorkboardStore.openSqlite(pathToFileURL(resolve(entry, "..", "src/sqlite-store.worker.js")))
 try {
-  await stores.ready
   const methods = new Map()
-  module.t({ api: { registerGatewayMethod: (name, handler) => methods.set(name, handler) }, store })
+  const config = { agents: { defaults: { workspace: scratch } } }
+  registerGatewayMethods({
+    api: {
+      runtime: { config: { current: () => config } },
+      registerGatewayMethod: (name, handler, options) => methods.set(name, { handler, options })
+    },
+    store
+  })
   async function call(method, params) {
     return await new Promise((resolve, reject) => {
       Promise.resolve(
-        methods.get(method)({
+        methods.get(method).handler({
           params,
-          context: {},
+          client: { connect: { role: "operator", scopes: ["operator.admin", "operator.read", "operator.write"] } },
+          context: { getRuntimeConfig: () => config },
           respond: (ok, value, error) => (ok ? resolve(value) : reject(new Error(JSON.stringify(error))))
         })
       ).catch(reject)
@@ -158,5 +169,7 @@ try {
   )
 } finally {
   await store.close()
+  if (originalStateDirectory === undefined) delete process.env.OPENCLAW_STATE_DIR
+  else process.env.OPENCLAW_STATE_DIR = originalStateDirectory
   rmSync(scratch, { recursive: true, force: true })
 }
