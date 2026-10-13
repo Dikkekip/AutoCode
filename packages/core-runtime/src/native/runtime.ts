@@ -2185,7 +2185,7 @@ export class NativeAutonomyRuntime {
       startedCount: number
       startedCardIds: string[]
       deferredCount: number
-      deferred: Array<{ cardId: string; reason: "worktree-capacity" }>
+      deferred: Array<{ cardId: string; reason: "worktree-capacity" | "workspace-unavailable" }>
       failedCount?: number
       resourcePressure?: ReturnType<NativeResourceGuard["inspect"]>
       failures?: Array<{ cardId: string; error: string }>
@@ -2338,8 +2338,14 @@ export class NativeAutonomyRuntime {
               : []
             const deferred = Array.isArray(result.deferred)
               ? result.deferred
-                  .filter((item: any) => identifier(item?.cardId) && item.reason === "worktree-capacity")
-                  .map((item: any) => ({ cardId: item.cardId as string, reason: "worktree-capacity" as const }))
+                  .filter(
+                    (item: any) =>
+                      identifier(item?.cardId) && ["worktree-capacity", "workspace-unavailable"].includes(item.reason)
+                  )
+                  .map((item: any) => ({
+                    cardId: item.cardId as string,
+                    reason: item.reason as "worktree-capacity" | "workspace-unavailable"
+                  }))
               : []
             const failures = Array.isArray(result.startFailures)
               ? result.startFailures

@@ -167,6 +167,51 @@ it("does not rebind a coder with active work on any board", async () => {
   expect(s.worktrees.create).not.toHaveBeenCalled()
   expect(s.calls.some(([m]) => m === "config.patch" || m === "workboard.cards.start")).toBe(false)
 })
+it.each(["worktree", "dir"])("isolates an unavailable running workspace from dispatch: %s", async (kind) => {
+  const s = setup()
+  if (kind === "dir") s.card.metadata.automation.workspace = { kind, path: s.root } as any
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.list" && !params.boardId)
+      return {
+        cards: [
+          {
+            id: "active",
+            agentId: "coder-2",
+            status: "running",
+            metadata: { automation: { workspace: { path: join(s.root, "missing-active-workspace") } } }
+          }
+        ]
+      } as any
+    return original(method, params)
+  })
+  const result = await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+  expect(result.startedCardIds ?? []).toEqual(kind === "worktree" ? ["card"] : [])
+  expect(result.deferred ?? []).toEqual(kind === "dir" ? [{ cardId: "card", reason: "workspace-unavailable" }] : [])
+  expect(s.calls.filter(([method]) => method === "workboard.cards.start")).toEqual(
+    kind === "worktree" ? [["workboard.cards.start", { id: "card" }]] : []
+  )
+})
+it("defers a missing preserved candidate without starving an isolated ready card", async () => {
+  const s = setup()
+  const missing = {
+    ...s.card,
+    id: "missing",
+    agentId: "coder-2",
+    metadata: { automation: { workspace: { kind: "dir", path: join(s.root, "missing-candidate") } } }
+  }
+  const original = s.gateway.request.getMockImplementation()!
+  s.gateway.request.mockImplementation(async (method: string, params: any) => {
+    if (method === "workboard.cards.list") return { cards: params.boardId ? [missing, s.card] : [] } as any
+    return original(method, params)
+  })
+  const result = await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+  expect(result.startedCardIds).toEqual(["card"])
+  expect(result.deferred).toEqual([{ cardId: "missing", reason: "workspace-unavailable" }])
+  expect(s.calls.filter(([method]) => method === "workboard.cards.start")).toEqual([
+    ["workboard.cards.start", { id: "card" }]
+  ])
+})
 it("leaves scratch investigation workspaces under Workboard ownership", async () => {
   const s = setup()
   s.card.metadata.automation.workspace.kind = "scratch"

@@ -204,16 +204,17 @@ it("keeps dispatch-only reconciliation paused and never advances candidate gates
 })
 
 it.each([
-  false,
-  true
-])("reports native dispatch starts and capacity deferrals without advancing workflows: %s", async (deferred) => {
+  null,
+  "worktree-capacity",
+  "workspace-unavailable"
+])("reports native dispatch starts and safe deferrals without advancing workflows: %s", async (deferred) => {
   const s = fixture()
   s.gateway.request = (async (method: string) =>
     method === "workboard.cards.dispatchWithOptions"
       ? {
           started: [{ privatePath: "/host/private" }],
           startedCardIds: ["research"],
-          deferred: deferred ? [{ cardId: "coder-card", reason: "worktree-capacity", message: "/host/private" }] : []
+          deferred: deferred ? [{ cardId: "coder-card", reason: deferred, message: "/host/private" }] : []
         }
       : { cards: [] }) as any
   expect(await s.runtime.reconcile({ dispatchOnly: true })).toEqual({
@@ -222,7 +223,7 @@ it.each([
       startedCount: 1,
       startedCardIds: ["research"],
       deferredCount: deferred ? 1 : 0,
-      deferred: deferred ? [{ cardId: "coder-card", reason: "worktree-capacity" }] : []
+      deferred: deferred ? [{ cardId: "coder-card", reason: deferred }] : []
     }
   })
 })
