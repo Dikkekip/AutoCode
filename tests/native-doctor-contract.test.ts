@@ -17,6 +17,28 @@ const policy = {
   repositoryKind: "framework",
   boardId: "app"
 } as unknown as NativeAutonomyPolicy
+
+it.each([
+  { entries: { workboard: { enabled: false } } },
+  { enabled: false },
+  { allow: ["autocode"] },
+  { deny: ["workboard"] }
+])("reports disabled Workboard before invoking unavailable board handlers", async (plugins) => {
+  const calls: string[] = []
+  const gateway = {
+    request: async <T = any>(method: string) => {
+      calls.push(method)
+      return (method === "config.get" ? { config: { ...roles(), plugins } } : {}) as T
+    }
+  }
+  const report = await nativeDoctor({ ...policy, repository: "/tmp" }, gateway, { platform: "darwin" })
+  const check = report.checks.find((c) => c.name === "workboard")
+  expect(check?.ok).toBe(false)
+  expect(check?.detail).toContain("Workboard plugin")
+  expect(calls).not.toContain("workboard.boards.list")
+  expect(calls).not.toContain("workboard.cards.list")
+})
+
 function roles() {
   const completion = ["workboard_complete", "workboard_heartbeat", "workboard_block"]
   return {
@@ -183,7 +205,7 @@ it("reports malformed reads and unsupported supervisor without mutating Gateway 
   for (const name of ["workboard", "agents", "automation-contract", "legacy-timers"])
     expect(report.checks.find((c) => c.name === name)?.ok).toBe(false)
   expect(report.checks.find((c) => c.name === "legacy-timers")?.detail).toContain("systemctl was not invoked")
-  expect(calls).toEqual(["workboard.boards.list", "agents.list", "config.get", "cron.list"])
+  expect(calls).toEqual(["config.get", "workboard.boards.list", "agents.list", "config.get", "cron.list"])
 })
 
 // These releases pass scripts/native-contract-smoke.mjs against their installed Workboard contract.

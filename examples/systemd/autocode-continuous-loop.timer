@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep native AutoCode progressing
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=60s
+Unit=autocode-continuous-loop.service
+
+[Install]
+WantedBy=timers.target
+

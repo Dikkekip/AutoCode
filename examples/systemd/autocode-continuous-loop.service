@@ -1,0 +1,10 @@
+[Unit]
+Description=Advance the native AutoCode pipeline
+After=openclaw-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /path/to/AutoCode/scripts/native-continuous-loop.mjs --openclaw /path/to/openclaw --board your-board --state %h/.openclaw/native-continuous-loop.json --apply
+TimeoutStartSec=15000
+UMask=0077
+
