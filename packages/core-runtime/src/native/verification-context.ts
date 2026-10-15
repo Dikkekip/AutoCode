@@ -3,7 +3,12 @@ import { execFile } from "node:child_process"
 import { readFile, realpath, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import { promisify } from "node:util"
-import { type NativeAutonomyPolicy, type NativeVerificationSandbox, nativeVerificationRuleId } from "@openclaw/domain"
+import {
+  type NativeAutonomyPolicy,
+  type NativeVerificationSandbox,
+  nativeVerificationRuleId,
+  validateNativeAutonomyPolicy
+} from "@openclaw/domain"
 import { nativeContentDigest } from "./provenance.js"
 import { redactNativeSourceText } from "./source-redaction.js"
 import { nativeVerificationCommands } from "./verification.js"
@@ -59,11 +64,15 @@ export async function readNativeVerifierDefinition(sandbox: NativeVerificationSa
 
 export async function nativeVerificationCommandContext(
   policy: NativeAutonomyPolicy,
-  files: string[],
+  files: string[] | null,
   readDefinition = readNativeVerifierDefinition
 ) {
   const commands = []
-  for (const command of nativeVerificationCommands(policy, files)) {
+  // Before implementation, show every standing rule with its path conditions.
+  // This is policy context, not a claim about the eventual candidate selection.
+  const selected =
+    files === null ? validateNativeAutonomyPolicy(policy).verification : nativeVerificationCommands(policy, files)
+  for (const command of selected) {
     let definition: { path: string; content?: string; sha256?: string; complete: boolean; reason?: string }
     try {
       if (!policy.verificationSandbox) throw new Error("No toolchain")

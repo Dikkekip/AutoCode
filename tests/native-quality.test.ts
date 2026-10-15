@@ -1813,3 +1813,29 @@ it("requires independent plan review before routine implementation when configur
   expect(s.runtime.quality.requiresDesign(w)).toBe(true)
   expect(s.runtime.quality.designApproved(w)).toBe(false)
 })
+
+it("gives pre-implementation design review standing verification evidence without inventing a candidate", async () => {
+  const s = setup()
+  const c = await prepare(s, proposal("high"))
+  const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Review the proposed design first")
+  await s.runtime.reconcile()
+  const w = s.runtime.requireWorkflow(workflowId)
+  const card = s.gateway.cards.find((card) => card.id === w.designCardId)
+  const pointer = JSON.parse(card.notes)
+  const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+  expect(notes.committedDiff).toBeNull()
+  expect(notes.plannedVerification).toMatchObject({
+    selectionBasis: "standing-policy-before-candidate",
+    scope: ["src/view.ts"],
+    candidateSelectionPending: true,
+    executionEvidence: "pending-independent-verification",
+    commands: [{ argv: s.policy.verification[0]!.argv }]
+  })
+  expect(notes.plannedVerification).not.toHaveProperty("headSha")
+  expect(notes.plannedVerification).not.toHaveProperty("coverage")
+  expect(notes.instructions).toContain("exact changed-file selection and execution remain pending")
+  expect(w.candidate).toBeUndefined()
+  expect(w.verification).toBeUndefined()
+  expect(s.runtime.quality.designApproved(w)).toBe(false)
+  expect(s.gateway.cards.find((card) => card.id === w.implementationCardId).status).toBe("blocked")
+})

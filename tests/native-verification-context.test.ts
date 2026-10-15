@@ -63,6 +63,17 @@ it("reports missing, binary, oversized or redacted definitions as incomplete", a
   expect(commands[0]!.definition).toMatchObject({ complete: false, reason: expect.stringContaining("do not infer") })
   expect(JSON.stringify(commands)).not.toContain("private path")
 })
+it("supplies all standing commands and their path conditions before a candidate exists", async () => {
+  const read = vi.fn().mockResolvedValue("#!/bin/sh\nexit 0\n")
+  const commands = await nativeVerificationCommandContext(policy, null, read)
+  expect(commands.map(({ argv, paths }) => ({ argv, paths }))).toEqual(
+    policy.verification.map(({ argv, paths }: any) => ({ argv, paths }))
+  )
+  expect(read.mock.calls.map(([, path]) => path)).toEqual(["/opt/openclaw/checks/ui", "/opt/openclaw/checks/backend"])
+  expect(commands.every(({ definition }) => definition.complete)).toBe(true)
+  // Empty changed files still means no selected commands, not all standing rules.
+  expect(await nativeVerificationCommandContext(policy, [], read)).toEqual([])
+})
 it("reads only bounded text under a toolchain root and rejects escaping symlinks", async () => {
   const root = mkdtempSync(join(tmpdir(), "native-verifier-definition-"))
   roots.push(root)
