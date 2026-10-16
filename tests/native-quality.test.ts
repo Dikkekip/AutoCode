@@ -343,7 +343,7 @@ function fixtureVerification(
 }
 
 describe("native quality investigations", () => {
-  it("places validated historical failures only in the matching persona's assigned research context", async () => {
+  it("places validated historical failures in shared authorized research contexts without sharing workflow details", async () => {
     const s = setup(fixtureSkill, [], true, true)
     const revision = s.git("rev-parse", "HEAD")
     // Synthetic protected receipt: exercise context routing, not actual runtime measurement.
@@ -369,8 +369,14 @@ describe("native quality investigations", () => {
       sourceBindings: [{ path: "src/view.ts", unchanged: true }],
       failures: [{ stdout: { content: "Synthetic fixture failure log" } }]
     })
-    for (const context of contexts.filter((context) => context.persona && context.persona.personaId !== "ux"))
-      expect(context.nativeVerificationFailures).toEqual([])
+    for (const context of contexts.filter((context) => context.persona && context.persona.personaId !== "ux")) {
+      expect(context.nativeVerificationFailures[0]).toMatchObject({ status: "available", sourcePersonaId: "ux" })
+      expect(context.recentOutcomes.workflows).toEqual([])
+      expect(context.recentOutcomes.nativeVerificationFailure).toMatchObject({
+        sourcePersonaId: "ux",
+        workflowId: "prior"
+      })
+    }
     expect(s.runtime.quality.feedback("ux").workflows[0]!.verificationArtifactSha256).toBe(
       workflow.verification.provenanceArtifact!.sha256
     )

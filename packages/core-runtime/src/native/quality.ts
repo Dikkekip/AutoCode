@@ -22,7 +22,7 @@ import { type NativeMemoryConfig, verifiedNativeLessons } from "./memory.js"
 import { nativeOutcomeReport } from "./outcomes.js"
 import { assertNativeMode } from "./promotion-mode.js"
 import type { NativeOperatorRequest } from "./requests.js"
-import { nativeResearchFailureEvidence } from "./research-failure-evidence.js"
+import { nativeResearchFailureEvidence, nativeResearchFailureIdentity } from "./research-failure-evidence.js"
 import type { NativeAutonomyRuntime, NativeWorkflow } from "./runtime.js"
 import { nativeSkillPolicyDigest, resolveNativeSkill } from "./skills.js"
 import { redactNativeSourceText } from "./source-redaction.js"
@@ -832,6 +832,11 @@ export class NativeQualityRuntime {
           return decision ? [{ proposal: p.value.proposal.title, decision }] : []
         })
         .slice(-10),
+      nativeVerificationFailure: nativeResearchFailureIdentity(
+        this.policy,
+        personaId,
+        this.store.list<NativeWorkflow>("workflow")
+      ),
       workflows: this.store
         .list<NativeWorkflow>("workflow")
         .filter((w) => w.value.proposal.personaId === personaId)

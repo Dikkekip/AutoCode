@@ -1,18 +1,21 @@
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type NativeAutonomyPolicy, type NativeVerificationEvidence, nativePolicyDigest } from "@openclaw/domain"
 import { afterEach, expect, it } from "vitest"
 import { nativeContentDigest, nativeRepositoryIdentity } from "../packages/core-runtime/src/native/provenance.js"
-import { nativeResearchFailureEvidence } from "../packages/core-runtime/src/native/research-failure-evidence.js"
+import {
+  nativeResearchFailureEvidence,
+  nativeResearchFailureIdentity
+} from "../packages/core-runtime/src/native/research-failure-evidence.js"
 import type { NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 
 const repositories: string[] = []
 afterEach(() => {
   for (const path of repositories.splice(0)) rmSync(path, { recursive: true, force: true })
 })
-function fixture() {
+function fixture(shared = false, symlink = false) {
   const repository = mkdtempSync(join(tmpdir(), "native-research-failures-"))
   repositories.push(repository)
   const git = (...args: string[]) => execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim()
@@ -26,12 +29,19 @@ function fixture() {
   git("commit", "-qm", "baseline")
   const baseSha = git("rev-parse", "HEAD")
   writeFileSync(join(repository, "src/view.ts"), "export const view = 'candidate'\n")
+  if (symlink) {
+    symlinkSync("view.ts", join(repository, "src/link"))
+    git("add", "src/link")
+  }
   git("commit", "-qam", "candidate")
   const headSha = git("rev-parse", "HEAD")
   const policy = {
     repository,
     mode: "implement-human-review",
-    personas: [{ personaId: "ui", allowedPaths: ["src/**"] }]
+    personas: [
+      { personaId: "ui", allowedPaths: ["src/**"] },
+      ...(shared ? [{ personaId: "ux", allowedPaths: ["src/**"] }] : [])
+    ]
   } as NativeAutonomyPolicy
   const skillHash = nativeContentDigest("skill"),
     attemptId = "workflow:attempt:2",
@@ -87,9 +97,14 @@ function fixture() {
   }
   seal()
   const workflow = {
-    proposal: { personaId: "ui", allowedPaths: ["src/view.ts"], implementationPrompt: "fix", quality: { skillHash } },
+    proposal: {
+      personaId: shared ? "ux" : "ui",
+      allowedPaths: ["src/view.ts"],
+      implementationPrompt: "fix",
+      quality: { skillHash }
+    },
     lifecycle: { state: "blocked", attemptId },
-    candidate: { baseSha, headSha, files: ["src/view.ts"] },
+    candidate: { baseSha, headSha, files: ["src/view.ts", ...(symlink ? ["src/link"] : [])] },
     verification: evidence
   } as NativeWorkflow
   const records = [{ id: "workflow", value: workflow, updatedAt: 10 }]
@@ -164,7 +179,12 @@ it.each([
   if (scenario === "changed-artifact") writeFileSync(f.artifact, "replacement")
   if (scenario === "stale-policy") f.policy.mode = "application-release"
   expect(await f.read()).toEqual([
-    { status: "unavailable", workflowId: "workflow", reason: "Canonical failure evidence could not be validated" }
+    {
+      status: "unavailable",
+      workflowId: "workflow",
+      sourcePersonaId: "ui",
+      reason: "Canonical failure evidence could not be validated"
+    }
   ])
 })
 
@@ -186,4 +206,42 @@ it("caps projection at one recent failed candidate and never includes successful
   expect(await f.read()).toHaveLength(1)
   f.evidence.checks[0]!.exitCode = 0
   expect(await f.read()).toEqual([])
+})
+
+it("shares validated failures only between configured personas with every changed file in both scopes", async () => {
+  const f = fixture(true)
+  expect((await f.read())[0]).toMatchObject({ status: "available", sourcePersonaId: "ux" })
+  f.policy.personas[1]!.allowedPaths = ["private/**"]
+  expect(await f.read()).toEqual([])
+})
+
+it("requires every candidate changed file to be tracked regular even when not requested", async () => {
+  const f = fixture(true)
+  f.workflow.candidate!.files.push("src/missing.ts")
+  expect((await f.read(["src/navigation.ts"]))[0]).toMatchObject({ status: "unavailable", sourcePersonaId: "ux" })
+})
+
+it("refuses a symlink changed file even when the requested source is regular", async () => {
+  const f = fixture(true, true)
+  expect((await f.read(["src/navigation.ts"]))[0]?.status).toBe("unavailable")
+})
+
+it("fingerprints only the selected shared receipt identity and ignores nonshared workflow content", () => {
+  const f = fixture(true)
+  const identity = () => nativeResearchFailureIdentity(f.policy, "ui", f.records)
+  const before = identity()
+  expect(before).toMatchObject({ sourcePersonaId: "ux", workflowId: "workflow" })
+  f.workflow.blocker = "private context must not leak"
+  expect(identity()).toEqual(before)
+  expect(JSON.stringify(identity())).not.toContain("private context")
+  f.evidence.provenanceArtifact!.sha256 = "a".repeat(64)
+  expect(identity()).not.toEqual(before)
+  f.workflow.candidate!.files.push("private/file")
+  expect(identity()).toBeNull()
+})
+
+it("does not share candidates when any changed file exceeds the recipient scope", async () => {
+  const f = fixture(true)
+  f.policy.personas[0]!.allowedPaths = ["src/navigation.ts"]
+  expect(await f.read(["src/navigation.ts"])).toEqual([])
 })
