@@ -1,6 +1,6 @@
 import { globSync, readFileSync, realpathSync } from "node:fs"
 import { createRequire } from "node:module"
-import { isAbsolute, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const repository = fileURLToPath(new URL("../", import.meta.url))
@@ -58,6 +58,13 @@ export function assertWorkspaceResolution(root = repository) {
     }
   }
   return { workspaces: workspaces.size, bindings }
+}
+
+/** OpenClaw evaluates a captured runtime; source is the host-owned original entry. */
+export function assertPluginWorkspaceResolution(api) {
+  if (typeof api?.source !== "string" || !isAbsolute(api.source))
+    throw new Error("Trusted original plugin source path required for workspace validation")
+  return assertWorkspaceResolution(resolve(dirname(realpathSync(api.source)), "../.."))
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))

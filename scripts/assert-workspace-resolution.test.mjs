@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync 
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, test } from "node:test"
-import { assertWorkspaceResolution } from "./assert-workspace-resolution.mjs"
+import { assertPluginWorkspaceResolution, assertWorkspaceResolution } from "./assert-workspace-resolution.mjs"
 
 const temporary = []
 afterEach(() => {
@@ -111,4 +111,39 @@ test("refuses conditional exports whose import and require ownership could diffe
     JSON.stringify({ name: "@test/domain", exports: { import: "./foreign.mjs", require: "./dist/index.mjs" } })
   )
   assert.throws(() => assertWorkspaceResolution(f.root), /Unsupported conditional workspace exports/)
+})
+
+test("validates the original host source while the runtime executes from a captured copy", () => {
+  const f = fixture(),
+    capture = directory(),
+    source = join(f.root, "plugins/autocode/index.mjs")
+  mkdirSync(dirname(source), { recursive: true })
+  writeFileSync(source, "// original plugin")
+  const runtimeSource = join(capture, "plugin.mjs")
+  writeFileSync(runtimeSource, "// captured plugin without workspace manifest")
+  assert.deepEqual(assertPluginWorkspaceResolution({ source, runtimeSource }), { workspaces: 2, bindings: 1 })
+})
+test("requires a trusted absolute original source even when a runtime source exists", () => {
+  assert.throws(
+    () => assertPluginWorkspaceResolution({ runtimeSource: import.meta.url }),
+    /Trusted original plugin source/
+  )
+  assert.throws(
+    () => assertPluginWorkspaceResolution({ source: "plugins/autocode/index.mjs" }),
+    /Trusted original plugin source/
+  )
+})
+test("still rejects borrowed source dependencies when a captured runtime path is supplied", () => {
+  const f = fixture(),
+    foreign = directory(),
+    source = join(f.root, "plugins/autocode/index.mjs")
+  mkdirSync(dirname(source), { recursive: true })
+  writeFileSync(source, "// original plugin")
+  manifest(foreign, "@test/domain")
+  unlinkSync(f.link)
+  symlinkSync(foreign, f.link)
+  assert.throws(
+    () => assertPluginWorkspaceResolution({ source, runtimeSource: join(f.root, "captured.mjs") }),
+    /Foreign workspace dependency/
+  )
 })

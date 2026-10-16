@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import { assertWorkspaceResolution } from "./assert-workspace-resolution.mjs"
 
@@ -151,6 +151,7 @@ try {
   const { default: plugin } = await import(pathToFileURL(resolve("plugins/autocode/index.mjs")).href)
   const registered = { services: [], methods: [], tools: [], hooks: [] }
   plugin.register({
+    source: fileURLToPath(new URL("../plugins/autocode/index.mjs", import.meta.url)),
     pluginConfig: { projects: [] },
     runtime: { gateway: { request: async () => ({}) } },
     registerService: (s) => registered.services.push(s),
