@@ -76,6 +76,19 @@ class Gateway implements NativeGateway {
     this.calls.push({ method, params })
     let result: any = {}
     if (method === "workboard.cards.list") result = { cards: this.cards }
+    if (method === "workboard.cards.runs")
+      result = {
+        card: (() => {
+          const card = this.cards.find((c) => c.id === params.id)
+          return (
+            card && {
+              ...card,
+              metadata: { ...card.metadata, automation: { ...card.metadata?.automation, boardId: card.boardId } }
+            }
+          )
+        })(),
+        attempts: []
+      }
     if (method === "workboard.cards.create") {
       if (String(params.notes ?? "").length > 4000) throw new Error("notes must be 4000 characters or fewer")
       if (this.failCreateAt && this.cards.length === this.failCreateAt) {

@@ -286,7 +286,7 @@ export interface NativeCard {
     claim?: { ownerId?: string; expiresAt?: number }
     links?: Array<{ type: string; targetCardId?: string }>
     comments?: Array<{ body?: string; createdAt?: number }>
-    automation?: { idempotencyKey?: string; scheduledAt?: number; workspace?: { path?: string } }
+    automation?: { boardId?: string; idempotencyKey?: string; scheduledAt?: number; workspace?: { path?: string } }
   }
 }
 /** Versioned subset consumed by this runtime. Unknown statuses fail closed until reviewed. */
@@ -365,6 +365,22 @@ export async function nativeCards(gateway: NativeGateway, boardId: string): Prom
     throw new Error("Workboard cards.list contract: duplicate identity")
   return cards
 }
+/** Fresh indexed full-card read. Never cache live assignment or execution authority. */
+export async function nativeCardById(
+  gateway: NativeGateway,
+  boardId: string,
+  id: string | undefined
+): Promise<NativeCard> {
+  if (typeof boardId !== "string" || !boardId.trim() || typeof id !== "string" || !id.trim())
+    throw new Error("Workboard contract: exact card and board identity required")
+  const result = nativeObject(await gateway.request("workboard.cards.runs", { id }), "Workboard cards.runs")
+  const card = decodeNativeCard(result.card, boardId)
+  // Legacy list entries may omit boardId; a targeted response has no list membership proof.
+  const canonicalBoardId = card.metadata?.automation?.boardId
+  if (card.id !== id || canonicalBoardId !== boardId) throw new Error("Workboard targeted card identity mismatch")
+  return card
+}
+
 export async function nativeCard(gateway: NativeGateway, input: Record<string, unknown>): Promise<NativeCard> {
   // Keep the complete correlation key in the native effect journal. Workboard's
   // public contract limits its external key to 160 characters.

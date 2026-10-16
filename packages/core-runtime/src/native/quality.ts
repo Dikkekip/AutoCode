@@ -17,7 +17,7 @@ import {
 } from "@openclaw/domain"
 import { buildNativeContextPack, readNativeExcerpt } from "./context-pack.js"
 import { decideNativeDuplicate } from "./dedupe.js"
-import { type NativeCard, nativeCards } from "./gateway.js"
+import { type NativeCard, nativeCardById, nativeCards } from "./gateway.js"
 import { type NativeMemoryConfig, verifiedNativeLessons } from "./memory.js"
 import { nativeOutcomeReport } from "./outcomes.js"
 import { assertNativeMode } from "./promotion-mode.js"
@@ -858,7 +858,7 @@ export class NativeQualityRuntime {
     const entry = this.store.get<Investigation>("investigation", `${roundId}:${personaId}`)
     if (!entry || entry.agentId !== agentId || entry.state !== "pending")
       throw new Error("No active assigned investigation")
-    const card = (await nativeCards(this.gateway, this.policy.boardId)).find((c) => c.id === entry.cardId)
+    const card = await nativeCardById(this.gateway, this.policy.boardId, entry.cardId)
     this.runtime.assertSession(card, sessionKey)
     if (entry.sessionKey && entry.sessionKey !== sessionKey)
       throw new Error("Investigation belongs to its original session")
@@ -1173,7 +1173,7 @@ export class NativeQualityRuntime {
     const w = this.runtime.requireWorkflow(workflowId)
     if (agentId !== this.policy.reviewerAgentId || nativeCoderAgentIds(this.policy).includes(agentId))
       throw new Error("Independent design reviewer required")
-    const card = (await nativeCards(this.gateway, this.policy.boardId)).find((c) => c.id === w.designCardId)
+    const card = await nativeCardById(this.gateway, this.policy.boardId, w.designCardId)
     this.runtime.assertSession(card, sessionKey)
     if (!["approved", "changes_requested"].includes(verdict)) throw new Error("Invalid design verdict")
     const result = validateNativeAssessment(assessment, w.proposal.acceptance, verdict === "approved")

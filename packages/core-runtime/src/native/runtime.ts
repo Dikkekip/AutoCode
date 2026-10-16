@@ -38,6 +38,7 @@ import {
   type NativeCard,
   type NativeGateway,
   nativeCard,
+  nativeCardById,
   nativeCardIdempotencyKey,
   nativeCards,
   nativeObject
@@ -352,11 +353,11 @@ export class NativeAutonomyRuntime {
     )
     if (!context || (context.agentId && context.agentId !== agentId))
       throw new Error("Context is not assigned to this agent")
-    const card = (await nativeCards(this.gateway, this.policy.boardId)).find(
-      (c) =>
-        c.id === context.cardId ||
-        (!context.cardId && context.idempotencyKey && c.metadata?.automation?.idempotencyKey === context.idempotencyKey)
-    )
+    const card = context.cardId
+      ? await nativeCardById(this.gateway, this.policy.boardId, context.cardId)
+      : (await nativeCards(this.gateway, this.policy.boardId)).find(
+          (c) => context.idempotencyKey && c.metadata?.automation?.idempotencyKey === context.idempotencyKey
+        )
     this.assertSession(card, sessionKey)
     if (card?.agentId !== agentId) throw new Error("Context is not assigned to this agent")
     this.store.event("context.read", contextId, { agentId, sessionKey, cardId: card.id })
@@ -1306,9 +1307,7 @@ export class NativeAutonomyRuntime {
     if (!nativeCoderAgentIds(this.policy).includes(agentId) || !sessionKey)
       throw new Error("Only the assigned coder can submit")
     const workflow = this.requireWorkflow(workflowId)
-    const card = (await nativeCards(this.gateway, this.policy.boardId)).find(
-      (c) => c.id === workflow.implementationCardId
-    )
+    const card = await nativeCardById(this.gateway, this.policy.boardId, workflow.implementationCardId)
     if (card?.agentId !== agentId) throw new Error("Only the assigned coder can submit")
     this.assertSession(card, sessionKey)
     const workspace = card?.metadata?.automation?.workspace?.path
@@ -1402,7 +1401,7 @@ export class NativeAutonomyRuntime {
     )
       throw new Error("Independent reviewer and rationale required")
     const workflow = this.requireWorkflow(workflowId)
-    const card = (await nativeCards(this.gateway, this.policy.boardId)).find((c) => c.id === workflow.reviewCardId)
+    const card = await nativeCardById(this.gateway, this.policy.boardId, workflow.reviewCardId)
     this.assertSession(card, sessionKey)
     if (!workflow.verification || workflow.verification.headSha !== headSha)
       throw new Error("Review must match verified candidate")

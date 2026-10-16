@@ -113,6 +113,19 @@ it.each([
     {
       request: async (method, params) => {
         if (method === "workboard.cards.list") return { cards } as any
+        if (method === "workboard.cards.runs")
+          return {
+            card: (() => {
+              const card = cards.find((c) => c.id === params.id)
+              return (
+                card && {
+                  ...card,
+                  metadata: { ...card.metadata, automation: { ...card.metadata?.automation, boardId: card.boardId } }
+                }
+              )
+            })(),
+            attempts: []
+          } as any
         if (method === "workboard.cards.create") {
           const card = { ...params, id: "recovered" }
           cards.push(card)

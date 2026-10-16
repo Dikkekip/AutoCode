@@ -46,6 +46,19 @@ class Gateway implements NativeGateway {
   async request<T = any>(method: string, params: any): Promise<T> {
     this.calls.push({ method, params })
     if (method === "workboard.cards.list") return { cards: this.cards } as T
+    if (method === "workboard.cards.runs")
+      return {
+        card: (() => {
+          const card = this.cards.find((c) => c.id === params.id)
+          return (
+            card && {
+              ...card,
+              metadata: { ...card.metadata, automation: { ...card.metadata?.automation, boardId: card.boardId } }
+            }
+          )
+        })(),
+        attempts: []
+      } as T
     if (method === "sessions.list") return { sessions: this.sessions } as T
     if (method === "workboard.cards.create") {
       if (String(params.notes ?? "").length > 4000) throw new Error("notes must be 4000 characters or fewer")
