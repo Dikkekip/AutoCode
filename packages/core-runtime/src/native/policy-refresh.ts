@@ -277,6 +277,8 @@ export async function assertNativePolicyRemoteIdle(
             }
           }
           const started = card.execution?.startedAt ?? card.startedAt ?? archived?.started
+          // Core may retain an interrupted historical session with a final end time.
+          // The complete listing above must still prove that it has no active runs.
           if (
             !session ||
             typeof card.agentId !== "string" ||
@@ -284,7 +286,9 @@ export async function assertNativePolicyRemoteIdle(
             !Number.isFinite(started) ||
             !Number.isFinite(session.endedAt) ||
             session.endedAt < started! ||
-            !["done", "completed", "failed", "cancelled", "timed_out", "timeout", "killed"].includes(session.status)
+            !["done", "completed", "failed", "cancelled", "timed_out", "timeout", "killed", "interrupted"].includes(
+              session.status
+            )
           )
             throw new Error("Owned accepted run lacks terminal session proof")
         }

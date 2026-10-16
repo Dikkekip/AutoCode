@@ -227,6 +227,68 @@ it("registers verified original terminal closure without resurrecting core rows 
   ).toEqual({ count: 1 })
 })
 it.each([
+  { label: "closed", fields: {}, accepted: true },
+  { label: "active run", fields: { hasActiveRun: true }, accepted: false },
+  { label: "unknown activity", fields: { hasActiveRun: undefined }, accepted: false },
+  { label: "active subagent", fields: { hasActiveSubagentRun: true }, accepted: false },
+  { label: "active run IDs", fields: { activeRunIds: ["live"] }, accepted: false },
+  { label: "missing end", fields: { endedAt: undefined }, accepted: false },
+  { label: "end before launch", fields: { endedAt: 999 }, accepted: false },
+  { label: "wrong owner", fields: { agentId: "other" }, accepted: false }
+])("registers retained proof alongside an interrupted review session only when closed: $label", async ({
+  fields,
+  accepted
+}) => {
+  const f = fixture()
+  const key = "agent:coder:subagent:workboard-board-review"
+  const run = "workboard:review:1000"
+  const review = {
+    id: "review",
+    title: "Interrupted implementation awaiting review",
+    status: "review",
+    agentId: "coder",
+    sessionKey: key,
+    runId: run,
+    startedAt: 1000,
+    execution: { status: "blocked", sessionKey: key, runId: run, startedAt: 1000 },
+    metadata: {
+      automation: { launch: { phase: "accepted", acceptedSessionKey: key, acceptedRunId: run } }
+    }
+  }
+  f.setSessions([
+    {
+      key,
+      agentId: "coder",
+      status: "interrupted",
+      startedAt: 1100,
+      endedAt: 2000,
+      hasActiveRun: false,
+      hasActiveSubagentRun: false,
+      activeRunIds: [],
+      ...fields
+    }
+  ])
+  const gateway = {
+    request: async (method: string, params: unknown) =>
+      method === "workboard.cards.list" ? { cards: [f.card, review] } : f.gateway.request(method, params)
+  } as any
+  const register = registerNativeRetainedSession(
+    f.runtime,
+    gateway,
+    { cardId: f.card.id, controlRevision: "owned", source: f.source },
+    { operatorId: "operator", rationale: "Reviewed retained failure and closed interrupted review session" }
+  )
+  if (accepted) {
+    await expect(register).resolves.toMatchObject({ runId: f.runId })
+    expect((await assertNativePolicyRemoteIdle(f.runtime, gateway)).retainedCards).toHaveLength(1)
+  } else {
+    await expect(register).rejects.toThrow(/active or ambiguous|terminal session proof/)
+    expect(registeredNativeRetainedSession(f.runtime, f.card)).toBeUndefined()
+  }
+  expect(f.runtime.control.state.paused).toBe(true)
+  expect(f.live.prepare("SELECT COUNT(*) AS count FROM session_nodes").get()).toEqual({ count: 0 })
+})
+it.each([
   "manifest",
   "backup",
   "published-archive",
