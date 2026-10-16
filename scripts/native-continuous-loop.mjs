@@ -10,7 +10,17 @@ function invoke(program, args, timeout) {
 
 // One tick uses the existing native execution owner; it never creates a second
 // dispatcher, rewrites evidence, resumes operator pauses, or restarts workers.
-export function run({ openclaw, board, statePath, apply = false, clock = Date.now, command = invoke }) {
+export function run({
+  openclaw,
+  board,
+  statePath,
+  apply = false,
+  discoveryIntervalMs = 30 * 60_000,
+  clock = Date.now,
+  command = invoke
+}) {
+  if (!Number.isSafeInteger(discoveryIntervalMs) || discoveryIntervalMs < 60_000 || discoveryIntervalMs > 86_400_000)
+    throw new Error("Loop discovery interval must be between one minute and one day")
   const previous = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { version: 1, board }
   if (previous.version !== 1 || previous.board !== board) throw new Error("Loop state binding mismatch")
   if (
@@ -56,6 +66,28 @@ export function run({ openclaw, board, statePath, apply = false, clock = Date.no
   const doctor = call("autocode.doctor")
   if (doctor.ok !== true || doctor.skillBinding?.ok !== true) return { action: "readiness-blocked" }
   if (!apply) return { action: "tick-preview" }
+  const discoveryDue = () => !previous.lastDiscoveryAt || clock() - previous.lastDiscoveryAt >= discoveryIntervalMs
+  const discover = () => {
+    // Journal before acceptance, including operator requests, to avoid duplicate rounds after a lost response.
+    const now = clock()
+    mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 })
+    const temporary = `${statePath}.${process.pid}.tmp`
+    writeFileSync(temporary, JSON.stringify({ version: 1, board, lastDiscoveryAt: now }) + "\n", {
+      mode: 0o600,
+      flag: "wx"
+    })
+    renameSync(temporary, statePath)
+    previous.lastDiscoveryAt = now
+    return call("autocode.discover", 7_200_000)
+  }
+  // Admit explicit operator work before reconciliation can enter a long verifier.
+  // The native discovery owner retains scope, daily-budget and downstream backpressure checks.
+  let requestedDiscovery
+  if (discoveryDue() && status.resourcePressure?.allowed === true) {
+    const requests = call("autocode.requests.list")
+    if (!Array.isArray(requests.requests)) throw new Error("Loop requests response incomplete")
+    if (requests.requests.some((request) => request.state === "queued")) requestedDiscovery = discover()
+  }
   // Reconcile includes bounded dispatch and advances verification/review/repair.
   // A timeout has unknown acceptance: do not issue another mutation in this tick.
   const reconciled = call("autocode.reconcile", 7_200_000)
@@ -101,18 +133,18 @@ export function run({ openclaw, board, statePath, apply = false, clock = Date.no
   )
     throw new Error("Loop capacity evidence incomplete")
   const busy = (after.counts.ready ?? 0) > 0 || (after.counts.running ?? 0) > 0
-  const now = clock()
-  const discoveryDue = !previous.lastDiscoveryAt || now - previous.lastDiscoveryAt >= 30 * 60_000
-  if (busy || !discoveryDue) return { action: "reconciled", advanced: reconciled.advanced ?? 0, ...evidence }
-  // Persist before discovery so a lost response does not generate another round.
-  mkdirSync(dirname(statePath), { recursive: true, mode: 0o700 })
-  const temporary = `${statePath}.${process.pid}.tmp`
-  writeFileSync(temporary, JSON.stringify({ version: 1, board, lastDiscoveryAt: now }) + "\n", {
-    mode: 0o600,
-    flag: "wx"
-  })
-  renameSync(temporary, statePath)
-  const discovery = call("autocode.discover", 7_200_000)
+  if (busy || !discoveryDue())
+    return {
+      action: "reconciled",
+      advanced: reconciled.advanced ?? 0,
+      ...(requestedDiscovery
+        ? {
+            requestedDiscovery: { created: requestedDiscovery.created?.length ?? 0, reason: requestedDiscovery.reason }
+          }
+        : {}),
+      ...evidence
+    }
+  const discovery = discover()
   return {
     action: "discovered",
     advanced: reconciled.advanced ?? 0,
@@ -127,6 +159,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     const args = process.argv.slice(2)
     for (let i = 0; i < args.length; i++) {
       if (args[i] === "--apply") options.apply = true
+      else if (args[i] === "--discovery-interval-seconds" && args[i + 1])
+        options.discoveryIntervalMs = Number(args[++i]) * 1000
       else if (["--openclaw", "--board", "--state"].includes(args[i]) && args[i + 1])
         options[args[i].slice(2) === "state" ? "statePath" : args[i].slice(2)] = args[++i]
       else throw new Error("Unknown or incomplete loop argument")

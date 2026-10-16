@@ -175,3 +175,52 @@ test("idle resource pressure defers discovery without consuming its cadence chec
   f.responses["autocode.reconcile"] = { advanced: 1 }
   assert.equal(run({ ...f.options, clock: () => 1_060_000 }).action, "discovered")
 })
+
+test("five-minute profile discovers sooner while preserving the checkpoint", (t) => {
+  const f = fixture(t)
+  f.options.discoveryIntervalMs = 300_000
+  assert.equal(run(f.options).action, "discovered")
+  assert.equal(run({ ...f.options, clock: () => 1_299_999 }).action, "reconciled")
+  assert.equal(run({ ...f.options, clock: () => 1_300_000 }).action, "discovered")
+})
+
+test("queued operator work is discovered before a long reconciliation even with ready work", (t) => {
+  const f = fixture(t)
+  f.status.resourcePressure = { allowed: true }
+  f.status.counts = { ready: 1 }
+  f.responses["autocode.requests.list"] = { requests: [{ state: "queued" }] }
+  assert.deepEqual(run(f.options).requestedDiscovery, { created: 1, reason: undefined })
+  assert.ok(f.calls.indexOf("autocode.discover") < f.calls.indexOf("autocode.reconcile"))
+  assert.equal(f.calls.filter((m) => m === "autocode.discover").length, 1)
+  run({ ...f.options, clock: () => 1_060_000 })
+  assert.equal(f.calls.filter((m) => m === "autocode.requests.list").length, 1)
+})
+
+test("unknown operator discovery acceptance stops the tick before reconciliation", (t) => {
+  const f = fixture(t)
+  f.status.resourcePressure = { allowed: true }
+  f.responses["autocode.requests.list"] = { requests: [{ state: "queued" }] }
+  f.responses["autocode.discover"] = new Error("accepted response lost")
+  assert.throws(() => run(f.options), /accepted response lost/)
+  assert.equal(f.calls.includes("autocode.reconcile"), false)
+  assert.equal(JSON.parse(readFileSync(f.options.statePath, "utf8")).lastDiscoveryAt, 1_000_000)
+})
+
+test("pressure preserves queued operator work and malformed queue evidence fails closed", (t) => {
+  const f = fixture(t)
+  f.status.resourcePressure = { allowed: false }
+  assert.equal(run(f.options).action, "resource-deferred")
+  assert.equal(f.calls.includes("autocode.requests.list"), false)
+  f.status.resourcePressure.allowed = true
+  f.responses["autocode.requests.list"] = {}
+  assert.throws(() => run(f.options), /requests response incomplete/)
+  assert.equal(f.calls.includes("autocode.discover"), false)
+})
+
+test("invalid discovery intervals cannot invoke the Gateway", (t) => {
+  for (const discoveryIntervalMs of [0, 59_999, 86_400_001, NaN, Infinity, 60_000.5]) {
+    const f = fixture(t)
+    assert.throws(() => run({ ...f.options, discoveryIntervalMs }), /discovery interval/)
+    assert.deepEqual(f.calls, [])
+  }
+})
