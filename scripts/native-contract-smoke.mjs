@@ -7,6 +7,10 @@ import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
+import { assertWorkspaceResolution } from "./assert-workspace-resolution.mjs"
+
+assertWorkspaceResolution()
+
 const root = process.argv[2]
 if (!root) throw new Error("Pass the installed OpenClaw package root")
 const scratch = mkdtempSync(resolve(tmpdir(), "native-workboard-contract-"))
