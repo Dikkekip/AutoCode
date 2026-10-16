@@ -145,6 +145,87 @@ function legacy(root: string) {
   return path
 }
 describe("native autonomy policy and creative provenance", () => {
+  it("admits disjoint exact files while a blocked legacy prefix reservation remains protected", async () => {
+    const p = policy()
+    p.personas.forEach((persona) => {
+      persona.allowedPaths = ["apps/reports-ui/e2e"]
+    })
+    const gateway = new Gateway(),
+      store = new NativeEvidenceStore(join(p.repository, "prefix.db"))
+    try {
+      const runtime = new NativeAutonomyRuntime(p, gateway, store)
+      mkdirSync(join(p.repository, "apps/reports-ui/e2e/utils"), { recursive: true })
+      for (const file of ["navigation.spec.ts", "ui-audit-scan.spec.ts", "utils/auth.ts"])
+        writeFileSync(join(p.repository, "apps/reports-ui/e2e", file), "// committed evidence fixture")
+      store.put("workflow", "legacy-ui-audit", {
+        proposal: { ...proposal(), allowedPaths: ["apps/reports-ui/e2e/ui-audit*"] },
+        lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "retained:attempt:0" },
+        blocker: "Retained independent verification required"
+      })
+      await runtime.discover()
+      const round = store.list("round")[0]!
+      gateway.cards.forEach((card) => {
+        card.status = "done"
+      })
+      const submit = (personaId: string, path: string) =>
+        runtime.propose(personaId, round.id, {
+          ...proposal(),
+          personaId,
+          goal: `${personaId} outcome`,
+          title: `Repair ${path}`,
+          evidence: [{ path, observation: "Committed navigation defect" }],
+          allowedPaths: [path]
+        }).proposalId
+      const free = submit("legal", "apps/reports-ui/e2e/navigation.spec.ts")
+      expect((await runtime.admit("planner", free, "Independent exact scope")).workflowId).toBeTruthy()
+      const matching = submit("design", "apps/reports-ui/e2e/ui-audit-scan.spec.ts")
+      await expect(runtime.admit("planner", matching, "Must preserve retained scope")).rejects.toThrow(
+        "Artifact scope reserved by legacy-ui-audit"
+      )
+      const ancestor = submit("backend", "apps/reports-ui/e2e")
+      await expect(runtime.admit("planner", ancestor, "Must preserve directory ancestor")).rejects.toThrow(
+        /Artifact scope reserved/
+      )
+      expect(store.get<any>("workflow", "legacy-ui-audit")!.proposal.allowedPaths).toEqual([
+        "apps/reports-ui/e2e/ui-audit*"
+      ])
+      expect(runtime.reservesScope(store.get<any>("workflow", "legacy-ui-audit")!)).toBe(true)
+      const latePath = "apps/reports-ui/e2e/utils/auth.ts"
+      const late = submit("legal", latePath)
+      expect(runtime.proposalScope({ ...proposal(), allowedPaths: [latePath] }).conflicts).toEqual([])
+      store.put("workflow", "later-owner", {
+        proposal: { ...proposal(), allowedPaths: [latePath] },
+        lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "retained:attempt:0" },
+        blocker: "Accepted reservation appeared after planner inspection"
+      })
+      await expect(runtime.admit("planner", late, "Must recheck current reservations")).rejects.toThrow(
+        "Artifact scope reserved by later-owner"
+      )
+    } finally {
+      store.close()
+    }
+  })
+
+  it("routes only actually intersecting prefix paths to the configured complex lane", () => {
+    const p = validateNativeAutonomyPolicy({
+      ...policy(),
+      coderAgentIds: ["coder", "coder-2", "coder-3"],
+      coderRouting: {
+        simple: ["coder-2"],
+        routine: ["coder"],
+        veryComplex: ["coder-3"],
+        simplePaths: [],
+        veryComplexPaths: ["apps/reports-ui/e2e/ui-audit*"]
+      }
+    })
+    expect(
+      nativeCoderRoute(p, { ...proposal(), allowedPaths: ["apps/reports-ui/e2e/navigation.spec.ts"] }).agentIds
+    ).toEqual(["coder"])
+    expect(
+      nativeCoderRoute(p, { ...proposal(), allowedPaths: ["apps/reports-ui/e2e/ui-audit-scan.spec.ts"] }).agentIds
+    ).toEqual(["coder-3"])
+  })
+
   it("omits an unset verification ceiling and validates explicit independent limits", () => {
     const legacy = policy()
     expect(Object.hasOwn(legacy, "verificationConcurrency")).toBe(false)
