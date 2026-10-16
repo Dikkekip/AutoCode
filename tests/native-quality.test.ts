@@ -84,7 +84,12 @@ class Gateway implements NativeGateway {
   }
 }
 const fixtureSkill = "# Prompt Engineering Expert\nCreate concrete prompts with acceptance criteria and non-goals."
-function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandidateReview = false) {
+function setup(
+  skill = fixtureSkill,
+  highRiskPaths?: string[],
+  independentCandidateReview = false,
+  bindFixtureAcceptance = false
+) {
   const root = mkdtempSync(join(tmpdir(), "native-quality-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim()
@@ -122,7 +127,28 @@ function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandid
     })),
     verification: [{ argv: [process.execPath, "-e", "process.exit(0)"], cwd: ".", timeoutSeconds: 10 }],
     ...(independentCandidateReview
-      ? { verificationAuthority: { reviewedRevision: git("rev-parse", "HEAD"), independentCandidateReview: true } }
+      ? {
+          verificationAuthority: {
+            reviewedRevision: git("rev-parse", "HEAD"),
+            independentCandidateReview: true,
+            ...(bindFixtureAcceptance
+              ? {
+                  acceptance: [
+                    {
+                      criterion: "User opens source",
+                      ruleIds: [
+                        nativeVerificationRuleId({
+                          argv: [process.execPath, "-e", "process.exit(0)"],
+                          cwd: ".",
+                          timeoutSeconds: 10
+                        })
+                      ]
+                    }
+                  ]
+                }
+              : {})
+          }
+        }
       : {}),
     deployment: null
   })
@@ -317,6 +343,39 @@ function fixtureVerification(
 }
 
 describe("native quality investigations", () => {
+  it("places validated historical failures only in the matching persona's assigned research context", async () => {
+    const s = setup(fixtureSkill, [], true, true)
+    const revision = s.git("rev-parse", "HEAD")
+    // Synthetic protected receipt: exercise context routing, not actual runtime measurement.
+    const workflow = {
+      proposal: proposal(),
+      rootCardId: "prior-root",
+      implementationCardId: "prior-coder",
+      stageCards: {},
+      lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "prior:attempt:0" },
+      candidate: { baseSha: revision, headSha: revision, files: ["src/view.ts"] },
+      riskAssessment: { changesDigest: "c".repeat(64) },
+      blocker: "Protected browser check failed"
+    } as NativeWorkflow
+    workflow.verification = fixtureVerification(s, workflow, "prior", s.root, 1)
+    s.store.put("workflow", "prior", workflow)
+    await s.runtime.discover()
+    const contexts = s.store.list<any>("card-context").map(({ value }) => JSON.parse(value.notes))
+    const own = contexts.find((context) => context.persona?.personaId === "ux")
+    expect(own.nativeVerificationFailures[0]).toMatchObject({
+      status: "available",
+      workflowId: "prior",
+      applicability: "historical-candidate-only",
+      sourceBindings: [{ path: "src/view.ts", unchanged: true }],
+      failures: [{ stdout: { content: "Synthetic fixture failure log" } }]
+    })
+    for (const context of contexts.filter((context) => context.persona && context.persona.personaId !== "ux"))
+      expect(context.nativeVerificationFailures).toEqual([])
+    expect(s.runtime.quality.feedback("ux").workflows[0]!.verificationArtifactSha256).toBe(
+      workflow.verification.provenanceArtifact!.sha256
+    )
+  })
+
   it("stages final acceptance review from complete committed evidence instead of the linked HOST checkout", async () => {
     const s = setup(fixtureSkill, [], true)
     const c = await prepare(s)
@@ -657,6 +716,37 @@ describe("native quality investigations", () => {
     card.metadata.automation.idempotencyKey = "unrelated-card"
     await expect(authorizeNativeTool(s.runtime, "autocode_context", args, context)).rejects.toThrow(/not assigned/)
     await expect(s.runtime.readContext(context.agentId, context.sessionKey, contextId)).rejects.toThrow()
+  })
+  it("replays identical context after a lost creation response even when new failure evidence arrives", async () => {
+    const s = setup(fixtureSkill, [], true, true)
+    await createNativeOperatorRequest(s.runtime, operatorBrief(s), "authenticated operator.admin")
+    s.gateway.failResponseAfterCreateAt = 0
+    await expect(s.runtime.discover()).rejects.toThrow("card created but response lost")
+    const first = s.gateway.cards[0],
+      pointer = first.notes
+    const entry = s.store.list<Investigation>("investigation").find(({ value }) => value.personaId === "ux")!
+    const notes = entry.value.cardNotes
+    expect(JSON.parse(notes!).nativeVerificationFailures).toEqual([])
+    const revision = s.git("rev-parse", "HEAD")
+    const prior = {
+      proposal: proposal(),
+      rootCardId: "prior-root",
+      implementationCardId: "prior-coder",
+      stageCards: {},
+      lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "prior:attempt:0" },
+      candidate: { baseSha: revision, headSha: revision, files: ["src/view.ts"] },
+      riskAssessment: { changesDigest: "c".repeat(64) },
+      blocker: "New protected failure"
+    } as NativeWorkflow
+    prior.verification = fixtureVerification(s, prior, "prior", s.root, 1)
+    s.store.put("workflow", "prior", prior)
+    first.status = "done"
+    await expect(s.runtime.discover()).resolves.toMatchObject({ created: expect.any(Array) })
+    expect(s.gateway.cards).toHaveLength(2)
+    expect(s.gateway.cards[0].id).toBe(first.id)
+    expect(s.gateway.cards[0].notes).toBe(pointer)
+    expect(s.store.get<Investigation>("investigation", entry.id)!.cardNotes).toBe(notes)
+    expect(s.runtime.quality.feedback("ux").workflows[0]!.verificationArtifactSha256).not.toBeNull()
   })
   it("resumes partial discovery with the same round and no duplicate completed cards", async () => {
     const s = setup()
