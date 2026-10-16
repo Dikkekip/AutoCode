@@ -1377,3 +1377,23 @@ it("custody commit rejects changed pause authority after regenerated plan settle
   expect(s.store.get("effect-custody", s.id)).toBeNull()
   spy.mockRestore()
 })
+
+it("retained-session registration is an admin-only closed contract and requires public core state capability", async () => {
+  const s = await setup()
+  const revision = s.get().control.state.revision
+  const params = { cardId: "missing", controlRevision: revision, source: {}, reason: "Reviewed retained proof" }
+  expect(
+    (
+      await s.call("autocode.policy.retainedSession.register", params, {
+        connect: { device: { id: "operator" }, scopes: ["operator.read"] }
+      })
+    )[0]
+  ).toBe(false)
+  expect(
+    (await s.call("autocode.policy.retainedSession.register", { ...params, arbitrarySourcePath: "/tmp/forged" }))[0]
+  ).toBe(false)
+  expect(
+    (await s.call("autocode.policy.retainedSession.register", params, { connect: { scopes: ["operator.admin"] } }))[0]
+  ).toBe(false)
+  expect(s.get().store.list("retained-session-proof")).toEqual([])
+})

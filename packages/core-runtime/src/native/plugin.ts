@@ -16,6 +16,7 @@ import {
 } from "./policy-refresh.js"
 import { assertNativeMode } from "./promotion-mode.js"
 import { applyNativeRequestDeferral, createNativeOperatorRequest, planNativeRequestDeferral } from "./requests.js"
+import { configureNativeRetainedSessionRoot, registerNativeRetainedSession } from "./retained-session-proof.js"
 import { NativeAutonomyRuntime } from "./runtime.js"
 import { stopNativeRuntimeCalls, withNativeRuntimeCall, withNativeRuntimeRefresh } from "./runtime-lifetime.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
@@ -80,8 +81,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
     )
   }
   const gateway = new NativeSdkGateway(command ?? "openclaw")
-  const makeRuntime = (policy: NativeAutonomyPolicy, store: NativeEvidenceStore) =>
-    new NativeAutonomyRuntime(
+  const makeRuntime = (policy: NativeAutonomyPolicy, store: NativeEvidenceStore) => {
+    const runtime = new NativeAutonomyRuntime(
       policy,
       new NativeWorkspaceGateway(gateway, policy, () => {
         const owner = instances.get(policy.boardId)
@@ -93,6 +94,10 @@ export function registerNativeAutonomyPlugin(api: any): void {
       store,
       (api.pluginConfig?.humanInput ?? []).find((item: any) => item.boardId === policy.boardId)
     )
+    const resolveStateDir = api.runtime?.state?.resolveStateDir
+    if (typeof resolveStateDir === "function") configureNativeRetainedSessionRoot(runtime, resolveStateDir())
+    return runtime
+  }
   // Service startup precedes the Gateway accepting authenticated RPCs. Validate
   // before execution instead of waiting on the same Gateway during its startup.
   const ensureReady = async (r: NativeAutonomyRuntime): Promise<void> => {
@@ -273,6 +278,30 @@ export function registerNativeAutonomyPlugin(api: any): void {
             async (_retire, assertGeneration) =>
               r.withOwnership(() => applyNativeEffectCustody(r, params.plan, operatorId, assertGeneration))
           )
+        )
+      } catch (error) {
+        respond(false, undefined, { code: "autocode_error", message: String(error) })
+      }
+    },
+    { scope: "operator.admin" }
+  )
+  registerMethod(
+    "autocode.policy.retainedSession.register",
+    async ({ params, client, respond }: any) => {
+      try {
+        if (!client?.connect?.scopes?.includes("operator.admin")) throw new Error("Operator admin scope required")
+        if (
+          !params ||
+          Object.keys(params).some((key) => !["boardId", "cardId", "controlRevision", "source", "reason"].includes(key))
+        )
+          throw new Error("Unknown retained session proof argument")
+        const operatorId = client.connect.device?.id ?? client.connect.client?.id
+        respond(
+          true,
+          await registerNativeRetainedSession(runtime(params.boardId), gateway, params, {
+            operatorId,
+            rationale: params.reason
+          })
         )
       } catch (error) {
         respond(false, undefined, { code: "autocode_error", message: String(error) })

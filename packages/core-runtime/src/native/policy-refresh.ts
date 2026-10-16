@@ -7,6 +7,7 @@ import { assertNativeHeldCardAbsence, nativeEffectCustodyHeld } from "./effect-c
 import { type NativeCard, type NativeGateway, nativeCards, nativeObject } from "./gateway.js"
 import { nativeGovernanceDigest, requireNativeHuman } from "./governance.js"
 import { nativeRepairSupersessionClosed } from "./repair-intent.js"
+import { type RetainedSessionProof, registeredNativeRetainedSession } from "./retained-session-proof.js"
 import type { NativeAutonomyRuntime } from "./runtime.js"
 import { nativeRuntimeGeneration } from "./runtime-lifetime.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
@@ -98,8 +99,12 @@ function validatePlan(value: unknown): asserts value is NativePolicyRefreshPlan 
   )
     throw new Error("Invalid exact policy refresh plan")
 }
-function localIdle(runtime: NativeAutonomyRuntime) {
-  if (runtime.store.db.prepare("SELECT 1 FROM native_locks WHERE expires_at>? LIMIT 1").get(Date.now()))
+export function assertNativePolicyLocalIdle(runtime: NativeAutonomyRuntime, ownedLease = "") {
+  if (
+    runtime.store.db
+      .prepare("SELECT 1 FROM native_locks WHERE expires_at>? AND id<>? LIMIT 1")
+      .get(Date.now(), ownedLease)
+  )
     throw new Error("Native operation lease remains active")
   for (const kind of ["operation", "effect-intent"]) {
     if (
@@ -168,7 +173,11 @@ function historicalAcceptedRun(card: NativeCard) {
 const SESSION_PAGE_SIZE = 1000
 const MAX_SESSION_ROWS = 10000
 
-export async function assertNativePolicyRemoteIdle(runtime: NativeAutonomyRuntime, gateway: NativeGateway) {
+export async function assertNativePolicyRemoteIdle(
+  runtime: NativeAutonomyRuntime,
+  gateway: NativeGateway,
+  retained = (card: NativeCard): RetainedSessionProof | undefined => registeredNativeRetainedSession(runtime, card)
+) {
   const first = await nativeCards(gateway, runtime.policy.boardId)
   const checkCards = (cards: typeof first) => {
     assertNativeHeldCardAbsence(runtime.store, cards)
@@ -233,8 +242,8 @@ export async function assertNativePolicyRemoteIdle(runtime: NativeAutonomyRuntim
     }
     if (!result.hasMore) {
       if (seen.size !== expectedTotal || result.nextOffset != null) throw new Error("Incomplete session pagination")
-      if ([...ownedKeys].some((key) => !seen.has(key!)))
-        throw new Error("Owned card session is missing from complete listing")
+      const retainedCards: NativeCard[] = []
+      const retainedKeys = new Set<string>()
       for (const card of first) {
         const rawLaunch = (card.metadata?.automation as Record<string, unknown> | undefined)?.launch
         const launch = rawLaunch == null ? undefined : nativeObject(rawLaunch, "Workboard launch")
@@ -255,8 +264,18 @@ export async function assertNativePolicyRemoteIdle(runtime: NativeAutonomyRuntim
         )
           throw new Error("Accepted Workboard launch identity is uncertain")
         if (card.status === "review" && (!key || !run)) throw new Error("Review card lacks exact terminal run identity")
+        if (key && !seen.has(key) && !run) throw new Error("Missing retained card session lacks exact run identity")
         if (run) {
-          const session = key ? ownedSessions.get(key) : undefined
+          let session = key ? ownedSessions.get(key) : undefined
+          // A present but nonterminal/mismatched row must never use historical fallback.
+          if (!session && key && !seen.has(key)) {
+            const proof = retained(card)
+            if (proof && proof.sessionKey === key && proof.runId === run && proof.agentId === card.agentId) {
+              session = { key, agentId: proof.agentId, status: proof.terminal.status, endedAt: proof.terminal.endedAt }
+              retainedCards.push(card)
+              retainedKeys.add(key)
+            }
+          }
           const started = card.execution?.startedAt ?? card.startedAt ?? archived?.started
           if (
             !session ||
@@ -270,11 +289,13 @@ export async function assertNativePolicyRemoteIdle(runtime: NativeAutonomyRuntim
             throw new Error("Owned accepted run lacks terminal session proof")
         }
       }
+      if ([...ownedKeys].some((key) => !seen.has(key!) && !retainedKeys.has(key!)))
+        throw new Error("Owned card session is missing from complete listing")
       const last = await nativeCards(gateway, runtime.policy.boardId)
       checkCards(last)
       if (nativeGovernanceDigest(first) !== nativeGovernanceDigest(last))
         throw new Error("Workboard changed during policy refresh")
-      return { cards: first.length, sessions: seen.size }
+      return { cards: first.length, sessions: seen.size, retainedCards }
     }
     if (
       !Number.isSafeInteger(result.nextOffset) ||
@@ -308,16 +329,16 @@ export async function applyNativePolicyRefresh(
   assertPlan()
   return runtime.withOwnership(async () => {
     assertExecutionOwnership()
-    localIdle(runtime)
-    const evidence = await assertNativePolicyRemoteIdle(runtime, gateway)
+    assertNativePolicyLocalIdle(runtime)
+    const { retainedCards: _firstRetained, ...evidence } = await assertNativePolicyRemoteIdle(runtime, gateway)
     const next = candidate(runtime, file)
     const doctor = await nativeDoctor(next, gateway)
     if (!doctor.ok)
       throw new Error(`Policy refresh doctor failed: ${JSON.stringify(doctor.checks.filter((c) => !c.ok))}`)
     // Recheck remote state after slow doctor calls and local authority just before publication.
-    await assertNativePolicyRemoteIdle(runtime, gateway)
+    const { retainedCards } = await assertNativePolicyRemoteIdle(runtime, gateway)
     assertPlan()
-    localIdle(runtime)
+    assertNativePolicyLocalIdle(runtime)
     assertExecutionOwnership()
     const skillBinding = nativeSkillBindingStatus(runtime, next)
     const publish = prepare(next)
@@ -331,7 +352,10 @@ export async function applyNativePolicyRefresh(
       undefined,
       () => {
         assertPlan()
-        localIdle(runtime)
+        for (const card of retainedCards)
+          if (!registeredNativeRetainedSession(runtime, card))
+            throw new Error("Retained proof disappeared before publication")
+        assertNativePolicyLocalIdle(runtime)
         assertExecutionOwnership()
       }
     )
