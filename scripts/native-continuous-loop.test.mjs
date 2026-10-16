@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
-import { run } from "./native-continuous-loop.mjs"
+import { coordinate, run } from "./native-continuous-loop.mjs"
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), "native-loop-"))
@@ -222,5 +222,178 @@ test("invalid discovery intervals cannot invoke the Gateway", (t) => {
     const f = fixture(t)
     assert.throws(() => run({ ...f.options, discoveryIntervalMs }), /discovery interval/)
     assert.deepEqual(f.calls, [])
+  }
+})
+
+test("dispatch pulses allow only recognized workflow/verification leases", (t) => {
+  const f = fixture(t)
+  f.responses["autocode.dispatch"] = { advanced: 0, dispatch: { startedCount: 1 } }
+  f.status.activeLeases = [{ id: `workflow:${"a".repeat(64)}` }, { id: "capacity:verification:0" }]
+  f.status.counts.running = 1
+  assert.equal(run({ ...f.options, dispatchOnly: true }).dispatch.startedCount, 1)
+  assert.equal(f.calls.includes("autocode.reconcile"), false)
+  for (const id of ["discovery", "reconcile", "admission", "capacity:release:0", "workflow:unknown", "new-owner"]) {
+    f.calls.length = 0
+    f.status.activeLeases = [{ id }]
+    assert.equal(run({ ...f.options, dispatchOnly: true }).action, "wait-for-native-operation")
+    assert.deepEqual(f.calls, ["autocode.status"])
+  }
+})
+
+test("coordinator pulses one long owner without overlapping reconciliation", async (t) => {
+  const f = fixture(t)
+  let complete
+  let reconciles = 0
+  let ticks = 0
+  let waits = 0
+  const result = await coordinate(f.options, {
+    reconcile: () => {
+      reconciles++
+      return new Promise((resolve) => {
+        complete = resolve
+      })
+    },
+    wait: async () => {
+      waits++
+      if (waits === 2) complete({ advanced: 4 })
+    },
+    tick: (options) => {
+      assert.equal(options.dispatchOnly, true)
+      ticks++
+      return { action: "reconciled" }
+    }
+  })
+  assert.equal(reconciles, 1)
+  assert.ok(ticks >= 2)
+  assert.equal(result.advanced, 4)
+  assert.equal(result.pulses, ticks - 1)
+})
+
+test("existing verification permits a lightweight tick but prevents a replacement owner", async (t) => {
+  const f = fixture(t)
+  f.responses["autocode.dispatch"] = { advanced: 0 }
+  f.status.activeLeases = [{ id: `workflow:${"a".repeat(64)}` }]
+  f.status.counts.running = 1
+  let reconciles = 0
+  const result = await coordinate(f.options, {
+    reconcile: async () => {
+      reconciles++
+    }
+  })
+  assert.equal(result.advancement, "native-operation-active")
+  assert.equal(reconciles, 0)
+  assert.ok(f.calls.includes("autocode.dispatch"))
+})
+
+test("uncertain long-owner acceptance stops pulses without retry", async (t) => {
+  const f = fixture(t)
+  let reconciles = 0
+  let ticks = 0
+  await assert.rejects(
+    coordinate(f.options, {
+      reconcile: async () => {
+        reconciles++
+        throw new Error("unknown acceptance")
+      },
+      wait: () => new Promise((resolve) => setImmediate(resolve)),
+      tick: () => {
+        ticks++
+        return { action: "reconciled" }
+      }
+    }),
+    /unknown acceptance/
+  )
+  assert.equal(reconciles, 1)
+  assert.ok(ticks <= 2)
+})
+
+test("operator pause ends pulses while retaining accepted long-owner custody", async (t) => {
+  const f = fixture(t)
+  let ticks = 0
+  let waits = 0
+  let finished = false
+  const result = await coordinate(f.options, {
+    reconcile: async () => {
+      await new Promise((resolve) => setImmediate(resolve))
+      finished = true
+      return { advanced: 0 }
+    },
+    wait: async () => {
+      waits++
+    },
+    tick: () => ({ action: ++ticks === 1 ? "reconciled" : "preserve-operator-control" })
+  })
+  assert.equal(finished, true)
+  assert.equal(ticks, 2)
+  assert.equal(waits, 1)
+  assert.equal(result.pulses, 1)
+})
+
+test("pulse failure stops further work and waits for accepted reconciliation", async (t) => {
+  const f = fixture(t)
+  let ticks = 0
+  let finished = false
+  await assert.rejects(
+    coordinate(f.options, {
+      reconcile: async () => {
+        await new Promise((resolve) => setImmediate(resolve))
+        finished = true
+        return { advanced: 0 }
+      },
+      wait: async () => {},
+      tick: () => {
+        if (++ticks > 1) throw new Error("dispatch acceptance uncertain")
+        return { action: "reconciled" }
+      }
+    }),
+    /dispatch acceptance uncertain/
+  )
+  assert.equal(finished, true)
+  assert.equal(ticks, 2)
+})
+
+test("coordinated native ticks dispatch while the admitted verifier remains leased", async (t) => {
+  const f = fixture(t)
+  f.status.counts.running = 1
+  f.responses["autocode.dispatch"] = { advanced: 0, dispatch: { startedCount: 1 } }
+  let complete
+  let waits = 0
+  const result = await coordinate(f.options, {
+    reconcile: () => {
+      f.status.activeLeases = [{ id: `workflow:${"b".repeat(64)}` }, { id: "capacity:verification:0" }]
+      return new Promise((resolve) => {
+        complete = resolve
+      })
+    },
+    wait: () =>
+      new Promise((resolve) =>
+        setImmediate(() => {
+          if (++waits === 2) complete({ advanced: 1 })
+          resolve()
+        })
+      )
+  })
+  assert.equal(result.advanced, 1)
+  assert.ok(result.pulses >= 1)
+  assert.equal(f.calls.filter((method) => method === "autocode.dispatch").length, result.pulses + 1)
+  assert.equal(f.calls.includes("autocode.reconcile"), false)
+})
+
+test("coordinator preserves previews and operator control without a long owner", async (t) => {
+  for (const patch of [{ apply: false }, { paused: true }]) {
+    const f = fixture(t)
+    if (patch.paused) f.status.control.paused = true
+    f.responses["autocode.dispatch"] = { advanced: 0 }
+    let reconciles = 0
+    await coordinate(
+      { ...f.options, ...patch },
+      {
+        reconcile: async () => {
+          reconciles++
+        }
+      }
+    )
+    assert.equal(reconciles, 0)
+    assert.equal(f.calls.includes("autocode.dispatch"), false)
   }
 })
