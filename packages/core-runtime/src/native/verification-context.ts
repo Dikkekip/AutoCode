@@ -17,10 +17,33 @@ const exec = promisify(execFile)
 const limit = 32_768
 const immutableDefinitions = new Map<string, string>()
 
+/** Fixed diagnostics only: Docker stderr can contain private daemon and registry details. */
+export class NativeVerifierUnavailableError extends Error {
+  constructor() {
+    super("Pinned verifier image is unavailable locally; restore the reviewed toolchain before verification.")
+  }
+}
+
+export async function assertNativeVerifierImageAvailable(image: string): Promise<void> {
+  if (!/^sha256:[a-f0-9]{64}$/.test(image)) throw new NativeVerifierUnavailableError()
+  try {
+    const { stdout } = await exec("docker", ["image", "inspect", "--format", "{{.Id}}", image], {
+      timeout: 5_000,
+      maxBuffer: 1_024,
+      encoding: "utf8"
+    })
+    if (stdout.trim() !== image) throw new NativeVerifierUnavailableError()
+  } catch {
+    throw new NativeVerifierUnavailableError()
+  }
+}
+
 export async function readNativeVerifierDefinition(sandbox: NativeVerificationSandbox, path: string): Promise<string> {
   if (!isAbsolute(path) || path.split("/").includes("..")) throw new Error("Not an absolute verifier path")
   if (sandbox.backend === "docker") {
     if (!/^sha256:[a-f0-9]{64}$/.test(sandbox.image)) throw new Error("Verifier image is not immutable")
+    // Cached source bytes do not prove that the execution toolchain still exists.
+    await assertNativeVerifierImageAvailable(sandbox.image)
     const key = `${sandbox.image}:${path}`
     const cached = immutableDefinitions.get(key)
     if (cached !== undefined) return cached
@@ -30,6 +53,7 @@ export async function readNativeVerifierDefinition(sandbox: NativeVerificationSa
       [
         "run",
         "--rm",
+        "--pull=never",
         "--network",
         "none",
         "--read-only",
@@ -87,11 +111,14 @@ export async function nativeVerificationCommandContext(
         sha256: nativeContentDigest(source),
         complete: content === source
       }
-    } catch {
+    } catch (error) {
       definition = {
         path: command.argv[0]!,
         complete: false,
-        reason: "Toolchain executable is not available as bounded text; do not infer its coverage from its filename."
+        reason:
+          error instanceof NativeVerifierUnavailableError
+            ? error.message
+            : "Toolchain executable is not available as bounded text; do not infer its coverage from its filename."
       }
     }
     commands.push({
