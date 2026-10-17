@@ -386,6 +386,7 @@ export class NativeAutonomyRuntime {
     } catch {
       return { contextId, notes: context.notes }
     }
+    if (!notes || typeof notes !== "object" || Array.isArray(notes)) return { contextId, notes: context.notes }
     const workflowId = notes.workflowId
     const workflow = typeof workflowId === "string" ? this.store.get<NativeWorkflow>("workflow", workflowId) : null
     if (workflow?.gitStagePlan && typeof workflowId === "string") {

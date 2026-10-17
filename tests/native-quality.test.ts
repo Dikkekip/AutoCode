@@ -323,6 +323,17 @@ function fixtureVerification(
 }
 
 describe("native quality investigations", () => {
+  it("preserves plain and JSON-scalar legacy contexts when packet support is enabled", async () => {
+    const s = setup(fixtureSkill, [], true, true)
+    await s.runtime.discover()
+    const c = s.start()
+    const { contextId } = JSON.parse(c.card.notes)
+    const original = s.store.get<any>("card-context", contextId)
+    for (const notes of ["Complete instructions", "null", '"quoted instructions"', "[]"]) {
+      s.store.put("card-context", contextId, { ...original, notes })
+      expect((await s.runtime.readContext(c.agent, c.session, contextId)).notes).toBe(notes)
+    }
+  })
   it("holds implementation on publication failure and publishes the same plan after restart", async () => {
     const s = setup(fixtureSkill, [], true, true)
     const c = await prepare(s)
