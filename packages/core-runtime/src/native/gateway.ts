@@ -286,7 +286,13 @@ export interface NativeCard {
     claim?: { ownerId?: string; expiresAt?: number }
     links?: Array<{ type: string; targetCardId?: string }>
     comments?: Array<{ body?: string; createdAt?: number }>
-    automation?: { boardId?: string; idempotencyKey?: string; scheduledAt?: number; workspace?: { path?: string } }
+    automation?: {
+      boardId?: string
+      idempotencyKey?: string
+      scheduledAt?: number
+      maxRetries?: number
+      workspace?: { path?: string }
+    }
   }
 }
 /** Versioned subset consumed by this runtime. Unknown statuses fail closed until reviewed. */

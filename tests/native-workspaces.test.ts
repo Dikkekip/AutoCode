@@ -482,3 +482,97 @@ it("restores exact unaccepted capacity failures and rechecks current allocation 
   })
   expect(starts).toBe(2)
 })
+
+it.each([
+  "scratch",
+  "dir",
+  "worktree"
+])("isolates an exhausted %s card without consuming capacity or changing budgets", async (kind) => {
+  const s = setup()
+  Object.assign(s.card.metadata, { failureCount: 2 })
+  Object.assign(s.card.metadata.automation, { maxRetries: 1 })
+  s.card.metadata.automation.workspace = {
+    kind,
+    path: "/must-not-resolve",
+    sourcePath: "/must-not-resolve",
+    sourceBranch: "wrong"
+  } as any
+  const healthy = { ...s.card, id: "healthy", metadata: { automation: { workspace: { kind: "scratch" } } } }
+  const before = JSON.stringify(s.card)
+  s.gateway.request.mockImplementation(async (method, params) => {
+    s.calls.push([method, params])
+    if (method === "workboard.cards.list") return { cards: params.boardId ? [s.card, healthy] : [] } as any
+    if (method === "workboard.cards.start" && params.id === "healthy") return { started: true } as any
+    throw new Error("Unexpected call: " + method)
+  })
+  const result = await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })
+  expect(result).toEqual({
+    started: [{ started: true }],
+    startedCardIds: ["healthy"],
+    startFailures: [{ cardId: "card", error: "card exhausted its retry budget." }]
+  })
+  expect(s.calls.filter(([m]) => m === "workboard.cards.start")).toEqual([["workboard.cards.start", { id: "healthy" }]])
+  expect(JSON.stringify(s.card)).toBe(before)
+})
+
+it.each([
+  { maxRetries: 1, failureCount: 1 },
+  { failureCount: 9 },
+  { maxRetries: 0, failureCount: 9 }
+])("retains Workboard retry boundary semantics %j", async (accounting) => {
+  const s = setup()
+  Object.assign(s.card.metadata, { failureCount: accounting.failureCount })
+  Object.assign(
+    s.card.metadata.automation,
+    accounting.maxRetries === undefined ? {} : { maxRetries: accounting.maxRetries }
+  )
+  expect(
+    (await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board" })).started
+  ).toHaveLength(1)
+})
+
+it.each([
+  { maxRetries: "1", failureCount: 2 },
+  { maxRetries: 1, failureCount: -1 },
+  { maxRetries: 1, failureCount: NaN }
+])("fails closed on invalid retry accounting %j", async (accounting) => {
+  const s = setup()
+  Object.assign(s.card.metadata, { failureCount: accounting.failureCount })
+  Object.assign(s.card.metadata.automation, { maxRetries: accounting.maxRetries })
+  await expect(s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).rejects.toThrow(
+    "Native retry accounting incomplete"
+  )
+  expect(s.calls.some(([m]) => m === "workboard.cards.start")).toBe(false)
+})
+
+it("keeps an exhausted unaccepted allocation failure blocked while starting another card", async () => {
+  const s = setup()
+  Object.assign(s.card.metadata, { failureCount: 1 })
+  Object.assign(s.card.metadata.automation, { maxRetries: 1 })
+  const healthy = { ...s.card, id: "healthy", metadata: { automation: { workspace: { kind: "scratch" } } } }
+  const diagnostic = "Insufficient disk space near /worktrees for worktree allocation: 4.1 GiB available"
+  s.gateway.request.mockImplementation(async (method, params) => {
+    s.calls.push([method, params])
+    if (method === "workboard.cards.list") return { cards: params.boardId ? [s.card, healthy] : [] } as any
+    if (method === "workboard.cards.start" && params.id === "card") {
+      s.card.status = "blocked"
+      s.card.updatedAt = 20
+      Object.assign(s.card.metadata, {
+        failureCount: 2,
+        comments: [{ body: `Dispatcher could not start worker: ${diagnostic}`, createdAt: 20 }]
+      })
+      throw new Error(diagnostic)
+    }
+    if (method === "workboard.cards.start" && params.id === "healthy") return { started: true } as any
+    throw new Error("Unexpected mutation: " + method)
+  })
+  const result = await s.adapter.request<any>("workboard.cards.dispatchWithOptions", { boardId: "board" })
+  expect(result).toEqual({
+    started: [{ started: true }],
+    startedCardIds: ["healthy"],
+    startFailures: [{ cardId: "card", error: "card exhausted its retry budget." }]
+  })
+  expect(s.card.status).toBe("blocked")
+  expect((s.card.metadata as any).failureCount).toBe(2)
+  expect(s.calls.some(([m]) => m === "workboard.cards.update")).toBe(false)
+})

@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
-import { type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
+import { type NativeCard, type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
 
 /** Preserve native admission, dependency and owner serialization while Workboard owns checkout preparation. */
 export class NativeWorkspaceGateway implements NativeGateway {
@@ -126,10 +126,28 @@ export class NativeWorkspaceGateway implements NativeGateway {
     const deferred: Array<{ cardId: string; reason: "worktree-capacity" | "workspace-unavailable" }> = []
     const started: unknown[] = []
     const startedCardIds: string[] = []
+    const startFailures: Array<{ cardId: string; error: string }> = []
+    // Workboard owns retry accounting. Match its exhausted predicate without
+    // attempting another start or allowing one exhausted card to starve peers.
+    const exhausted = (card: NativeCard) => {
+      const maximum = card.metadata?.automation?.maxRetries
+      const failures = card.metadata?.failureCount ?? 0
+      if (
+        (maximum !== undefined && (!Number.isSafeInteger(maximum) || maximum < 0)) ||
+        !Number.isSafeInteger(failures) ||
+        failures < 0
+      )
+        throw new Error("Native retry accounting incomplete")
+      return Boolean(maximum && failures > maximum)
+    }
     const maximum = Math.min(this.policy.workerConcurrency, Number(params.maxStarts) || 1)
     for (const card of cards) {
       if (started.length >= maximum) break
       if (busy.has(card.agentId)) continue
+      if (exhausted(card)) {
+        startFailures.push({ cardId: card.id, error: "card exhausted its retry budget." })
+        continue
+      }
       const workspace = card.metadata?.automation?.workspace as
         | { kind?: string; path?: string; sourcePath?: string; sourceBranch?: string }
         | undefined
@@ -201,6 +219,10 @@ export class NativeWorkspaceGateway implements NativeGateway {
             !Number.isFinite(after.updatedAt)
           )
             throw error
+          if (exhausted(after)) {
+            startFailures.push({ cardId: card.id, error: "card exhausted its retry budget." })
+            continue
+          }
           this.authorize()
           await this.gateway.request("workboard.cards.update", {
             id: card.id,
@@ -218,6 +240,7 @@ export class NativeWorkspaceGateway implements NativeGateway {
     return {
       started,
       ...(deferred.length ? { deferred } : {}),
+      ...(startFailures.length ? { startFailures } : {}),
       ...(startedCardIds.length ? { startedCardIds } : {})
     } as T
   }
