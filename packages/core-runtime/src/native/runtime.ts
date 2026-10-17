@@ -69,6 +69,7 @@ import { NativeReleasePending, releaseNativeWorkflow } from "./release.js"
 import { type NativeRepairObservation, nativeRepairObservation, planNativeRepair } from "./repair.js"
 import { nativeRepairSupersessionClosed, supersedeLegacyNativeRepairIntent } from "./repair-intent.js"
 import { NativeResourceGuard } from "./resource-pressure.js"
+import { nativeReviewContext } from "./review-context.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
@@ -1493,8 +1494,20 @@ export class NativeAutonomyRuntime {
     const card = await nativeCardById(this.gateway, this.policy.boardId, workflow.reviewCardId)
     this.assertSession(card, sessionKey)
     this.assertPacketContext(workflowId, workflow, card!, agentId, sessionKey)
-    if (!workflow.verification || workflow.verification.headSha !== headSha)
+    if (
+      !workflow.candidate ||
+      workflow.candidate.headSha !== headSha ||
+      !workflow.verification ||
+      workflow.verification.headSha !== headSha
+    )
       throw new Error("Review must match verified candidate")
+    assertNativeVerificationEvidence(
+      this.policy,
+      workflow.candidate,
+      workflow.verification,
+      workflow.proposal.acceptance,
+      this.quality.designApproved(workflow) ? { headSha, reviewedBy: this.policy.reviewerAgentId } : undefined
+    )
     const structured = workflow.proposal.quality
       ? validateNativeAssessment(assessment, workflow.proposal.acceptance, verdict === "approved")
       : undefined
@@ -1543,7 +1556,10 @@ export class NativeAutonomyRuntime {
         : observedLifecycle
     const previousRepairs = workflow.repairCount ?? 0
     const repairCount = previousRepairs + 1
-    if (repairCount > 2 || !workflow.candidate) throw new Error(`Repair budget exhausted: ${reason}`)
+    if (repairCount > 2 || !workflow.candidate)
+      throw new Error(
+        `Repair budget exhausted: ${reason}. Preserve candidate and review evidence; operator must reconsider the approach before scoped recovery.`
+      )
     const attempt = previousLifecycle.attempt + 1
     const observation = nativeRepairObservation(workflow, reason)
     const history = previousRepairs
@@ -1822,6 +1838,7 @@ export class NativeAutonomyRuntime {
       const context = nativeObject(JSON.parse(notes), "Final review context")
       notes = JSON.stringify({
         ...context,
+        reviewContext: nativeReviewContext(this.store, id, workflow),
         workflowId: id,
         candidate: workflow.candidate,
         proposal: workflow.proposal,
