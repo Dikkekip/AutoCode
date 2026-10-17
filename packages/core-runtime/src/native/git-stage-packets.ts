@@ -105,7 +105,11 @@ export class NativeGitStagePackets {
   project(id: string, value: unknown, sequence: number): NativeRecordWrite[] {
     const workflow = value as NativeWorkflow
     const plan = workflow.gitStagePlan
-    if (!plan) return [] // Existing workflows keep their admitted contract.
+    const previous = this.store.get<NativeWorkflow>("workflow", id)
+    if (!plan) {
+      if (previous?.gitStagePlan) throw new Error("Cannot remove an admitted Git stage plan")
+      return [] // Existing workflows keep their admitted contract.
+    }
     validateGitStagePlan(plan)
     if (plan.workflowId !== id || plan.boardId !== this.policy.boardId)
       throw new Error("Git stage workflow identity mismatch")
@@ -116,7 +120,6 @@ export class NativeGitStagePackets {
       JSON.stringify(plan.dependencyWorkflowIds) !== JSON.stringify(workflow.proposal.dependsOnWorkflowIds ?? [])
     )
       throw new Error("Git stage proposal changed after admission")
-    const previous = this.store.get<NativeWorkflow>("workflow", id)
     if (JSON.stringify(plan) !== JSON.stringify(previous?.gitStagePlan ?? plan))
       throw new Error("Git stage plan is immutable; admit a successor workflow")
     const eventId = gitStageDigest(`${id}:${sequence}`)

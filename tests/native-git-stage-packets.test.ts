@@ -229,6 +229,9 @@ describe("local native Git stage packets", () => {
     const changed = s.store.get<NativeWorkflow>("workflow", s.id)!
     changed.proposal.implementationPrompt = "Escalate permissions"
     expect(() => s.store.put("workflow", s.id, changed)).toThrow("proposal changed")
+    const removed = s.store.get<NativeWorkflow>("workflow", s.id)!
+    delete removed.gitStagePlan
+    expect(() => s.store.put("workflow", s.id, removed)).toThrow("Cannot remove")
     s.git("commit", "--allow-empty", "-m", "new base")
     s.git("update-ref", "refs/remotes/origin/main", "HEAD")
     expect(() => s.packets.plan(s.id, s.proposal)).toThrow("source changed")
