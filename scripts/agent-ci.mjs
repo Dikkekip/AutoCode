@@ -19,9 +19,16 @@ const receipt = {
   headSha,
   node: process.version,
   startedAt: new Date().toISOString(),
-  status: "failed",
+  status: "running",
+  isolation: {
+    dockerImage: process.env.NATIVE_TEST_DOCKER_IMAGE ?? null,
+    rootFilesystem: process.env.NATIVE_TEST_ROOTFS ?? null
+  },
   checks: []
 }
+// Invalidate an earlier success before starting so interruption cannot leave
+// that success looking like the result of this invocation.
+writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 })
 let exitCode = 1
 try {
   if (git("status", "--porcelain")) throw new Error("Agent CI requires a clean committed checkout")
@@ -43,6 +50,7 @@ try {
   receipt.status = "passed"
   exitCode = 0
 } catch (error) {
+  receipt.status = "failed"
   receipt.error = String(error)
   console.error(receipt.error)
 } finally {
