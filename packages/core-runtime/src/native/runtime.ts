@@ -388,7 +388,7 @@ export class NativeAutonomyRuntime {
     }
     const workflowId = notes.workflowId
     const workflow = typeof workflowId === "string" ? this.store.get<NativeWorkflow>("workflow", workflowId) : null
-    if (workflow?.gitStagePlan) {
+    if (workflow?.gitStagePlan && typeof workflowId === "string") {
       const packet = this.gitStagePackets!.context(workflowId, workflow.gitStagePlan)
       this.store.put("git-stage-context", `${workflowId}:${sessionKey}`, {
         agentId,
