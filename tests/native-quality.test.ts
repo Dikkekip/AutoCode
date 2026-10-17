@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it, vi } from "vitest"
@@ -14,6 +14,7 @@ import {
 import type { Investigation } from "../packages/core-runtime/src/native/quality.js"
 import { nativeRepairObservation, planNativeRepair } from "../packages/core-runtime/src/native/repair.js"
 import { createNativeOperatorRequest } from "../packages/core-runtime/src/native/requests.js"
+import { nativeReviewContext } from "../packages/core-runtime/src/native/review-context.js"
 import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 import {
   bootstrapNativeSkill,
@@ -358,6 +359,25 @@ function fixtureVerification(
 }
 
 describe("native quality investigations", () => {
+  it("retains bounded prior findings across restart without treating them as current approval", () => {
+    const s = setup()
+    const workflow = { proposal: proposal(), repairCount: 2 } as NativeWorkflow
+    const review = {
+      headSha: "old-head",
+      verdict: "changes_requested",
+      rationale: "src/view.ts:1 breaks navigation",
+      assessment: { findings: [{ blocking: true, description: "Navigation is unavailable" }] }
+    }
+    for (const attempt of [1, 2, 3]) s.store.put("attempt-evidence", `workflow:${attempt}`, { review })
+    s.store.put("attempt-evidence", "workflow:invalid", { review })
+    s.store.put("attempt-evidence", "other:4", { review })
+    const restarted = new NativeAutonomyRuntime(s.policy, s.gateway, s.store)
+    const context = nativeReviewContext(restarted.store, "workflow", workflow)
+    expect(context).toMatchObject({ round: 3, maxRounds: 3, mode: "changes-and-unresolved-findings" })
+    expect(context.priorReviews).toHaveLength(2)
+    expect(context.priorReviews[0]?.findings).toEqual(review.assessment.findings)
+    expect(nativeReviewContext(s.store, "fresh", workflow).mode).toBe("full-candidate")
+  })
   it.each([
     false,
     true
@@ -568,13 +588,81 @@ describe("native quality investigations", () => {
     expect(notes.committedDiff.content).toContain("+export const navigation = true")
     expect(notes.verification.verificationDigest).toBe(nativeVerificationDigest(workflow.verification))
     expect(notes.proposal.acceptance).toEqual(workflow.proposal.acceptance)
+    expect(notes.reviewContext).toMatchObject({ round: 1, maxRounds: 3, mode: "full-candidate", priorReviews: [] })
     expect(input.agentId).toBe(s.policy.reviewerAgentId)
     expect(workflow.review).toBeUndefined()
+    if (!gitPackets) {
+      card.status = "running"
+      card.sessionKey = "independent-review"
+      workflow.reviewCardId = card.id
+      s.store.commit(
+        [
+          {
+            kind: "workflow",
+            id: workflowId,
+            value: workflow,
+            expectedVersion: s.store.version("workflow", workflowId)
+          }
+        ],
+        { kind: "test.candidate-mutated", subject: workflowId, value: {} }
+      )
+      const artifact = workflow.verification!.checks[0]!.artifact
+      const originalArtifact = readFileSync(artifact)
+      writeFileSync(artifact, "tampered receipt")
+      await expect(
+        s.runtime.review(
+          "reviewer",
+          card.sessionKey,
+          workflowId,
+          candidate.headSha,
+          "approved",
+          "Stale passing result",
+          assessment
+        )
+      ).rejects.toThrow("artifact integrity")
+      writeFileSync(artifact, originalArtifact)
+      const changed = structuredClone(workflow)
+      changed.candidate!.headSha = "0".repeat(40)
+      const read = vi.spyOn(s.runtime, "requireWorkflow").mockReturnValueOnce(changed)
+      await expect(
+        s.runtime.review(
+          "reviewer",
+          card.sessionKey,
+          workflowId,
+          candidate.headSha,
+          "approved",
+          "Old candidate",
+          assessment
+        )
+      ).rejects.toThrow("verified candidate")
+      read.mockRestore()
+      await expect(
+        s.runtime.review(
+          "reviewer",
+          card.sessionKey,
+          workflowId,
+          candidate.headSha,
+          "approved",
+          "Verified current candidate",
+          assessment
+        )
+      ).resolves.toEqual({ recorded: true })
+    }
     if (gitPackets) {
       card.status = "running"
       card.sessionKey = "independent-packet-review"
       workflow.reviewCardId = card.id
-      s.store.put("workflow", workflowId, workflow)
+      s.store.commit(
+        [
+          {
+            kind: "workflow",
+            id: workflowId,
+            value: workflow,
+            expectedVersion: s.store.version("workflow", workflowId)
+          }
+        ],
+        { kind: "test.candidate-restored", subject: workflowId, value: {} }
+      )
       await expect(
         s.runtime.review(
           "reviewer",
