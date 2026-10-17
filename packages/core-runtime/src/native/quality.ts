@@ -355,7 +355,9 @@ export class NativeQualityRuntime {
     if (options.inventory === false && !investigations.some(({ value }) => value.state === "pending" && value.cardId))
       return []
     const cards = await nativeCards(this.gateway, this.policy.boardId)
-    for (const item of investigations) {
+    // finish() can persist a result while the board request is in flight.
+    // Only use the earlier snapshot for the synchronous no-work fast path.
+    for (const item of this.store.list<Investigation>("investigation")) {
       const entry = item.value
       if (entry.state !== "pending" || !entry.cardId) continue
       const card = cards.find((c) => c.id === entry.cardId)

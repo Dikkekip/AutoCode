@@ -986,6 +986,35 @@ describe("native quality investigations", () => {
     expect(await s.runtime.quality.syncInvestigations()).toEqual(s.gateway.cards)
     expect(s.gateway.calls).toEqual([{ method: "workboard.cards.list", params: { boardId: s.policy.boardId } }])
   })
+  it.each([
+    ["completed", "running"],
+    ["completed", "done"],
+    ["no_op", "running"],
+    ["no_op", "done"]
+  ])("preserves %s recorded while inventory waits, even if the card becomes %s", async (outcome, status) => {
+    const s = setup()
+    await s.runtime.discover()
+    const c = s.start()
+    if (outcome === "completed")
+      s.store.put("proposal", "concurrent-finding", { roundId: c.roundId, proposal: proposal() })
+    let releaseInventory!: (value: any) => void
+    const inventory = new Promise((resolve) => {
+      releaseInventory = resolve
+    })
+    const request = s.gateway.request.bind(s.gateway)
+    s.gateway.request = (method, params) =>
+      method === "workboard.cards.list" ? (inventory as any) : request(method, params)
+    const synchronization = s.runtime.quality.syncInvestigations({ inventory: false })
+    await s.runtime.quality.finish(c.agent, c.session, c.roundId, "ux", outcome, "Concurrent finish is durable")
+    const key = `${c.roundId}:ux`
+    const finished = s.store.get<Investigation>("investigation", key)!
+    expect(finished.state).toBe(outcome)
+    c.card.status = status
+    if (status === "done") c.card.execution = { status: "done", sessionKey: c.session }
+    releaseInventory({ cards: s.gateway.cards })
+    await synchronization
+    expect(s.store.get<Investigation>("investigation", key)).toEqual(finished)
+  })
   it("still reads fresh inventory and synchronizes a pending investigation during reconciliation", async () => {
     const s = setup()
     await s.runtime.discover()
