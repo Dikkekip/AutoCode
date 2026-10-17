@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { authorizeNativeTool } from "../packages/core-runtime/src/native/broker.js"
 import type { NativeGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { NativeHumanInput } from "../packages/core-runtime/src/native/human-input.js"
@@ -101,6 +101,7 @@ function setup(
   skill = fixtureSkill,
   highRiskPaths?: string[],
   independentCandidateReview = false,
+  gitStagePackets = false,
   bindFixtureAcceptance = false
 ) {
   const root = mkdtempSync(join(tmpdir(), "native-quality-"))
@@ -128,6 +129,7 @@ function setup(
     coderAgentId: "coder",
     reviewerAgentId: "reviewer",
     quality: { skillPath, ...(highRiskPaths ? { highRiskPaths } : {}) },
+    ...(gitStagePackets ? { gitStagePackets: { version: 1, enabled: true } } : {}),
     discoveryDailyRoundLimit: 24,
     personas: ["ux", "backend", "legal"].map((id) => ({
       personaId: id,
@@ -356,8 +358,11 @@ function fixtureVerification(
 }
 
 describe("native quality investigations", () => {
-  it("places validated historical failures in shared authorized research contexts without sharing workflow details", async () => {
-    const s = setup(fixtureSkill, [], true, true)
+  it.each([
+    false,
+    true
+  ])("places validated historical failures in shared authorized research contexts (Git packets: %s)", async (gitPackets) => {
+    const s = setup(fixtureSkill, [], true, gitPackets, true)
     const revision = s.git("rev-parse", "HEAD")
     // Synthetic protected receipt: exercise context routing, not actual runtime measurement.
     const workflow = {
@@ -375,6 +380,9 @@ describe("native quality investigations", () => {
     await s.runtime.discover()
     const contexts = s.store.list<any>("card-context").map(({ value }) => JSON.parse(value.notes))
     const own = contexts.find((context) => context.persona?.personaId === "ux")
+    expect(own.instructions.some((instruction: string) => instruction.startsWith("Git stage workflow:"))).toBe(
+      gitPackets
+    )
     expect(own.nativeVerificationFailures[0]).toMatchObject({
       status: "available",
       workflowId: "prior",
@@ -395,8 +403,81 @@ describe("native quality investigations", () => {
     )
   })
 
-  it("stages final acceptance review from complete committed evidence instead of the linked HOST checkout", async () => {
-    const s = setup(fixtureSkill, [], true)
+  it("preserves plain and JSON-scalar legacy contexts when packet support is enabled", async () => {
+    const s = setup(fixtureSkill, [], true, true)
+    await s.runtime.discover()
+    const c = s.start()
+    const { contextId } = JSON.parse(c.card.notes)
+    const original = s.store.get<any>("card-context", contextId)
+    for (const notes of ["Complete instructions", "null", '"quoted instructions"', "[]"]) {
+      s.store.put("card-context", contextId, { ...original, notes })
+      expect((await s.runtime.readContext(c.agent, c.session, contextId)).notes).toBe(notes)
+    }
+  })
+  it("holds implementation on publication failure and publishes the same plan after restart", async () => {
+    const s = setup(fixtureSkill, [], true, true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Bounded source repair")
+    const card = s.gateway.cards.find(
+      (entry) => entry.id === s.runtime.requireWorkflow(workflowId).implementationCardId
+    )
+    const failure = vi.spyOn(s.runtime.gitStagePackets!, "flush").mockImplementation(() => {
+      throw new Error("publication unavailable")
+    })
+    try {
+      await expect(s.runtime.reconcile({ dispatchOnly: true })).rejects.toThrow("publication unavailable")
+      expect(card.status).toBe("blocked")
+      expect(s.gateway.calls.some((call) => call.method === "workboard.cards.dispatchWithOptions")).toBe(false)
+    } finally {
+      failure.mockRestore()
+    }
+    const restarted = new NativeAutonomyRuntime(s.policy, s.gateway, s.store)
+    restarted.gitStagePackets!.flush()
+    expect(restarted.gitStagePackets!.status().pending).toEqual([])
+    expect(s.store.list<any>("git-stage-export")).toHaveLength(1)
+    expect(s.store.get<any>("admission", workflowId).phase).toBe("prepared")
+  })
+  it("rejects missing dependencies before creating workflow cards", async () => {
+    const s = setup()
+    const c = await prepare(s, { ...proposal(), dependsOnWorkflowIds: ["missing-workflow"] } as ReturnType<
+      typeof proposal
+    >)
+    const before = s.gateway.cards.length
+    await expect(s.runtime.admit("planner", c.proposalId, "Bounded source repair")).rejects.toThrow("dependency")
+    expect(s.gateway.cards).toHaveLength(before)
+  })
+  it("retains dependency waits across restart and does not trust a manually completed parent card", async () => {
+    const s = setup(fixtureSkill, [], true, true)
+    const dependencyId = "d".repeat(64)
+    const c = await prepare(s, { ...proposal(), dependsOnWorkflowIds: [dependencyId] } as ReturnType<typeof proposal>)
+    s.gateway.cards.push({ id: "parent-root", title: "Parent", status: "blocked" })
+    const dependentProposal = s.store.get<any>("proposal", c.proposalId).proposal
+    const parent = {
+      proposal: { ...dependentProposal, dependsOnWorkflowIds: undefined },
+      rootCardId: "parent-root",
+      implementationCardId: "parent-code",
+      stageCards: {}
+    }
+    s.store.put("workflow", dependencyId, parent)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Wait for parent completion")
+    const card = s.gateway.cards.find(
+      (entry) => entry.id === s.runtime.requireWorkflow(workflowId).implementationCardId
+    )
+    const restarted = new NativeAutonomyRuntime(s.policy, s.gateway, s.store)
+    await restarted.reconcile({ dispatchOnly: true })
+    expect(card.status).toBe("blocked")
+    s.gateway.cards.find((entry) => entry.id === "parent-root").status = "done"
+    await restarted.reconcile({ dispatchOnly: true })
+    expect(card.status).toBe("blocked")
+    expect(s.store.get<any>("admission", workflowId).phase).toBe("prepared")
+    expect(s.gateway.cards.filter((entry) => entry.title.startsWith("Implement:"))).toHaveLength(1)
+  })
+  it.each([
+    false,
+    true
+  ])("stages final acceptance review from committed evidence (Git packets: %s)", async (gitPackets) => {
+    const s = setup(fixtureSkill, [], true, gitPackets)
+
     const c = await prepare(s)
     const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful bounded navigation repair")
     const worktree = join(s.root, "final-review-candidate")
@@ -410,6 +491,28 @@ describe("native quality investigations", () => {
     implementation.status = "running"
     implementation.sessionKey = "candidate-coder"
     implementation.metadata = { automation: { workspace: { path: worktree } } }
+    let packetCommit: string | undefined
+    if (gitPackets) {
+      await expect(s.runtime.submit("coder", implementation.sessionKey, workflowId, worktree)).rejects.toThrow(
+        "autocode_context"
+      )
+      const contextId = JSON.parse(implementation.notes).contextId
+      const context = JSON.parse((await s.runtime.readContext("coder", implementation.sessionKey, contextId)).notes)
+      packetCommit = context.gitStagePacket.commit
+      expect(context.gitStagePacket.coderPrompt).toBe(proposal().implementationPrompt)
+      expect(context.gitStagePacket.sourceBaseSha).toBe(s.git("rev-parse", "origin/main"))
+      await expect(s.runtime.readContext("coder", "old-session", contextId)).rejects.toThrow("session")
+      implementation.metadata.claim = { expiresAt: Date.now() - 1 }
+      await expect(s.runtime.submit("coder", implementation.sessionKey, workflowId, worktree)).rejects.toThrow(
+        "active Workboard session"
+      )
+      delete implementation.metadata.claim
+      implementation.runId = "reassigned-execution"
+      await expect(s.runtime.submit("coder", implementation.sessionKey, workflowId, worktree)).rejects.toThrow(
+        "autocode_context"
+      )
+      delete implementation.runId
+    }
     await expect(s.runtime.submit("coder", implementation.sessionKey, workflowId, worktree)).resolves.toMatchObject({
       accepted: true
     })
@@ -467,6 +570,56 @@ describe("native quality investigations", () => {
     expect(notes.proposal.acceptance).toEqual(workflow.proposal.acceptance)
     expect(input.agentId).toBe(s.policy.reviewerAgentId)
     expect(workflow.review).toBeUndefined()
+    if (gitPackets) {
+      card.status = "running"
+      card.sessionKey = "independent-packet-review"
+      workflow.reviewCardId = card.id
+      s.store.put("workflow", workflowId, workflow)
+      await expect(
+        s.runtime.review(
+          "reviewer",
+          card.sessionKey,
+          workflowId,
+          candidate.headSha,
+          "approved",
+          "Inspected",
+          assessment
+        )
+      ).rejects.toThrow("autocode_context")
+      const context = JSON.parse((await s.runtime.readContext("reviewer", card.sessionKey, pointer.contextId)).notes)
+      expect(context.gitStagePacket.commit).toBe(packetCommit)
+      await expect(
+        s.runtime.review(
+          "reviewer",
+          card.sessionKey,
+          workflowId,
+          "0".repeat(40),
+          "approved",
+          "Wrong candidate",
+          assessment
+        )
+      ).rejects.toThrow("verified candidate")
+      await s.runtime.review(
+        "reviewer",
+        card.sessionKey,
+        workflowId,
+        candidate.headSha,
+        "changes_requested",
+        "Improve navigation evidence",
+        assessment
+      )
+      s.runtime.gitStagePackets!.flush()
+      const exports = s.store.list<any>("git-stage-export")
+      expect(exports.length).toBeGreaterThan(2)
+      expect(exports.every(({ value }) => value.commit)).toBe(true)
+      const last = exports.sort((a, b) => a.value.sequence - b.value.sequence).at(-1)!.value
+      const handoff = s.git("show", `${last.commit}:workflows/${workflowId}/handoffs/${last.eventId}.json`)
+      expect(JSON.parse(handoff)).toMatchObject({
+        candidateCodeSha: candidate.headSha,
+        nextRole: "coder",
+        review: { verdict: "changes_requested" }
+      })
+    }
     const count = s.gateway.cards.length
     const failed = structuredClone(workflow)
     failed.verification!.checks[0]!.exitCode = 1
@@ -736,8 +889,11 @@ describe("native quality investigations", () => {
     await expect(authorizeNativeTool(s.runtime, "autocode_context", args, context)).rejects.toThrow(/not assigned/)
     await expect(s.runtime.readContext(context.agentId, context.sessionKey, contextId)).rejects.toThrow()
   })
-  it("replays identical context after a lost creation response even when new failure evidence arrives", async () => {
-    const s = setup(fixtureSkill, [], true, true)
+  it.each([
+    false,
+    true
+  ])("replays identical context after a lost creation response and new failure evidence (Git packets: %s)", async (gitPackets) => {
+    const s = setup(fixtureSkill, [], true, gitPackets, true)
     await createNativeOperatorRequest(s.runtime, operatorBrief(s), "authenticated operator.admin")
     s.gateway.failResponseAfterCreateAt = 0
     await expect(s.runtime.discover()).rejects.toThrow("card created but response lost")

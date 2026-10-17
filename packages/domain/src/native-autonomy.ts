@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto"
 import { isAbsolute, matchesGlob, normalize } from "node:path"
+import { type GitStagePolicy, validateGitStagePolicy } from "./git-stage-packets.js"
 import { type NativeBudgetPolicy, validateNativeBudgetPolicy } from "./native-budget.js"
 import { type NativeQualityPolicy, validateNativeQualityPolicy } from "./native-quality.js"
 
@@ -69,6 +70,7 @@ export interface NativeAutonomyPolicy {
     canaryArtifact: { path: string; sha256: string }
   }
   quality?: NativeQualityPolicy
+  gitStagePackets?: GitStagePolicy
   enabled: boolean
   boardId: string
   repository: string
@@ -311,6 +313,7 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
           }
         }),
     ...(r.quality === undefined ? {} : { quality: validateNativeQualityPolicy(r.quality) }),
+    ...(r.gitStagePackets === undefined ? {} : { gitStagePackets: validateGitStagePolicy(r.gitStagePackets) }),
     enabled: r.enabled,
     boardId: text(r.boardId, "boardId"),
     repository,
@@ -449,6 +452,7 @@ export interface NativeProposal {
   acceptance: string[]
   alternatives: string[]
   implementationPrompt: string
+  dependsOnWorkflowIds?: string[]
   complexity?: { tier: "simple" | "routine" | "very-complex"; rationale: string }
   quality?: import("./native-quality.js").NativeProposalQuality
 }
@@ -482,6 +486,14 @@ export function validateNativeProposal(value: unknown, policy: NativeAutonomyPol
     acceptance: strings(r.acceptance, "acceptance"),
     alternatives: strings(r.alternatives, "alternatives"),
     implementationPrompt: text(r.implementationPrompt, "implementationPrompt"),
+    ...(r.dependsOnWorkflowIds === undefined
+      ? {}
+      : {
+          dependsOnWorkflowIds:
+            Array.isArray(r.dependsOnWorkflowIds) && !r.dependsOnWorkflowIds.length
+              ? []
+              : [...new Set(strings(r.dependsOnWorkflowIds, "dependsOnWorkflowIds"))]
+        }),
     ...(complexity ? { complexity } : {})
   }
 }

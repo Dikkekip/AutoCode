@@ -30,6 +30,16 @@ export async function nativeDoctor(
     }
   }
   await check("repository", () => realpathSync(policy.repository))
+  if (policy.gitStagePackets?.enabled)
+    await check("git-stage-packets", async () => {
+      if (!policy.quality) throw new Error("Git stage packets require skill-backed quality investigations")
+      await promisify(execFile)(
+        "/usr/bin/git",
+        ["-C", policy.repository, "rev-parse", "--verify", `refs/remotes/origin/${policy.baseBranch}^{commit}`],
+        { timeout: 10_000 }
+      )
+      return "Local host-only packets enabled; publication gates dispatch; no remote push configured"
+    })
   await check("gateway-version", async () => {
     const versioned = gateway as NativeGateway & { version?: () => Promise<string> }
     if (!versioned.version) throw new Error("Native Gateway version unavailable; use the supported CLI transport")
