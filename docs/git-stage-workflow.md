@@ -1,6 +1,24 @@
 # Git stage packets: planner, Promptify, coder, and reviewer
 
-Status: proposed implementation plan, 2026-10-16. This update defines the protocol and stage prompts; it does not enable a runtime integration. Base: locally available `origin/master`, `348443ae0e6d10aa6c7ff53fdc2e8145d6232a04`.
+Status: local runtime transport implemented, 2026-10-17. The original design and prompt templates shipped in v0.1.0.4. Local packet publication, authenticated prompt consumption, dependency holds, and recovery are now opt-in runtime behavior. Remote transport remains out of scope.
+
+## Enable and inspect
+
+On a prepared policy with skill-backed quality investigations, add `"gitStagePackets": {"version": 1, "enabled": true}` through the existing reviewed policy refresh procedure. Omission preserves the previous behavior. Use a disposable project first; do not enable production schedules as part of installing this change.
+
+`dispatcher native --policy /path/to/native.json packets` shows the coordination ref, pending exports, and publication count. Native `status` also shows each enrolled workflow's plan identity, packet commit, source revision, candidate revision, and prerequisites. The branch is `autocode/coordination/<board-id-digest-prefix>`; it is written with Git plumbing and a private index, leaving application HEAD and index untouched. No credentials or remote destination are accepted by this configuration.
+
+The existing read-only investigator performs code ideation and Promptify using the reviewed skill; the planner admits its ordered implementation prompt. Configure the named OpenClaw research, planner, and coder roles to use your chosen Codex-backed models. The transport neither invokes a second scheduler nor silently changes provider configuration.
+
+New admissions receive a fixed plan from the inspected source revision, skill digest, generated prompt, and producer session. The packet separately records the admitting planner agent. Existing workflows retain their original contract. Disabling new packet admissions does not remove packet requirements from already-enrolled workflows.
+
+Coders and reviewers must retrieve `autocode_context` for the current card/session/attempt before submitting code or a verdict. Its response includes the packet commit and exact canonical prompt. Old sessions, expired claims, changed execution IDs, changed prompts, and changed candidate bases are rejected. Native review and verification remain bound to the code SHA; Git never grants approval authority.
+
+Proposals may supply `dependsOnWorkflowIds` naming already-admitted workflows. Missing/self dependencies are rejected; forward references are unsupported, preventing dependency cycles. Dependents wait for native completion and recorded merged code reachable from the configured base. If that base changes before dispatch, the held plan requires a fresh investigation and successor admission; the host does not silently rewrite the source-bound prompt. Legacy imported card prerequisites retain their previous semantics.
+
+Workflow evidence and pending packet exports commit in one SQLite transaction. Reconciliation publishes immutable JSON events/handoffs and the admitted JSON/Markdown/HTML plan, then acknowledges the Git commit. Concurrent ref changes retry through compare-and-swap. A crash after publication reuses the existing event. A second evidence database cannot publish to the same board branch. Runtime dispatch and stage eligibility flush pending exports first; publication failure preserves the evidence and holds progression.
+
+Validation includes disposable real Git repositories, competing publishers, publication/acknowledgement interruption, transaction rollback, prompt fidelity, inert HTML, symlink injection, split authority, and native skill-backed investigation through code submission and independent review. Native workflow tests use synthetic Gateway sessions and clearly identified verifier fixtures; they do not establish a live provider run or production activation.
 
 ## Intended behavior
 
@@ -50,7 +68,7 @@ Commit messages are for people. Runtime parsing uses validated files and exact G
 
 ## Proposed contracts
 
-These fields are design requirements, not current tool or policy schemas. Version and validate the new envelope separately from the existing version-1 handoff payload.
+The following sections preserve the broader design requirements. The local implementation uses versioned plan records and ordered workflow snapshot events, with bounded handoffs and host receipt digests; arbitrary agent-authored event imports and cross-host dispatch are unsupported. Version the packet envelope separately from the existing version-1 handoff payload.
 
 A plan includes `schemaVersion`, `boardId`, `workflowId`, `planId`, `revision`, `sourceBaseSha`, `goal`, `evidence`, `alternatives`, `allowedPaths`, `nonGoals`, `acceptance`, `verification`, `dependencies`, `risk`, `implementationSteps`, `coderPromptPath`, `coderPromptDigest`, `skillDigest`, and the producing planner run/session IDs. Each dependency identifies a workflow and the required accepted milestone, normally merged code. A changed base or plan requires revalidation before coding.
 
@@ -112,6 +130,6 @@ Acceptance: one disposable end-to-end workflow demonstrates planner session, com
 
 Write focused tests for packet validation, prompt fidelity, traversal/symlink rejection, HTML escaping, competing ref updates, export replay, stale claims, missing/cyclic dependencies, cross-workflow artifact substitution, forged approvals, changed plan/base/candidate revisions, and restart during waits. Use temporary real Git repositories for ref/publication tests. Exercise a failing check and a rejected review through repair; a happy-path report alone is insufficient.
 
-Run `pnpm typecheck`, relevant focused Vitest files, and lint for each implementation slice. Broaden checks where shared native contracts change. This documentation-only update uses link/path checks and `git diff --check`; runtime behavior has not been implemented or tested by this update.
+Run `pnpm typecheck`, relevant focused Vitest files, and lint for each implementation slice. Broaden checks where shared native contracts change. Runtime implementation adds `tests/native-git-stage-packets.test.ts` and extends native quality workflow coverage; retain release verification and protected runtime checks.
 
 Roll out disabled, then local export-only, then one disposable workflow with one coder. On rollback, stop new packet-dependent admissions, preserve accepted workflows/artifacts, and reconcile pending publications. Never replay the Git branch as a second execution queue or rewrite accepted history.

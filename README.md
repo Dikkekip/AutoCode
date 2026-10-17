@@ -18,7 +18,7 @@ Investigate → Propose → Admit → Implement → Verify → Review → Releas
 
 Workboard remains the execution owner. AutoCode’s `native-evidence.db` records provenance, verification and review receipts, operation intents, and recovery state. It is not a second task queue.
 
-The [Git stage workflow proposal](docs/git-stage-workflow.md) plans a Codex-backed planner that combines code ideation and Promptify, then commits the implementation prompt and stage reports for a separate coder and independent reviewer. It defines an opt-in transport and implementation slices; this integration is not yet available at runtime.
+The optional [Git stage workflow](docs/git-stage-workflow.md) commits skill-backed implementation prompts, static HTML plans, and stage handoffs on a separate local coordination branch. The assigned coder and independent reviewer retrieve the exact packet through authenticated context. Workboard retains execution ownership; failed publication holds progression until reconciliation. Transport is disabled by default and never pushes a remote branch.
 
 ## Get started
 
