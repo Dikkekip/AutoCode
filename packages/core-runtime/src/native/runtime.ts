@@ -2337,7 +2337,7 @@ export class NativeAutonomyRuntime {
     try {
       // Only board decisions and native dispatch share this short lease. No candidate command runs here.
       const selected = await this.store.withLease(lease, 120_000, async () => {
-        if (this.policy.quality && !this.isPaused()) await this.quality.syncInvestigations()
+        if (this.policy.quality && !this.isPaused()) await this.quality.syncInvestigations({ inventory: false })
         for (const admission of this.store
           .list<{ phase: string }>("admission")
           .filter(

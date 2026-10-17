@@ -1060,6 +1060,60 @@ describe("native quality investigations", () => {
     })
     expect((await s.runtime.discover()).reason).toMatch(/round still active/)
   })
+  it("avoids a reconciliation inventory read when no investigation needs synchronization", async () => {
+    const s = setup()
+    expect(await s.runtime.quality.syncInvestigations({ inventory: false })).toEqual([])
+    expect(s.gateway.calls).toEqual([])
+    await s.runtime.discover()
+    for (const item of s.store.list<Investigation>("investigation"))
+      s.store.put("investigation", item.id, { ...item.value, state: "completed" })
+    s.gateway.calls.length = 0
+    expect(await s.runtime.quality.syncInvestigations({ inventory: false })).toEqual([])
+    expect(s.gateway.calls).toEqual([])
+    // Discovery still requires the full inventory, including terminal cards.
+    expect(await s.runtime.quality.syncInvestigations()).toEqual(s.gateway.cards)
+    expect(s.gateway.calls).toEqual([{ method: "workboard.cards.list", params: { boardId: s.policy.boardId } }])
+  })
+  it.each([
+    ["completed", "running"],
+    ["completed", "done"],
+    ["no_op", "running"],
+    ["no_op", "done"]
+  ])("preserves %s recorded while inventory waits, even if the card becomes %s", async (outcome, status) => {
+    const s = setup()
+    await s.runtime.discover()
+    const c = s.start()
+    if (outcome === "completed")
+      s.store.put("proposal", "concurrent-finding", { roundId: c.roundId, proposal: proposal() })
+    let releaseInventory!: (value: any) => void
+    const inventory = new Promise((resolve) => {
+      releaseInventory = resolve
+    })
+    const request = s.gateway.request.bind(s.gateway)
+    s.gateway.request = (method, params) =>
+      method === "workboard.cards.list" ? (inventory as any) : request(method, params)
+    const synchronization = s.runtime.quality.syncInvestigations({ inventory: false })
+    await s.runtime.quality.finish(c.agent, c.session, c.roundId, "ux", outcome, "Concurrent finish is durable")
+    const key = `${c.roundId}:ux`
+    const finished = s.store.get<Investigation>("investigation", key)!
+    expect(finished.state).toBe(outcome)
+    c.card.status = status
+    if (status === "done") c.card.execution = { status: "done", sessionKey: c.session }
+    releaseInventory({ cards: s.gateway.cards })
+    await synchronization
+    expect(s.store.get<Investigation>("investigation", key)).toEqual(finished)
+  })
+  it("still reads fresh inventory and synchronizes a pending investigation during reconciliation", async () => {
+    const s = setup()
+    await s.runtime.discover()
+    const c = s.start()
+    c.card.status = "blocked"
+    c.card.execution = { status: "timeout", sessionKey: c.session }
+    s.gateway.calls.length = 0
+    await s.runtime.quality.syncInvestigations({ inventory: false })
+    expect(s.gateway.calls).toEqual([{ method: "workboard.cards.list", params: { boardId: s.policy.boardId } }])
+    expect(s.store.get<Investigation>("investigation", `${c.roundId}:ux`)?.state).toBe("timed_out")
+  })
   it("defers missing skill and journals failed and timed-out sessions", async () => {
     const s = setup()
     rmSync(s.policy.quality!.skillPath)
@@ -1089,6 +1143,10 @@ describe("native quality investigations", () => {
     await s.runtime.quality.enforceBudgets()
     expect(s.gateway.calls.some((call) => call.method === "sessions.abort" && call.params.key === c.session)).toBe(true)
     expect(c.card.status).toBe("blocked")
+    expect(s.gateway.calls.filter((call) => call.method === "workboard.cards.runs")).toContainEqual({
+      method: "workboard.cards.runs",
+      params: { id: c.card.id }
+    })
     expect(s.store.get<Investigation>("investigation", `${c.roundId}:ux`)?.state).toBe("timed_out")
   })
   it("preserves both persona investigations for an equivalent finding but admits it once", async () => {
@@ -1766,7 +1824,13 @@ it("recovers an uninspected infrastructure failure once without losing the origi
     s.runtime.quality.retryUninspected(ctx.roundId, ctx.personaId, "Repaired tool registry")
   ).rejects.toThrow(/Pause/)
   s.store.put("control", "pause", { paused: true })
+  const beforeRecovery = s.gateway.calls.length
   const result = await s.runtime.quality.retryUninspected(ctx.roundId, ctx.personaId, "Repaired tool registry")
+  expect(s.gateway.calls.slice(beforeRecovery).some((call) => call.method === "workboard.cards.list")).toBe(false)
+  expect(s.gateway.calls.slice(beforeRecovery)).toContainEqual({
+    method: "workboard.cards.runs",
+    params: { id: ctx.card.id }
+  })
   expect(result.cardId).toBe(ctx.card.id)
   expect(ctx.card.execution).toBeNull()
   expect(ctx.card.startedAt).toBeNull()

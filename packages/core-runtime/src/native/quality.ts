@@ -348,8 +348,15 @@ export class NativeQualityRuntime {
     if (!content) throw new Error(`Evidence is not tracked at inspected revision: ${path}`)
     return hash(content)
   }
-  async syncInvestigations() {
+  async syncInvestigations(options: { inventory?: boolean } = {}) {
+    const investigations = this.store.list<Investigation>("investigation")
+    // Discovery needs the complete board even with no pending investigations.
+    // Reconciliation only needs updates and can avoid an otherwise unused read.
+    if (options.inventory === false && !investigations.some(({ value }) => value.state === "pending" && value.cardId))
+      return []
     const cards = await nativeCards(this.gateway, this.policy.boardId)
+    // finish() can persist a result while the board request is in flight.
+    // Only use the earlier snapshot for the synchronous no-work fast path.
     for (const item of this.store.list<Investigation>("investigation")) {
       const entry = item.value
       if (entry.state !== "pending" || !entry.cardId) continue
@@ -419,7 +426,7 @@ export class NativeQualityRuntime {
         })
         if (result.status !== "terminal") continue
         // Cancellation can race with natural completion or replacement. Never overwrite either.
-        const current = (await nativeCards(this.gateway, this.policy.boardId)).find((value) => value.id === card.id)
+        const current = await nativeCardById(this.gateway, this.policy.boardId, card.id)
         if (!current || current.sessionKey !== sessionKey || current.runId !== runId)
           throw new Error("Investigation cancellation ownership changed after abort")
         if (current.status === "running") {
@@ -470,7 +477,7 @@ export class NativeQualityRuntime {
           .some((r) => r.value.roundId === roundId && r.value.proposal?.personaId === personaId)
       )
         throw new Error("Investigation already produced source evidence; preserve it and begin a new round")
-      let card = (await nativeCards(this.gateway, this.policy.boardId)).find((c) => c.id === entry.cardId)
+      let card = await nativeCardById(this.gateway, this.policy.boardId, entry.cardId)
       if (
         !card ||
         !["review", "blocked", ...(previous ? ["ready"] : [])].includes(card.status) ||
