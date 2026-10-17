@@ -29,3 +29,24 @@ automatic merge, deployment or live runtime activation.
 
 Regression coverage: `tests/native-quality.test.ts` and
 `tests/native-repair.test.ts`.
+
+## Agent-owned CI
+
+Run `pnpm ci:agent` after committing and before pushing. It requires a clean
+checkout, runs dependency license and advisory checks plus the full `pnpm ci`
+pipeline, and rejects a changed HEAD or working tree. Its receipt is stored under
+the worktree's Git metadata at `agent-ci/<headSha>.json`, with commands, exit
+statuses, timestamps and Node version. A failed or interrupted command cannot
+produce a passing receipt. Receipts are local operational evidence, not signed
+attestations or authorization to merge. Include the SHA, result and receipt path
+in the PR description; preserve full command logs in agent evidence storage.
+
+Agents diagnose failures and run bounded repair/verification rounds themselves.
+Every repair changes the candidate SHA and requires new evidence and review.
+The shared two-repair limit still escalates persistent failures to an operator.
+GitHub PR CI runs one Node version with lint, types, dependency licenses and
+focused autonomy/merge-gate tests. The complete hosted suite remains in Release
+Readiness for published releases and manual dispatch. Required check policy
+still applies; this workflow does not accept a self-reported receipt as a check.
+Kernel/Docker isolation tests need their documented local prerequisites; skipped
+integration tests must be called out rather than reported as isolation proof.
