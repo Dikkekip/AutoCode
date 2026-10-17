@@ -789,6 +789,11 @@ export function registerNativeAutonomyPlugin(api: any): void {
               description:
                 "Ordered implementation plan covering architecture, steps, expected files, risks, and verification."
             },
+            dependsOnWorkflowIds: {
+              type: "array",
+              items: field,
+              description: "Previously admitted workflows that must finish before coding starts."
+            },
             complexity: {
               type: "object",
               required: ["tier", "rationale"],

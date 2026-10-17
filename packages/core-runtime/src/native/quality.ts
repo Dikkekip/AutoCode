@@ -727,6 +727,11 @@ export class NativeQualityRuntime {
                   finishedAt: value.finishedAt
                 })),
               instructions: [
+                ...(this.policy.gitStagePackets?.enabled
+                  ? [
+                      "Git stage workflow: apply the supplied prompt-engineering skill as the Promptify stage. Produce a complete implementationPrompt for a separate Codex-backed coder: goal, architecture, ordered steps, exact files, invariants, non-goals, acceptance-to-verification mapping, risks and stopping conditions. The host commits your admitted prompt and a static HTML report; do not write Git metadata or poll other agents."
+                    ]
+                  : []),
                 "Use autocode_inspect(roundId, personaId, path) to inspect committed repository files. Empty path lists owned files. When truncated, pass the returned nextOffset as offset to continue reading the same committed file. No shell, editing, deployment or release tools are available in this research role.",
                 "Run a short real investigation for your persona goals. Use the supplied reviewed prompt skill and its bundled resources to create at most two bounded implementation prompts for useful features or fixes.",
                 "First write a short persona-specific investigation brief: questions, counterchecks, stopping criteria and expected evidence. Apply it, then make implementationPrompt an ordered implementation plan covering architecture, steps, expected files, risks, and verification. Self-prompting must retain the fixed evidence, uncertainty and acceptance requirements.",

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
 import { resolve } from "node:path"
+import type { GitStagePlan } from "@openclaw/domain"
 import {
   artifactScopesOverlap,
   assertNativeReleaseGate,
@@ -42,6 +43,7 @@ import {
   nativeCards,
   nativeObject
 } from "./gateway.js"
+import { NativeGitStagePackets } from "./git-stage-packets.js"
 import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
@@ -73,11 +75,13 @@ import {
   commitNativeCandidate,
   containedDirectory,
   inspectNativeCandidate,
+  nativeGit,
   nativeVerificationCommands,
   verifyNativeCandidate
 } from "./verification.js"
 
 export interface NativeWorkflow {
+  gitStagePlan?: GitStagePlan
   lifecycle?: NativeLifecycle
   archivedAt?: string
   submission?: { agentId: string; sessionKey: string; executionId: string }
@@ -125,6 +129,7 @@ export interface NativeWorkflow {
   repairCount?: number
 }
 export class NativeAutonomyRuntime {
+  readonly gitStagePackets?: NativeGitStagePackets
   readonly control: NativeControl
   readonly resources: NativeResourceGuard
   readonly humanInput?: NativeHumanInput
@@ -135,6 +140,13 @@ export class NativeAutonomyRuntime {
     humanInput?: NativeHumanInputConfig,
     resources = new NativeResourceGuard(policy.resourceControls)
   ) {
+    if (
+      policy.gitStagePackets?.enabled ||
+      store.list<NativeWorkflow>("workflow").some(({ value }) => value.gitStagePlan)
+    ) {
+      this.gitStagePackets = new NativeGitStagePackets(policy, store)
+      store.workflowProjection = (id, value, version) => this.gitStagePackets!.project(id, value, version)
+    }
     this.resources = resources
     this.control = new NativeControl(store, () => policy.enabled)
     if (humanInput) this.humanInput = new NativeHumanInput(this, humanInput)
@@ -150,12 +162,18 @@ export class NativeAutonomyRuntime {
         store.authorizeEffect()
         assertExecutionOwnership()
         if (
+          ["workboard.cards.create", "workboard.cards.move"].includes(method) &&
+          ["ready", "todo", "done"].includes(String(params.status))
+        )
+          this.gitStagePackets?.flush()
+        if (
           method === "workboard.cards.dispatchWithOptions" ||
           (["workboard.cards.create", "workboard.cards.move"].includes(method) &&
             !["scheduled", "blocked", "done"].includes(String(params.status)))
         )
           this.control.assert()
         if (method === "workboard.cards.dispatchWithOptions") {
+          this.gitStagePackets?.flush()
           const pressure = this.resourceAdmission(method)
           if (!pressure.allowed)
             return { started: [], startedCardIds: [], deferred: [], resourcePressure: pressure } as any
@@ -320,7 +338,8 @@ export class NativeAutonomyRuntime {
       } catch {}
     }
     const notes = JSON.stringify({ ...taskContext, responseStyle })
-    if (notes.length <= 4000) return nativeCard(this.gateway, { ...input, notes })
+    if (notes.length <= 4000 && !(this.gitStagePackets && taskContext.workflowId))
+      return nativeCard(this.gateway, { ...input, notes })
     const contextId = createHash("sha256")
       .update(JSON.stringify([input.idempotencyKey, notes]))
       .digest("hex")
@@ -360,6 +379,28 @@ export class NativeAutonomyRuntime {
     this.assertSession(card, sessionKey)
     if (card?.agentId !== agentId) throw new Error("Context is not assigned to this agent")
     this.store.event("context.read", contextId, { agentId, sessionKey, cardId: card.id })
+    if (!this.gitStagePackets) return { contextId, notes: context.notes }
+    let notes: Record<string, unknown>
+    try {
+      notes = JSON.parse(context.notes)
+    } catch {
+      return { contextId, notes: context.notes }
+    }
+    if (!notes || typeof notes !== "object" || Array.isArray(notes)) return { contextId, notes: context.notes }
+    const workflowId = notes.workflowId
+    const workflow = typeof workflowId === "string" ? this.store.get<NativeWorkflow>("workflow", workflowId) : null
+    if (workflow?.gitStagePlan && typeof workflowId === "string") {
+      const packet = this.gitStagePackets!.context(workflowId, workflow.gitStagePlan)
+      this.store.put("git-stage-context", `${workflowId}:${sessionKey}`, {
+        agentId,
+        cardId: card.id,
+        attemptId: workflow.lifecycle?.attemptId,
+        planId: packet.planId,
+        runId: card.execution?.runId ?? card.runId ?? sessionKey,
+        commit: packet.commit
+      })
+      return { contextId, notes: JSON.stringify({ ...notes, gitStagePacket: packet }) }
+    }
     return { contextId, notes: context.notes }
   }
   get quality() {
@@ -872,6 +913,7 @@ export class NativeAutonomyRuntime {
     return {
       boardId: this.policy.boardId,
       enabled: this.policy.enabled,
+      gitStagePackets: this.gitStagePackets?.status() ?? { enabled: false },
       gatewayPid: process.pid,
       resourcePressure: this.resources.inspect(),
       control: this.control.state,
@@ -892,6 +934,15 @@ export class NativeAutonomyRuntime {
           personaId: value.proposal.personaId,
           deployedSha: value.deployedSha ?? null,
           candidateSha: value.candidate?.headSha ?? null,
+          gitStagePlan: value.gitStagePlan
+            ? {
+                planId: value.gitStagePlan.planId,
+                commit: this.store.get<{ commit?: string }>("git-stage-export", `${id}:1`)?.commit ?? null,
+                sourceBaseSha: value.gitStagePlan.sourceBaseSha,
+                coderPromptDigest: value.gitStagePlan.coderPromptDigest
+              }
+            : null,
+          dependencyCardIds: value.dependencyCardIds ?? [],
           verifiedSha:
             value.verification?.checks.length && value.verification.checks.every((check) => check.exitCode === 0)
               ? value.verification.headSha
@@ -1121,7 +1172,13 @@ export class NativeAutonomyRuntime {
         2 * this.policy.workerConcurrency
       )
         throw new Error("Runnable backlog is full")
-      const conflict = this.proposalScope(entry.proposal).conflicts[0]
+      const dependencies = entry.proposal.dependsOnWorkflowIds ?? []
+      if (dependencies.some((dependency) => dependency === id || !workflows.some((w) => w.id === dependency)))
+        throw new Error("Workflow dependency is missing or cyclic")
+      // Dependencies only refer to previously admitted, immutable workflows.
+      const conflict = this.proposalScope(entry.proposal).conflicts.find(
+        (item) => !dependencies.includes(item.workflowId)
+      )
       if (conflict) throw new Error(`Artifact scope reserved by ${conflict.workflowId}`)
       const input = this.humanInput?.gate(proposalId, entry.proposal, entry.roundId)
       if (input && !input.allowed)
@@ -1129,6 +1186,9 @@ export class NativeAutonomyRuntime {
           admitted: false as const,
           reason: `Human direction ${input.idea.state}: ${input.idea.id}; leave pending ideas undecided and continue routine work`
         }
+      const gitStagePlan = this.policy.gitStagePackets?.enabled
+        ? this.gitStagePackets!.plan(id, entry.proposal)
+        : undefined
       const root = await this.createCard({
         boardId: this.policy.boardId,
         title: entry.proposal.title,
@@ -1162,6 +1222,14 @@ export class NativeAutonomyRuntime {
         })
       })
       const workflow: NativeWorkflow = {
+        ...(gitStagePlan ? { gitStagePlan } : {}),
+        ...(dependencies.length
+          ? {
+              dependencyCardIds: dependencies.map(
+                (dependency) => workflows.find((w) => w.id === dependency)!.value.rootCardId
+              )
+            }
+          : {}),
         lifecycle: upgradeNativeLifecycle(id, {}),
         proposal: entry.proposal,
         rootCardId: root.id,
@@ -1186,7 +1254,24 @@ export class NativeAutonomyRuntime {
   private async dependenciesComplete(workflow: NativeWorkflow): Promise<boolean> {
     if (!workflow.dependencyCardIds?.length) return true
     const cards = await nativeCards(this.gateway, this.policy.boardId)
-    return workflow.dependencyCardIds.every((id) => cards.some((card) => card.id === id && card.status === "done"))
+    if (!workflow.dependencyCardIds.every((id) => cards.some((card) => card.id === id && card.status === "done")))
+      return false
+    for (const id of workflow.proposal.dependsOnWorkflowIds ?? []) {
+      const dependency = this.store.get<NativeWorkflow>("workflow", id)
+      if (!dependency?.mergedSha || !/^[a-f0-9]{40,64}$/.test(dependency.mergedSha)) return false
+      try {
+        await nativeGit(
+          this.policy.repository,
+          "merge-base",
+          "--is-ancestor",
+          dependency.mergedSha,
+          `origin/${this.policy.baseBranch}`
+        )
+      } catch {
+        return false
+      }
+    }
+    return true
   }
   async adoptLegacy(legacyKey: string): Promise<{ workflowId: string }> {
     if (!this.hasOwnership) return this.withOwnership(() => this.adoptLegacy(legacyKey))
@@ -1311,6 +1396,7 @@ export class NativeAutonomyRuntime {
     )
     if (card?.agentId !== agentId) throw new Error("Only the assigned coder can submit")
     this.assertSession(card, sessionKey)
+    this.assertPacketContext(workflowId, workflow, card!, agentId, sessionKey)
     const workspace = card?.metadata?.automation?.workspace?.path
     if (!workspace) throw new Error("Candidate must be the card's managed worktree")
     // The sandbox exposes this alias, not the host Git worktree. Resolve only
@@ -1335,6 +1421,9 @@ export class NativeAutonomyRuntime {
     )
     if (committed) this.store.event("candidate.committed", workflowId, { headSha: committed, agentId, sessionKey })
     const candidate = await inspectNativeCandidate(this.policy, candidatePath, workflow.proposal.allowedPaths)
+    if (workflow.gitStagePlan && candidate.baseSha !== workflow.gitStagePlan.sourceBaseSha)
+      throw new Error("Candidate base differs from the admitted Git stage plan; replan before submission")
+    if (workflow.gitStagePlan) this.gitStagePackets!.context(workflowId, workflow.gitStagePlan)
     await this.quality.classifyCandidate(workflowId, workflow, candidate, "submission")
     // Authentication and commit binding are complete even when independent design review is pending.
     // Retain the submission so an ended coder session does not lose its candidate at this gate.
@@ -1404,6 +1493,7 @@ export class NativeAutonomyRuntime {
     const workflow = this.requireWorkflow(workflowId)
     const card = (await nativeCards(this.gateway, this.policy.boardId)).find((c) => c.id === workflow.reviewCardId)
     this.assertSession(card, sessionKey)
+    this.assertPacketContext(workflowId, workflow, card!, agentId, sessionKey)
     if (!workflow.verification || workflow.verification.headSha !== headSha)
       throw new Error("Review must match verified candidate")
     const structured = workflow.proposal.quality
@@ -1605,12 +1695,39 @@ export class NativeAutonomyRuntime {
     for (const key of Object.keys(previousWorkflow)) Reflect.deleteProperty(previousWorkflow, key)
     Object.assign(previousWorkflow, workflow)
   }
+  private assertPacketContext(
+    id: string,
+    workflow: NativeWorkflow,
+    card: NativeCard,
+    agentId: string,
+    sessionKey: string
+  ): void {
+    if (!workflow.gitStagePlan) return
+    const receipt = this.store.get<{
+      agentId: string
+      cardId: string
+      attemptId: string
+      planId: string
+      runId: string
+    }>("git-stage-context", `${id}:${sessionKey}`)
+    if (
+      !receipt ||
+      receipt.agentId !== agentId ||
+      receipt.cardId !== card.id ||
+      receipt.attemptId !== workflow.lifecycle?.attemptId ||
+      receipt.planId !== workflow.gitStagePlan.planId ||
+      receipt.runId !== (card.execution?.runId ?? card.runId ?? sessionKey)
+    )
+      throw new Error("Read the committed Git stage packet through autocode_context for this active attempt first")
+  }
   assertSession(card: NativeCard | undefined, sessionKey: string): void {
     if (
       !card ||
       !sessionKey ||
       (card.sessionKey ?? card.execution?.sessionKey) !== sessionKey ||
-      card.status !== "running"
+      (card.execution?.sessionKey !== undefined && card.execution.sessionKey !== sessionKey) ||
+      card.status !== "running" ||
+      (card.metadata?.claim?.expiresAt !== undefined && card.metadata.claim.expiresAt <= Date.now())
     ) {
       throw new Error("Tool caller does not own the active Workboard session")
     }
@@ -1906,6 +2023,7 @@ export class NativeAutonomyRuntime {
   async advanceWorkflowStep(id: string): Promise<number> {
     let advanced = 0
     const w = this.requireWorkflow(id)
+    if (w.gitStagePlan) this.gitStagePackets!.flush(id)
     if (w.lifecycle?.state === "cancelled" || w.archivedAt) return advanced
     if (w.deployedSha) {
       for (const cardId of [w.stageCards.Deploy, w.rootCardId].filter(Boolean)) {
@@ -2215,6 +2333,14 @@ export class NativeAutonomyRuntime {
             const w = this.requireWorkflow(admission.id)
             if (!this.reservesScope(w)) return
             if (w.blocker || !(await this.dependenciesComplete(w))) return
+            if (w.gitStagePlan) {
+              this.gitStagePackets!.context(admission.id, w.gitStagePlan)
+              if (this.gitStagePackets!.sourceRevision() !== w.gitStagePlan.sourceBaseSha) {
+                w.blocker = "Git stage source changed before dispatch; refresh investigation and admit a successor"
+                this.transitionWorkflow(admission.id, w, "blocked")
+                return
+              }
+            }
             if (!(await this.quality.ensureDesign(admission.id, w))) return
             const cards = await nativeCards(this.gateway, this.policy.boardId)
             const workerCards = new Set(
@@ -2381,6 +2507,7 @@ export class NativeAutonomyRuntime {
           throw result.reason
       }
       if (this.isPaused()) return { advanced, paused: true, ...observed() }
+      this.gitStagePackets?.flush()
       return { advanced, ...observed() }
     } catch (error) {
       if (error instanceof NativeControlRevoked) return { advanced, paused: true, ...observed() }

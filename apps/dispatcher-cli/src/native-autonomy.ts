@@ -28,6 +28,16 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
   })
   const output = (value: unknown) => io.stdout(`${JSON.stringify(value, null, 2)}\n`)
   root
+    .command("packets")
+    .description("Inspect local Git stage publication and pending exports")
+    .action(async () => {
+      const { policy, gateway } = settings()
+      const status = await gateway.request<{ gitStagePackets?: unknown }>("autocode.status", {
+        boardId: policy.boardId
+      })
+      output(status.gitStagePackets ?? { enabled: false })
+    })
+  root
     .command("skill")
     .description("Inspect the configured skill without changing activation or evidence")
     .command("inspect")

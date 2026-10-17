@@ -43,6 +43,8 @@ interface NativeEffectAuthorityScope {
 }
 /** Evidence and reconciliation journal only. Workboard remains the task queue. */
 export class NativeEvidenceStore {
+  /** Host-only projections enqueue immutable exports in the same evidence transaction. */
+  workflowProjection?: (id: string, value: unknown, version: number) => NativeRecordWrite[]
   readonly db: DatabaseSync
   readonly owner = randomUUID()
   private readonly versions = new WeakMap<object, number>()
@@ -201,7 +203,12 @@ export class NativeEvidenceStore {
     const committed: Array<[object, number]> = []
     this.mutate(lease, () => {
       guard?.()
-      for (const write of writes) {
+      const projected = writes.flatMap((write) =>
+        write.kind === "workflow" && this.workflowProjection
+          ? this.workflowProjection(write.id, write.value, this.version(write.kind, write.id) + 1)
+          : []
+      )
+      for (const write of [...writes, ...projected]) {
         const version = this.version(write.kind, write.id)
         const tracked = write.value && typeof write.value === "object" ? this.versions.get(write.value) : undefined
         const expected = write.expectedVersion ?? (write.kind === "workflow" ? (tracked ?? 0) : undefined)
