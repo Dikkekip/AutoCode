@@ -318,7 +318,7 @@ async function main() {
   const latestReleaseSha = latestRelease ? resolveReleaseCommit(repoRoot, latestRelease) : null
   const nextTag = nextReleaseTag(latestRelease?.tagName ?? null, packageVersion)
   const releaseTitle = `OpenClaw framework ${nextTag}`
-  const verificationCommands = args.verificationCommands.length > 0 ? args.verificationCommands : ["pnpm ci"]
+  const verificationCommands = args.verificationCommands.length > 0 ? args.verificationCommands : ["pnpm run ci"]
   const verification = runVerificationCommands(repoRoot, verificationCommands, args.skipVerification)
   const failedVerification = verification.find((entry) => !entry.skipped && entry.status !== 0)
 

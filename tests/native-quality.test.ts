@@ -46,6 +46,19 @@ class Gateway implements NativeGateway {
   async request<T = any>(method: string, params: any): Promise<T> {
     this.calls.push({ method, params })
     if (method === "workboard.cards.list") return { cards: this.cards } as T
+    if (method === "workboard.cards.runs")
+      return {
+        card: (() => {
+          const card = this.cards.find((c) => c.id === params.id)
+          return (
+            card && {
+              ...card,
+              metadata: { ...card.metadata, automation: { ...card.metadata?.automation, boardId: card.boardId } }
+            }
+          )
+        })(),
+        attempts: []
+      } as T
     if (method === "sessions.list") return { sessions: this.sessions } as T
     if (method === "workboard.cards.create") {
       if (String(params.notes ?? "").length > 4000) throw new Error("notes must be 4000 characters or fewer")
@@ -88,7 +101,8 @@ function setup(
   skill = fixtureSkill,
   highRiskPaths?: string[],
   independentCandidateReview = false,
-  gitStagePackets = false
+  gitStagePackets = false,
+  bindFixtureAcceptance = false
 ) {
   const root = mkdtempSync(join(tmpdir(), "native-quality-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
@@ -128,7 +142,28 @@ function setup(
     })),
     verification: [{ argv: [process.execPath, "-e", "process.exit(0)"], cwd: ".", timeoutSeconds: 10 }],
     ...(independentCandidateReview
-      ? { verificationAuthority: { reviewedRevision: git("rev-parse", "HEAD"), independentCandidateReview: true } }
+      ? {
+          verificationAuthority: {
+            reviewedRevision: git("rev-parse", "HEAD"),
+            independentCandidateReview: true,
+            ...(bindFixtureAcceptance
+              ? {
+                  acceptance: [
+                    {
+                      criterion: "User opens source",
+                      ruleIds: [
+                        nativeVerificationRuleId({
+                          argv: [process.execPath, "-e", "process.exit(0)"],
+                          cwd: ".",
+                          timeoutSeconds: 10
+                        })
+                      ]
+                    }
+                  ]
+                }
+              : {})
+          }
+        }
       : {}),
     deployment: null
   })
@@ -323,6 +358,51 @@ function fixtureVerification(
 }
 
 describe("native quality investigations", () => {
+  it.each([
+    false,
+    true
+  ])("places validated historical failures in shared authorized research contexts (Git packets: %s)", async (gitPackets) => {
+    const s = setup(fixtureSkill, [], true, gitPackets, true)
+    const revision = s.git("rev-parse", "HEAD")
+    // Synthetic protected receipt: exercise context routing, not actual runtime measurement.
+    const workflow = {
+      proposal: proposal(),
+      rootCardId: "prior-root",
+      implementationCardId: "prior-coder",
+      stageCards: {},
+      lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "prior:attempt:0" },
+      candidate: { baseSha: revision, headSha: revision, files: ["src/view.ts"] },
+      riskAssessment: { changesDigest: "c".repeat(64) },
+      blocker: "Protected browser check failed"
+    } as NativeWorkflow
+    workflow.verification = fixtureVerification(s, workflow, "prior", s.root, 1)
+    s.store.put("workflow", "prior", workflow)
+    await s.runtime.discover()
+    const contexts = s.store.list<any>("card-context").map(({ value }) => JSON.parse(value.notes))
+    const own = contexts.find((context) => context.persona?.personaId === "ux")
+    expect(own.instructions.some((instruction: string) => instruction.startsWith("Git stage workflow:"))).toBe(
+      gitPackets
+    )
+    expect(own.nativeVerificationFailures[0]).toMatchObject({
+      status: "available",
+      workflowId: "prior",
+      applicability: "historical-candidate-only",
+      sourceBindings: [{ path: "src/view.ts", unchanged: true }],
+      failures: [{ stdout: { content: "Synthetic fixture failure log" } }]
+    })
+    for (const context of contexts.filter((context) => context.persona && context.persona.personaId !== "ux")) {
+      expect(context.nativeVerificationFailures[0]).toMatchObject({ status: "available", sourcePersonaId: "ux" })
+      expect(context.recentOutcomes.workflows).toEqual([])
+      expect(context.recentOutcomes.nativeVerificationFailure).toMatchObject({
+        sourcePersonaId: "ux",
+        workflowId: "prior"
+      })
+    }
+    expect(s.runtime.quality.feedback("ux").workflows[0]!.verificationArtifactSha256).toBe(
+      workflow.verification.provenanceArtifact!.sha256
+    )
+  })
+
   it("preserves plain and JSON-scalar legacy contexts when packet support is enabled", async () => {
     const s = setup(fixtureSkill, [], true, true)
     await s.runtime.discover()
@@ -397,6 +477,7 @@ describe("native quality investigations", () => {
     true
   ])("stages final acceptance review from committed evidence (Git packets: %s)", async (gitPackets) => {
     const s = setup(fixtureSkill, [], true, gitPackets)
+
     const c = await prepare(s)
     const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful bounded navigation repair")
     const worktree = join(s.root, "final-review-candidate")
@@ -807,6 +888,40 @@ describe("native quality investigations", () => {
     card.metadata.automation.idempotencyKey = "unrelated-card"
     await expect(authorizeNativeTool(s.runtime, "autocode_context", args, context)).rejects.toThrow(/not assigned/)
     await expect(s.runtime.readContext(context.agentId, context.sessionKey, contextId)).rejects.toThrow()
+  })
+  it.each([
+    false,
+    true
+  ])("replays identical context after a lost creation response and new failure evidence (Git packets: %s)", async (gitPackets) => {
+    const s = setup(fixtureSkill, [], true, gitPackets, true)
+    await createNativeOperatorRequest(s.runtime, operatorBrief(s), "authenticated operator.admin")
+    s.gateway.failResponseAfterCreateAt = 0
+    await expect(s.runtime.discover()).rejects.toThrow("card created but response lost")
+    const first = s.gateway.cards[0],
+      pointer = first.notes
+    const entry = s.store.list<Investigation>("investigation").find(({ value }) => value.personaId === "ux")!
+    const notes = entry.value.cardNotes
+    expect(JSON.parse(notes!).nativeVerificationFailures).toEqual([])
+    const revision = s.git("rev-parse", "HEAD")
+    const prior = {
+      proposal: proposal(),
+      rootCardId: "prior-root",
+      implementationCardId: "prior-coder",
+      stageCards: {},
+      lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "prior:attempt:0" },
+      candidate: { baseSha: revision, headSha: revision, files: ["src/view.ts"] },
+      riskAssessment: { changesDigest: "c".repeat(64) },
+      blocker: "New protected failure"
+    } as NativeWorkflow
+    prior.verification = fixtureVerification(s, prior, "prior", s.root, 1)
+    s.store.put("workflow", "prior", prior)
+    first.status = "done"
+    await expect(s.runtime.discover()).resolves.toMatchObject({ created: expect.any(Array) })
+    expect(s.gateway.cards).toHaveLength(2)
+    expect(s.gateway.cards[0].id).toBe(first.id)
+    expect(s.gateway.cards[0].notes).toBe(pointer)
+    expect(s.store.get<Investigation>("investigation", entry.id)!.cardNotes).toBe(notes)
+    expect(s.runtime.quality.feedback("ux").workflows[0]!.verificationArtifactSha256).not.toBeNull()
   })
   it("resumes partial discovery with the same round and no duplicate completed cards", async () => {
     const s = setup()
@@ -1962,4 +2077,30 @@ it("requires independent plan review before routine implementation when configur
   const w = { proposal: { quality: { risk: "routine" } } } as any
   expect(s.runtime.quality.requiresDesign(w)).toBe(true)
   expect(s.runtime.quality.designApproved(w)).toBe(false)
+})
+
+it("gives pre-implementation design review standing verification evidence without inventing a candidate", async () => {
+  const s = setup()
+  const c = await prepare(s, proposal("high"))
+  const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Review the proposed design first")
+  await s.runtime.reconcile()
+  const w = s.runtime.requireWorkflow(workflowId)
+  const card = s.gateway.cards.find((card) => card.id === w.designCardId)
+  const pointer = JSON.parse(card.notes)
+  const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+  expect(notes.committedDiff).toBeNull()
+  expect(notes.plannedVerification).toMatchObject({
+    selectionBasis: "standing-policy-before-candidate",
+    scope: ["src/view.ts"],
+    candidateSelectionPending: true,
+    executionEvidence: "pending-independent-verification",
+    commands: [{ argv: s.policy.verification[0]!.argv }]
+  })
+  expect(notes.plannedVerification).not.toHaveProperty("headSha")
+  expect(notes.plannedVerification).not.toHaveProperty("coverage")
+  expect(notes.instructions).toContain("exact changed-file selection and execution remain pending")
+  expect(w.candidate).toBeUndefined()
+  expect(w.verification).toBeUndefined()
+  expect(s.runtime.quality.designApproved(w)).toBe(false)
+  expect(s.gateway.cards.find((card) => card.id === w.implementationCardId).status).toBe("blocked")
 })

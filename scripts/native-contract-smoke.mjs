@@ -5,7 +5,11 @@ import assert from "node:assert/strict"
 import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { resolve } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
+
+import { assertWorkspaceResolution } from "./assert-workspace-resolution.mjs"
+
+assertWorkspaceResolution()
 
 const root = process.argv[2]
 if (!root) throw new Error("Pass the installed OpenClaw package root")
@@ -73,6 +77,12 @@ try {
   await call("workboard.cards.move", { id: second.id, status: "blocked" })
   const listing = await call("workboard.cards.list", { boardId: "autocode-contract" })
   assert.equal(listing.cards.length, 2)
+  const targeted = await call("workboard.cards.runs", { id: first.id })
+  assert.equal(targeted.card.id, first.id)
+  assert.equal(targeted.card.metadata.automation.boardId, "autocode-contract")
+  assert.equal(targeted.card.status, "blocked")
+  assert.equal(targeted.card.metadata?.claim?.token, undefined)
+  assert.ok(Array.isArray(targeted.attempts))
   assert.ok(listing.cards.every((c) => c.status === "blocked"))
   assert.equal(first.metadata.automation.workspace.sourcePath, "/tmp")
   assert.ok(methods.has("workboard.cards.dispatchWithOptions"))
@@ -141,6 +151,7 @@ try {
   const { default: plugin } = await import(pathToFileURL(resolve("plugins/autocode/index.mjs")).href)
   const registered = { services: [], methods: [], tools: [], hooks: [] }
   plugin.register({
+    source: fileURLToPath(new URL("../plugins/autocode/index.mjs", import.meta.url)),
     pluginConfig: { projects: [] },
     runtime: { gateway: { request: async () => ({}) } },
     registerService: (s) => registered.services.push(s),

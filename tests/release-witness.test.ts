@@ -58,7 +58,7 @@ describe("exact revision release publication", () => {
     headSha: "a".repeat(40),
     dirty: "",
     apply: true,
-    verification: [{ command: "pnpm ci", skipped: false, status: 0 }]
+    verification: [{ command: "pnpm run ci", skipped: false, status: 0 }]
   }
   it("rejects checks from another revision and dirty sources", () => {
     expect(() => assertReleaseSource({ ...source, headSha: "b".repeat(40) })).toThrow(/differs/)

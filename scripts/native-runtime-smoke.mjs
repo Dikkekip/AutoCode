@@ -63,6 +63,32 @@ try {
   const path = join(root, "evidence.db")
   store = new NativeEvidenceStore(path)
   const runtime = new NativeAutonomyRuntime(policy, gateway, store)
+  // Exercise the compiled runtime's transitive domain import, not a direct source alias.
+  const scopeStore = new NativeEvidenceStore(join(temporary, "scope.sqlite"))
+  try {
+    const scoped = new NativeAutonomyRuntime(policy, gateway, scopeStore)
+    scopeStore.put("workflow", "retained-audit", {
+      proposal: { allowedPaths: ["apps/reports-ui/e2e/ui-audit*"] },
+      lifecycle: { version: 1, state: "blocked", attempt: 0, attemptId: "retained-audit:attempt:0" },
+      blocker: "Retained independent review"
+    })
+    assert.equal(
+      scoped.proposalScope({
+        allowedPaths: ["apps/reports-ui/e2e/navigation.spec.ts", "apps/reports-ui/e2e/utils/auth.ts"]
+      }).conflicts.length,
+      0
+    )
+    assert.equal(
+      scoped.proposalScope({ allowedPaths: ["apps/reports-ui/e2e/ui-audit-scan.spec.ts"] }).conflicts[0].workflowId,
+      "retained-audit"
+    )
+    assert.equal(
+      scoped.proposalScope({ allowedPaths: ["apps/reports-ui/e2e"] }).conflicts[0].workflowId,
+      "retained-audit"
+    )
+  } finally {
+    scopeStore.close()
+  }
   await runtime.discover()
   const round = store.list("round")[0]
   assert.ok(round)

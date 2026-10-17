@@ -52,6 +52,19 @@ function fixture() {
   const gateway = {
     async request<T = any>(method: string, params: any): Promise<T> {
       if (method === "workboard.cards.list") return { cards } as T
+      if (method === "workboard.cards.runs")
+        return {
+          card: (() => {
+            const card = cards.find((c) => c.id === params.id)
+            return (
+              card && {
+                ...card,
+                metadata: { ...card.metadata, automation: { ...card.metadata?.automation, boardId: card.boardId } }
+              }
+            )
+          })(),
+          attempts: []
+        } as T
       if (method === "workboard.cards.create") {
         let card = cards.find((c) => c.idempotencyKey === params.idempotencyKey)
         if (!card) {

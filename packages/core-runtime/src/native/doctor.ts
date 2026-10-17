@@ -10,6 +10,7 @@ import { NATIVE_GATEWAY_CONTRACT_VERSION, type NativeGateway, nativeCards, nativ
 import { nativeModeAllows } from "./promotion-mode.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
 import type { NativeEvidenceStore } from "./store.js"
+import { assertNativeVerifierImageAvailable } from "./verification-context.js"
 
 export function loadNativePolicy(path: string): NativeAutonomyPolicy {
   const value = JSON.parse(readFileSync(path, "utf8"))
@@ -50,6 +51,14 @@ export async function nativeDoctor(
     return `OpenClaw ${version}; runtime contract v${NATIVE_GATEWAY_CONTRACT_VERSION}`
   })
   await check("workboard", async () => {
+    const configuration = nativeObject(await gateway.request("config.get", {}), "config.get")
+    const plugins = (configuration.config ?? configuration.parsed)?.plugins
+    if (plugins?.enabled === false || plugins?.entries?.workboard?.enabled === false)
+      throw new Error("Native Workboard plugin is disabled; enable it and repair the plugin registry before restarting")
+    if (Array.isArray(plugins?.deny) && plugins.deny.includes("workboard"))
+      throw new Error("Native Workboard plugin is denied by plugin policy")
+    if (Array.isArray(plugins?.allow) && plugins.allow.length > 0 && !plugins.allow.includes("workboard"))
+      throw new Error("Native Workboard plugin is missing from the configured plugin allowlist")
     const result = nativeObject(await gateway.request("workboard.boards.list", {}), "Workboard boards.list")
     if (!Array.isArray(result.boards) || result.boards.some((b: any) => !b || typeof b.id !== "string" || !b.id))
       throw new Error("Workboard boards.list contract: invalid board identities")
@@ -177,6 +186,14 @@ export async function nativeDoctor(
       ? "Framework work requires human review"
       : "Deployment and revision check configured"
   })
+  if (policy.verificationSandbox?.backend === "docker") {
+    await check("verification-toolchain", async () => {
+      const sandbox = policy.verificationSandbox
+      if (sandbox?.backend !== "docker") throw new Error("Docker verifier is not configured")
+      await assertNativeVerifierImageAvailable(sandbox.image)
+      return "Pinned verifier image is available locally; this is not proof of executed verification"
+    })
+  }
   await check("verification-authority", () => {
     const authority = policy.verificationAuthority
     if (!authority?.reviewedRevision || !authority.acceptance?.length)

@@ -3,7 +3,12 @@ import { execFile } from "node:child_process"
 import { readFile, realpath, stat } from "node:fs/promises"
 import { isAbsolute, relative, resolve } from "node:path"
 import { promisify } from "node:util"
-import { type NativeAutonomyPolicy, type NativeVerificationSandbox, nativeVerificationRuleId } from "@openclaw/domain"
+import {
+  type NativeAutonomyPolicy,
+  type NativeVerificationSandbox,
+  nativeVerificationRuleId,
+  validateNativeAutonomyPolicy
+} from "@openclaw/domain"
 import { nativeContentDigest } from "./provenance.js"
 import { redactNativeSourceText } from "./source-redaction.js"
 import { nativeVerificationCommands } from "./verification.js"
@@ -12,10 +17,33 @@ const exec = promisify(execFile)
 const limit = 32_768
 const immutableDefinitions = new Map<string, string>()
 
+/** Fixed diagnostics only: Docker stderr can contain private daemon and registry details. */
+export class NativeVerifierUnavailableError extends Error {
+  constructor() {
+    super("Pinned verifier image is unavailable locally; restore the reviewed toolchain before verification.")
+  }
+}
+
+export async function assertNativeVerifierImageAvailable(image: string): Promise<void> {
+  if (!/^sha256:[a-f0-9]{64}$/.test(image)) throw new NativeVerifierUnavailableError()
+  try {
+    const { stdout } = await exec("docker", ["image", "inspect", "--format", "{{.Id}}", image], {
+      timeout: 5_000,
+      maxBuffer: 1_024,
+      encoding: "utf8"
+    })
+    if (stdout.trim() !== image) throw new NativeVerifierUnavailableError()
+  } catch {
+    throw new NativeVerifierUnavailableError()
+  }
+}
+
 export async function readNativeVerifierDefinition(sandbox: NativeVerificationSandbox, path: string): Promise<string> {
   if (!isAbsolute(path) || path.split("/").includes("..")) throw new Error("Not an absolute verifier path")
   if (sandbox.backend === "docker") {
     if (!/^sha256:[a-f0-9]{64}$/.test(sandbox.image)) throw new Error("Verifier image is not immutable")
+    // Cached source bytes do not prove that the execution toolchain still exists.
+    await assertNativeVerifierImageAvailable(sandbox.image)
     const key = `${sandbox.image}:${path}`
     const cached = immutableDefinitions.get(key)
     if (cached !== undefined) return cached
@@ -25,6 +53,7 @@ export async function readNativeVerifierDefinition(sandbox: NativeVerificationSa
       [
         "run",
         "--rm",
+        "--pull=never",
         "--network",
         "none",
         "--read-only",
@@ -59,11 +88,15 @@ export async function readNativeVerifierDefinition(sandbox: NativeVerificationSa
 
 export async function nativeVerificationCommandContext(
   policy: NativeAutonomyPolicy,
-  files: string[],
+  files: string[] | null,
   readDefinition = readNativeVerifierDefinition
 ) {
   const commands = []
-  for (const command of nativeVerificationCommands(policy, files)) {
+  // Before implementation, show every standing rule with its path conditions.
+  // This is policy context, not a claim about the eventual candidate selection.
+  const selected =
+    files === null ? validateNativeAutonomyPolicy(policy).verification : nativeVerificationCommands(policy, files)
+  for (const command of selected) {
     let definition: { path: string; content?: string; sha256?: string; complete: boolean; reason?: string }
     try {
       if (!policy.verificationSandbox) throw new Error("No toolchain")
@@ -78,11 +111,14 @@ export async function nativeVerificationCommandContext(
         sha256: nativeContentDigest(source),
         complete: content === source
       }
-    } catch {
+    } catch (error) {
       definition = {
         path: command.argv[0]!,
         complete: false,
-        reason: "Toolchain executable is not available as bounded text; do not infer its coverage from its filename."
+        reason:
+          error instanceof NativeVerifierUnavailableError
+            ? error.message
+            : "Toolchain executable is not available as bounded text; do not infer its coverage from its filename."
       }
     }
     commands.push({

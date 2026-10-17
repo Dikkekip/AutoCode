@@ -134,18 +134,23 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
   const client = setup(server.root)
   vi.mocked(nativeDoctor).mockResolvedValue(report(true))
   vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method, params) => {
-    if (method === "workboard.cards.list")
-      return {
-        cards: [
-          {
-            id: "card",
-            title: "Investigation",
-            agentId: "research",
-            status: "running",
-            sessionKey: "assigned-session"
-          }
-        ]
-      } as any
+    const card = {
+      id: "card",
+      boardId: "app",
+      metadata: { automation: { boardId: "app" } },
+      title: "Investigation",
+      agentId: "research",
+      status: "running",
+      sessionKey: "assigned-session"
+    }
+    if (method === "workboard.cards.list") {
+      expect(params).toEqual({ boardId: "app" })
+      return { cards: [card] } as any
+    }
+    if (method === "workboard.cards.runs") {
+      expect(params).toEqual({ id: "card" })
+      return { card } as any
+    }
     expect(method).toBe("autocode.tool")
     return await new Promise((resolve, reject) => {
       server.methods.get(method)({

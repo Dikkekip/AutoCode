@@ -75,6 +75,7 @@ it("runs committed fixes and adversarial boundaries without providers or deploym
   const cards: NativeCard[] = [
     {
       id: "implementation",
+      boardId: policy.boardId,
       title: "Fix timeout",
       status: "running",
       agentId: "coder",
@@ -84,6 +85,7 @@ it("runs committed fixes and adversarial boundaries without providers or deploym
     },
     {
       id: "review",
+      boardId: policy.boardId,
       title: "Review timeout",
       status: "running",
       agentId: "reviewer",
@@ -94,6 +96,19 @@ it("runs committed fixes and adversarial boundaries without providers or deploym
   const gateway: NativeGateway = {
     request: async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
       if (method === "workboard.cards.list") return { cards } as T
+      if (method === "workboard.cards.runs")
+        return {
+          card: (() => {
+            const card = cards.find((c) => c.id === params.id)
+            return (
+              card && {
+                ...card,
+                metadata: { ...card.metadata, automation: { ...card.metadata?.automation, boardId: card.boardId } }
+              }
+            )
+          })(),
+          attempts: []
+        } as T
       if (method === "workboard.cards.move") {
         cards.find((c) => c.id === params.id)!.status = String(params.status)
         return {} as T
