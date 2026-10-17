@@ -18,6 +18,8 @@ Investigate → Propose → Admit → Implement → Verify → Review → Releas
 
 Workboard remains the execution owner. AutoCode’s `native-evidence.db` records provenance, verification and review receipts, operation intents, and recovery state. It is not a second task queue.
 
+The [Git stage workflow proposal](docs/git-stage-workflow.md) plans a Codex-backed planner that combines code ideation and Promptify, then commits the implementation prompt and stage reports for a separate coder and independent reviewer. It defines an opt-in transport and implementation slices; this integration is not yet available at runtime.
+
 ## Get started
 
 You need Git, pnpm 10.30.3, and Node.js 22.20+ on the 22.x line, or 24.12+. Native operation also requires a compatible OpenClaw installation with Workboard, Automations, and configured agent roles. The documented contract baseline is OpenClaw 2026.9.1; check compatibility with your installed version. Candidate execution requires the supported Linux isolation setup described in the [native reference](docs/native-autonomy.md).
