@@ -10,6 +10,7 @@ import { NATIVE_GATEWAY_CONTRACT_VERSION, type NativeGateway, nativeCards, nativ
 import { nativeModeAllows } from "./promotion-mode.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
 import type { NativeEvidenceStore } from "./store.js"
+import { assertNativeVerifierImageAvailable } from "./verification-context.js"
 
 export function loadNativePolicy(path: string): NativeAutonomyPolicy {
   const value = JSON.parse(readFileSync(path, "utf8"))
@@ -175,6 +176,14 @@ export async function nativeDoctor(
       ? "Framework work requires human review"
       : "Deployment and revision check configured"
   })
+  if (policy.verificationSandbox?.backend === "docker") {
+    await check("verification-toolchain", async () => {
+      const sandbox = policy.verificationSandbox
+      if (sandbox?.backend !== "docker") throw new Error("Docker verifier is not configured")
+      await assertNativeVerifierImageAvailable(sandbox.image)
+      return "Pinned verifier image is available locally; this is not proof of executed verification"
+    })
+  }
   await check("verification-authority", () => {
     const authority = policy.verificationAuthority
     if (!authority?.reviewedRevision || !authority.acceptance?.length)
