@@ -174,6 +174,15 @@ export class NativeAutonomyRuntime {
           const maxStarts = Number(params.maxStarts)
           if (!Number.isSafeInteger(maxStarts) || maxStarts < 1) throw new Error("Invalid native dispatch capacity")
           await this.authorizeDispatch(gateway)
+          // Inventory/config authorization awaits remote reads. Revoke stale
+          // authority and shrink capacity before the next external effect.
+          store.authorizeEffect()
+          assertExecutionOwnership()
+          this.control.assert()
+          const currentPressure = this.resourceAdmission(method)
+          if (!currentPressure.allowed)
+            return { started: [], startedCardIds: [], deferred: [], resourcePressure: currentPressure } as any
+          params = { ...params, maxStarts: Math.min(maxStarts, currentPressure.startCapacity) }
         }
         return gateway.request(method, params)
       }
