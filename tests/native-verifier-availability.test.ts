@@ -95,7 +95,11 @@ it("keeps unavailable definitions incomplete with fixed diagnostics and no priva
       { personaId: "engineer", goals: ["Improve"], successObservations: ["Observed"], allowedPaths: ["src"], weight: 1 }
     ]
   } as any
-  const commands = await nativeVerificationCommandContext(policy, ["src/file.ts"])
+  const commands = await nativeVerificationCommandContext(policy, null)
+  expect(commands).toHaveLength(2)
+  expect(commands.every(({ definition }) => !definition.complete)).toBe(true)
+  expect(execute).toHaveBeenCalledTimes(1)
+  expect(execute.mock.calls[0]![1][0]).toBe("image")
   expect(commands[0]!.definition).toEqual({
     path: "/opt/openclaw/checks/ui",
     complete: false,
