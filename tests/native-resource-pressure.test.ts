@@ -142,3 +142,83 @@ it("reserves the configured verifier limit when it exceeds the worker estimate",
   expect(guard.inspect()).toMatchObject({ allowed: true, workerBytes: 2048 * MiB })
   expect(guard.inspect(4096 * MiB)).toMatchObject({ allowed: false, reasons: ["host-memory"], workerBytes: 4096 * MiB })
 })
+
+it.each([
+  "host-memory",
+  "gateway-memory",
+  "telemetry-unavailable",
+  "lease-replaced",
+  "pause",
+  "freeze",
+  "pause-resume",
+  "shrink",
+  "grow"
+] as const)("refreshes admission after awaited dispatch authorization: %s", async (change) => {
+  const root = mkdtempSync(join(tmpdir(), "native-dispatch-refresh-"))
+  cleanup.push(() => rmSync(root, { recursive: true, force: true }))
+  const store = new NativeEvidenceStore(join(root, "evidence.db"))
+  cleanup.push(() => store.close())
+  let sample = healthy()
+  let telemetryUnavailable = false
+  const guard = new NativeResourceGuard(undefined, () => {
+    if (telemetryUnavailable) throw new Error("Telemetry disappeared")
+    return sample
+  })
+  let releaseInventory!: () => void
+  let inventoryEntered!: () => void
+  const entered = new Promise<void>((resolve) => {
+    inventoryEntered = resolve
+  })
+  const inventory = new Promise<void>((resolve) => {
+    releaseInventory = resolve
+  })
+  const request = vi.fn(async (method: string) => {
+    if (method === "workboard.cards.list") {
+      inventoryEntered()
+      await inventory
+      return { cards: [] }
+    }
+    return { started: [{}], startedCardIds: ["queued"], deferred: [] }
+  })
+  const policy = {
+    enabled: true,
+    mode: "implement-human-review",
+    workerConcurrency: 8,
+    repository: root,
+    boardId: "board",
+    repositoryKind: "framework"
+  } as any
+  const runtime = new NativeAutonomyRuntime(policy, { request: request as any }, store, undefined, guard)
+  const reconcile = runtime.reconcile({ dispatchOnly: true })
+  await entered
+  if (change === "host-memory") sample = { ...sample, availableBytes: 512 * MiB }
+  if (change === "gateway-memory") sample = { ...sample, gatewayRssBytes: 3072 * MiB }
+  if (change === "shrink") sample = { ...sample, availableBytes: 5 * 1024 * MiB }
+  if (change === "grow") sample = { ...sample, availableBytes: 12 * 1024 * MiB }
+  if (change === "pause" || change === "pause-resume") runtime.control.change(true)
+  if (change === "freeze") runtime.control.freeze()
+  if (change === "pause-resume") runtime.control.change(false)
+  if (change === "telemetry-unavailable") telemetryUnavailable = true
+  if (change === "lease-replaced") store.db.exec("UPDATE native_locks SET token=token+1")
+  releaseInventory()
+  if (change === "lease-replaced") {
+    await expect(reconcile).rejects.toThrow("Native lease lost")
+    expect(request.mock.calls.filter(([method]) => method === "workboard.cards.dispatchWithOptions")).toHaveLength(0)
+    return
+  }
+  const result = await reconcile
+  const dispatches = request.mock.calls.filter(([method]) => method === "workboard.cards.dispatchWithOptions")
+  if (["pause", "freeze", "pause-resume"].includes(change)) {
+    expect(result.paused).toBe(true)
+    expect(dispatches).toHaveLength(0)
+  } else if (change === "host-memory" || change === "gateway-memory" || change === "telemetry-unavailable") {
+    expect(result.dispatch).toMatchObject({ startedCount: 0, resourcePressure: { allowed: false, reasons: [change] } })
+    expect(dispatches).toHaveLength(0)
+  } else {
+    expect(result.dispatch?.startedCardIds).toEqual(["queued"])
+    expect(request).toHaveBeenCalledWith("workboard.cards.dispatchWithOptions", {
+      boardId: "board",
+      maxStarts: change === "shrink" ? 1 : 2
+    })
+  }
+})
