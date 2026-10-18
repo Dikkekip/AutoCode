@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
+import { NativeStoragePending } from "../packages/core-runtime/src/native/storage-pressure.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
 import { verifyNativeCandidate } from "../packages/core-runtime/src/native/verification.js"
 import { validateNativeAutonomyPolicy } from "../packages/domain/src/native-autonomy.js"
@@ -99,4 +100,21 @@ it.each([1, undefined])("uses the independent verification ceiling across store 
   expect(await (limit === 1 ? s.runtimes[1]!.advanceWorkflow("second") : second)).toBe(1)
   expect(verify).toHaveBeenCalledTimes(2)
   expect(s.stores[0]!.acquire("capacity:verification:0", 1000)).not.toBeNull()
+})
+
+it("defers a prebuild storage race without blocking or consuming repair attempts, then resumes", async () => {
+  const s = fixture(1)
+  const verify = vi.mocked(verifyNativeCandidate)
+  verify.mockReset()
+  verify.mockRejectedValueOnce(new NativeStoragePending("reserve reached after admission"))
+  verify.mockImplementationOnce(
+    async (_policy, candidate) => ({ headSha: candidate.headSha, checks: [{ exitCode: 0 }] }) as any
+  )
+  expect(await s.runtimes[0]!.advanceWorkflow("first")).toBe(0)
+  const deferred = s.stores[0]!.get<any>("workflow", "first")
+  expect(deferred.blocker).toBeUndefined()
+  expect(deferred.lifecycle).toMatchObject({ attempt: 0, state: "verification" })
+  expect(await s.runtimes[0]!.advanceWorkflow("first")).toBe(1)
+  expect(verify).toHaveBeenCalledTimes(2)
+  expect(s.stores[0]!.get<any>("workflow", "first").blocker).toBeUndefined()
 })

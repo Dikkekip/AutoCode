@@ -21,6 +21,7 @@ import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-run
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
 import * as verificationModule from "../packages/core-runtime/src/native/verification.js"
 import { planNativeVerification } from "../packages/core-runtime/src/native/verification.js"
+import { retireNativeAcceptedWorkspace } from "../packages/core-runtime/src/native/workspace-retirement.js"
 import { nativeVerificationRuleId, validateNativeAutonomyPolicy } from "../packages/domain/src/native-autonomy.js"
 
 const cleanup: Array<() => void> = []
@@ -1106,4 +1107,50 @@ describe("verification refresh after a policy change", () => {
     s.workflow.verification!.provenanceArtifact!.sha256 = nativeContentDigest(raw)
     expect(await s.runtime.stage("workflow", s.workflow, "Review", "ready", "{}")).not.toBe(review)
   })
+})
+
+it("retires the exact managed workspace only after accepted deployment and preserves release evidence", async () => {
+  const s = setup()
+  const cwd = join(s.runtime.policy.repository, "candidate-worktree")
+  mkdirSync(cwd)
+  s.workflow.candidate!.cwd = cwd
+  const original = s.runtime.gateway.request
+  const calls: Array<[string, Record<string, unknown>]> = []
+  s.runtime.gateway.request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
+    calls.push([method, params])
+    if (method === "worktrees.list")
+      return { worktrees: [{ id: "managed", path: cwd, ownerKind: "workboard", ownerId: "implementation" }] } as T
+    if (method === "worktrees.remove") return { removed: true } as T
+    return original<T>(method, params)
+  }
+  await retireNativeAcceptedWorkspace(s.runtime, "workflow", s.workflow)
+  expect(calls).toEqual([])
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  expect(calls.filter(([method]) => method === "worktrees.remove")).toEqual([
+    ["worktrees.remove", { id: "managed", ifLossless: true, expectedHead: s.workflow.candidate!.headSha }]
+  ])
+  expect(s.store.get("workspace-retirement", "workflow")).toMatchObject({ state: "removed" })
+  await retireNativeAcceptedWorkspace(s.runtime, "workflow", s.workflow)
+  expect(calls.filter(([method]) => method === "worktrees.remove")).toHaveLength(1)
+})
+
+it("retains an accepted workspace when its protected provenance would be removed", async () => {
+  const s = setup()
+  const request = vi.spyOn(s.runtime.gateway, "request")
+  const cwd = join(s.runtime.policy.repository, "candidate-worktree")
+  mkdirSync(cwd)
+  s.workflow.candidate!.cwd = cwd
+  const evidence = s.workflow.verification!
+  const provenancePath = join(cwd, "provenance.json")
+  writeFileSync(provenancePath, JSON.stringify(evidence.provenance))
+  evidence.provenanceArtifact = {
+    path: provenancePath,
+    sha256: nativeContentDigest(JSON.stringify(evidence.provenance))
+  }
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  expect(s.store.get("workspace-retirement", "workflow")).toMatchObject({
+    state: "retained",
+    reason: expect.stringContaining("provenance")
+  })
+  expect(request).not.toHaveBeenCalledWith("worktrees.remove", expect.anything())
 })

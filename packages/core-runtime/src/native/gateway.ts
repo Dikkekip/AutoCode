@@ -68,6 +68,7 @@ function nativeGatewayTimeout(method: string): number {
           "autocode.resume",
           "workboard.cards.list",
           "workboard.cards.start",
+          "worktrees.remove",
           "config.patch"
         ].includes(method)
       ? 180_000

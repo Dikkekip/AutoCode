@@ -25,6 +25,21 @@ vi.mock("../packages/core-runtime/src/native/resource-pressure.js", async (impor
   return { ...actual, NativeResourceGuard: DeterministicResourceGuard }
 })
 
+// Storage boundary tests override these samplers explicitly; unrelated scheduler
+// fixtures must not depend on current developer/CI disk use.
+vi.mock("../packages/core-runtime/src/native/storage-pressure.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../packages/core-runtime/src/native/storage-pressure.js")>()
+  return {
+    ...actual,
+    inspectNativeStorage: vi.fn(() => ({
+      allowed: true,
+      availableBytes: 100 * 1024 ** 3,
+      requiredBytes: 10 * 1024 ** 3
+    })),
+    requireNativeStorage: vi.fn()
+  }
+})
+
 const isolatedCodexRoot = join(tmpdir(), `openclaw-vitest-codex-${process.pid}`)
 
 // Dispatcher tests must be deterministic when the developer host has real

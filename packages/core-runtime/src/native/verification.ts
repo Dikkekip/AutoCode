@@ -35,7 +35,6 @@ import {
   validateNativeAutonomyPolicy,
   validateNativeVerificationSandbox
 } from "@openclaw/domain"
-
 import {
   allowlistedEnvironment,
   BUILD_ENVIRONMENT_ALLOWLIST,
@@ -43,9 +42,9 @@ import {
   executeDockerSandboxedCommand,
   executeSandboxedCommand
 } from "@openclaw/os-adapters"
-
 import { nativeContentDigest, nativeRepositoryIdentity } from "./provenance.js"
 import { snapshotNativeInputs } from "./snapshot.js"
+import { requireNativeStorage } from "./storage-pressure.js"
 
 export interface NativeVerificationAuthority {
   authorize(): void
@@ -415,6 +414,8 @@ export async function runNativeCommand(
   }
   const cwd = containedDirectory(root, command.cwd)
   requireNewCommandArtifact(artifact)
+  requireNativeStorage(tmpdir())
+  requireNativeStorage("/")
   const workspace = mkdtempSync(resolve(tmpdir(), "native-verification-"))
   try {
     // Read committed blobs, never candidate symlinks, untracked secrets or host git metadata.
@@ -452,6 +453,8 @@ export async function runNativeCommand(
       if (authority) authority.mutate(writeManifest)
       else writeManifest()
     }
+    requireNativeStorage(workspace)
+    requireNativeStorage("/")
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
     return await recordCommand(

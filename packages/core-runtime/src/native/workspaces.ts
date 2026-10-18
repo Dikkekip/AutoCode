@@ -2,6 +2,7 @@ import { realpathSync } from "node:fs"
 import type { NativeAutonomyPolicy } from "@openclaw/domain"
 import { nativeCoderAgentIds } from "@openclaw/domain"
 import { type NativeCard, type NativeGateway, nativeCards, type OwnedInvestigationAbort } from "./gateway.js"
+import { inspectNativeStorage } from "./storage-pressure.js"
 
 /** Preserve native admission, dependency and owner serialization while Workboard owns checkout preparation. */
 export class NativeWorkspaceGateway implements NativeGateway {
@@ -151,6 +152,10 @@ export class NativeWorkspaceGateway implements NativeGateway {
       const workspace = card.metadata?.automation?.workspace as
         | { kind?: string; path?: string; sourcePath?: string; sourceBranch?: string }
         | undefined
+      if (!inspectNativeStorage(this.policy.repository).allowed) {
+        deferred.push({ cardId: card.id, reason: "worktree-capacity" })
+        continue
+      }
       if (workspace?.kind === "scratch") {
         this.authorize()
         started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))

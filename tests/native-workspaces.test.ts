@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
+import { inspectNativeStorage } from "../packages/core-runtime/src/native/storage-pressure.js"
 import { NativeWorkspaceGateway } from "../packages/core-runtime/src/native/workspaces.js"
 
 const roots: string[] = []
@@ -575,4 +576,23 @@ it("keeps an exhausted unaccepted allocation failure blocked while starting anot
   expect(s.card.status).toBe("blocked")
   expect((s.card.metadata as any).failureCount).toBe(2)
   expect(s.calls.some(([m]) => m === "workboard.cards.update")).toBe(false)
+})
+
+it("defers low-storage starts without creating a run or consuming retry accounting", async () => {
+  const s = setup()
+  vi.mocked(inspectNativeStorage).mockReturnValueOnce({
+    allowed: false,
+    availableBytes: 9 * 1024 ** 3,
+    requiredBytes: 10 * 1024 ** 3
+  })
+  const before = structuredClone(s.card)
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).toMatchObject({
+    started: [],
+    deferred: [{ cardId: "card", reason: "worktree-capacity" }]
+  })
+  expect(s.card).toEqual(before)
+  expect(s.calls.some(([method]) => method === "workboard.cards.start")).toBe(false)
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).toMatchObject({
+    startedCardIds: ["card"]
+  })
 })

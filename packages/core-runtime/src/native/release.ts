@@ -15,6 +15,7 @@ import {
   nativeGit,
   runNativeDeploymentCommand
 } from "./verification.js"
+import { retireNativeAcceptedWorkspace } from "./workspace-retirement.js"
 
 export class NativeReleasePending extends Error {}
 const exec = promisify(execFile)
@@ -330,4 +331,5 @@ export async function releaseNativeWorkflow(
     personaId: w.proposal.personaId,
     goal: w.proposal.goal
   })
+  await retireNativeAcceptedWorkspace(runtime, id, w)
 }

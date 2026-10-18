@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import {
   artifactScopesOverlap,
@@ -67,6 +68,7 @@ import { NativeReleasePending, releaseNativeWorkflow } from "./release.js"
 import { type NativeRepairObservation, nativeRepairObservation, planNativeRepair } from "./repair.js"
 import { nativeRepairSupersessionClosed, supersedeLegacyNativeRepairIntent } from "./repair-intent.js"
 import { NativeResourceGuard } from "./resource-pressure.js"
+import { inspectNativeStorage, NativeStoragePending } from "./storage-pressure.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
@@ -77,6 +79,7 @@ import {
   nativeVerificationCommands,
   verifyNativeCandidate
 } from "./verification.js"
+import { retireNativeAcceptedWorkspace } from "./workspace-retirement.js"
 
 export interface NativeWorkflow {
   lifecycle?: NativeLifecycle
@@ -1750,6 +1753,13 @@ export class NativeAutonomyRuntime {
       pool === "verification" && this.policy.verificationSandbox?.backend === "docker"
         ? (this.policy.verificationSandbox.memoryMb ?? 4096) * 1024 * 1024
         : undefined
+    for (const path of pool === "verification" ? [this.policy.repository, tmpdir(), "/"] : []) {
+      const storage = inspectNativeStorage(path)
+      if (!storage.allowed) {
+        this.store.event("storage.deferred", this.policy.boardId, { operation: pool, ...storage })
+        return null
+      }
+    }
     const pressure = this.resourceAdmission(pool, verifierBytes)
     if (!pressure.allowed) return null
     for (let slot = 0; slot < limit; slot++) {
@@ -1910,6 +1920,7 @@ export class NativeAutonomyRuntime {
       for (const cardId of [w.stageCards.Deploy, w.rootCardId].filter(Boolean)) {
         await this.gateway.request("workboard.cards.move", { id: cardId, status: "done" })
       }
+      await retireNativeAcceptedWorkspace(this, id, w)
       return advanced
     }
     const preservedRepairReason = this.blockedLegacyRepairReason(id, w)
@@ -2161,6 +2172,10 @@ export class NativeAutonomyRuntime {
       }
     } catch (error) {
       if (error instanceof NativeLeaseLost || error instanceof NativeRevisionConflict) return advanced
+      if (error instanceof NativeStoragePending) {
+        this.store.event("storage.deferred", id, { reason: error.message })
+        return advanced
+      }
       if (error instanceof NativeReleasePending || error instanceof NativeControlRevoked) {
         this.store.event("release.waiting", id, { reason: error.message })
         return advanced
