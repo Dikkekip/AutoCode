@@ -12,6 +12,10 @@ import {
 import { nativeContentDigest } from "./provenance.js"
 import { redactNativeSourceText } from "./source-redaction.js"
 import { nativeVerificationCommands } from "./verification.js"
+import {
+  type NativeArchivedVerifierDefinition,
+  readNativeVerificationDefinitionArchive
+} from "./verification-definition-archive.js"
 
 const exec = promisify(execFile)
 const limit = 32_768
@@ -94,27 +98,49 @@ export async function nativeVerificationCommandContext(
   const commands = []
   // Before implementation, show every standing rule with its path conditions.
   // This is policy context, not a claim about the eventual candidate selection.
-  const selected =
-    files === null ? validateNativeAutonomyPolicy(policy).verification : nativeVerificationCommands(policy, files)
+  const normalized = validateNativeAutonomyPolicy(policy)
+  const selected = files === null ? normalized.verification : nativeVerificationCommands(normalized, files)
+  let archived: Map<string, NativeArchivedVerifierDefinition> | undefined
+  if (normalized.verificationDefinitionArchive && selected.length) {
+    try {
+      archived = await readNativeVerificationDefinitionArchive(normalized)
+    } catch {
+      // A configured archive is an explicit authority choice. Never silently
+      // replace invalid archive evidence with another definition source.
+    }
+  }
   // Every rule shares this policy's pinned image. A missing image cannot supply
   // later definitions either; bound the failure to this context, never cache it
   // across contexts where the operator may have restored the image.
   let unavailableImage: NativeVerifierUnavailableError | undefined
   for (const command of selected) {
-    let definition: { path: string; content?: string; sha256?: string; complete: boolean; reason?: string }
+    let definition: {
+      path: string
+      content?: string
+      sha256?: string
+      complete: boolean
+      reason?: string
+      provenance?: NativeArchivedVerifierDefinition["provenance"]
+    }
     try {
-      if (!policy.verificationSandbox) throw new Error("No toolchain")
-      if (unavailableImage) throw unavailableImage
-      const source = await readDefinition(policy.verificationSandbox, command.argv[0]!)
-      // biome-ignore lint/suspicious/noControlCharactersInRegex: reject binary and malformed UTF-8 definitions
-      if (Buffer.byteLength(source) > limit || /[\x00-\x08\x0e-\x1f\ufffd]/.test(source))
-        throw new Error("Not a bounded text definition")
-      const content = redactNativeSourceText(source)
-      definition = {
-        path: command.argv[0]!,
-        content,
-        sha256: nativeContentDigest(source),
-        complete: content === source
+      if (normalized.verificationDefinitionArchive) {
+        const value = archived?.get(nativeVerificationRuleId(command))
+        if (!value) throw new Error("Unavailable configured archive")
+        definition = value
+      } else {
+        if (!policy.verificationSandbox) throw new Error("No toolchain")
+        if (unavailableImage) throw unavailableImage
+        const source = await readDefinition(policy.verificationSandbox, command.argv[0]!)
+        // biome-ignore lint/suspicious/noControlCharactersInRegex: reject binary and malformed UTF-8 definitions
+        if (Buffer.byteLength(source) > limit || /[\x00-\x08\x0e-\x1f\ufffd]/.test(source))
+          throw new Error("Not a bounded text definition")
+        const content = redactNativeSourceText(source)
+        definition = {
+          path: command.argv[0]!,
+          content,
+          sha256: nativeContentDigest(source),
+          complete: content === source
+        }
       }
     } catch (error) {
       if (policy.verificationSandbox?.backend === "docker" && error instanceof NativeVerifierUnavailableError)
@@ -122,8 +148,9 @@ export async function nativeVerificationCommandContext(
       definition = {
         path: command.argv[0]!,
         complete: false,
-        reason:
-          error instanceof NativeVerifierUnavailableError
+        reason: normalized.verificationDefinitionArchive
+          ? "Configured verifier definition archive is invalid or unavailable; no fallback or execution authority."
+          : error instanceof NativeVerifierUnavailableError
             ? error.message
             : "Toolchain executable is not available as bounded text; do not infer its coverage from its filename."
       }

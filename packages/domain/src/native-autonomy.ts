@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { isAbsolute, matchesGlob, normalize } from "node:path"
+import { isAbsolute, matchesGlob, normalize, relative } from "node:path"
 import { type GitStagePolicy, validateGitStagePolicy } from "./git-stage-packets.js"
 import { type NativeBudgetPolicy, validateNativeBudgetPolicy } from "./native-budget.js"
 import { type NativeQualityPolicy, validateNativeQualityPolicy } from "./native-quality.js"
@@ -118,6 +118,8 @@ export interface NativeAutonomyPolicy {
     acceptance: NativeAcceptanceBinding[]
   }
   verificationSandbox?: NativeVerificationSandbox
+  /** Operator-pinned historical text for design review only, never an execution toolchain. */
+  verificationDefinitionArchive?: { path: string; sha256: string }
   verification: NativeCommand[]
   verificationExemptions?: NativeVerificationExemption[]
   deployment: {
@@ -211,6 +213,26 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     throw new Error("Unsupported native promotion mode")
   const repository = text(r.repository, "repository")
   if (!isAbsolute(repository)) throw new Error("repository must be absolute")
+  let verificationDefinitionArchive: NativeAutonomyPolicy["verificationDefinitionArchive"]
+  if (r.verificationDefinitionArchive !== undefined) {
+    const archive = record(r.verificationDefinitionArchive)
+    const path = text(archive.path, "verifier definition archive path")
+    const sha256 = text(archive.sha256, "verifier definition archive digest")
+    const rel = relative(repository, path)
+    if (
+      Object.keys(archive).some((key) => key !== "path" && key !== "sha256") ||
+      !isAbsolute(path) ||
+      normalize(path) !== path ||
+      path.includes("\0") ||
+      (rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel)) ||
+      !/^[a-f0-9]{64}$/.test(sha256) ||
+      r.verificationSandbox?.backend !== "docker"
+    )
+      throw new Error(
+        "Verifier definition archives require a pinned file outside the repository and a Docker toolchain"
+      )
+    verificationDefinitionArchive = { path, sha256 }
+  }
   const personas = (Array.isArray(r.personas) ? r.personas : []).map((value: unknown): NativePersonaGoal => {
     const p = record(value)
     return {
@@ -376,6 +398,7 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     ...(r.verificationSandbox === undefined
       ? {}
       : { verificationSandbox: validateNativeVerificationSandbox(r.verificationSandbox) }),
+    ...(verificationDefinitionArchive ? { verificationDefinitionArchive } : {}),
     verificationExemptions,
     deployment: r.deployment
       ? {
