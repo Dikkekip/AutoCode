@@ -96,10 +96,15 @@ export async function nativeVerificationCommandContext(
   // This is policy context, not a claim about the eventual candidate selection.
   const selected =
     files === null ? validateNativeAutonomyPolicy(policy).verification : nativeVerificationCommands(policy, files)
+  // Every rule shares this policy's pinned image. A missing image cannot supply
+  // later definitions either; bound the failure to this context, never cache it
+  // across contexts where the operator may have restored the image.
+  let unavailableImage: NativeVerifierUnavailableError | undefined
   for (const command of selected) {
     let definition: { path: string; content?: string; sha256?: string; complete: boolean; reason?: string }
     try {
       if (!policy.verificationSandbox) throw new Error("No toolchain")
+      if (unavailableImage) throw unavailableImage
       const source = await readDefinition(policy.verificationSandbox, command.argv[0]!)
       // biome-ignore lint/suspicious/noControlCharactersInRegex: reject binary and malformed UTF-8 definitions
       if (Buffer.byteLength(source) > limit || /[\x00-\x08\x0e-\x1f\ufffd]/.test(source))
@@ -112,6 +117,8 @@ export async function nativeVerificationCommandContext(
         complete: content === source
       }
     } catch (error) {
+      if (policy.verificationSandbox?.backend === "docker" && error instanceof NativeVerifierUnavailableError)
+        unavailableImage = error
       definition = {
         path: command.argv[0]!,
         complete: false,

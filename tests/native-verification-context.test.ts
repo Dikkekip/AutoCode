@@ -4,6 +4,7 @@ import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import { nativeContentDigest } from "../packages/core-runtime/src/native/provenance.js"
 import {
+  NativeVerifierUnavailableError,
   nativeVerificationCommandContext,
   readNativeVerifierDefinition
 } from "../packages/core-runtime/src/native/verification-context.js"
@@ -85,4 +86,57 @@ it("reads only bounded text under a toolchain root and rejects escaping symlinks
   expect(await readNativeVerifierDefinition(config, "/checks/check")).toContain("exit 0")
   await expect(readNativeVerifierDefinition(config, "/checks/escape")).rejects.toThrow(/escapes/)
   await expect(readNativeVerifierDefinition(config, "/../outside")).rejects.toThrow(/absolute/)
+})
+
+it("bounds a missing image to one failed read while preserving every standing rule", async () => {
+  const rules = Array.from({ length: 50 }, (_, index) => ({
+    id: `check-${index}`,
+    argv: [`/opt/openclaw/checks/check-${index}`],
+    cwd: ".",
+    timeoutSeconds: 10,
+    paths: ["src/**"]
+  }))
+  const read = vi.fn().mockRejectedValue(new NativeVerifierUnavailableError())
+  const commands = await nativeVerificationCommandContext({ ...policy, verification: rules }, null, read)
+  expect(commands.map(({ ruleId }) => ruleId)).toEqual(rules.map(({ id }) => id))
+  expect(commands.every(({ definition }) => !definition.complete && !definition.content)).toBe(true)
+  expect(commands.every(({ definition }) => definition.reason?.includes("unavailable locally"))).toBe(true)
+  expect(read).toHaveBeenCalledTimes(1)
+})
+
+it("rechecks a restored image in the next context instead of caching its absence", async () => {
+  const source = "#!/bin/sh\nexec npm test\n"
+  const read = vi.fn().mockRejectedValueOnce(new NativeVerifierUnavailableError()).mockResolvedValue(source)
+  const unavailable = await nativeVerificationCommandContext(policy, null, read)
+  expect(unavailable.every(({ definition }) => !definition.complete)).toBe(true)
+  const restored = await nativeVerificationCommandContext(policy, null, read)
+  expect(restored.every(({ definition }) => definition.complete && definition.content === source)).toBe(true)
+  expect(read).toHaveBeenCalledTimes(3)
+})
+
+it("stops repeated image failures after successful earlier definition reads", async () => {
+  const rules = Array.from({ length: 3 }, (_, index) => ({
+    id: `partial-${index}`,
+    argv: [`/opt/openclaw/checks/partial-${index}`],
+    cwd: ".",
+    timeoutSeconds: 10,
+    paths: ["src/**"]
+  }))
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce("#!/bin/sh\nexec npm test\n")
+    .mockRejectedValue(new NativeVerifierUnavailableError())
+  const commands = await nativeVerificationCommandContext({ ...policy, verification: rules }, null, read)
+  expect(commands.map(({ definition }) => definition.complete)).toEqual([true, false, false])
+  expect(read).toHaveBeenCalledTimes(2)
+})
+
+it("continues reading independent definitions after a command-specific error", async () => {
+  const read = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("missing executable"))
+    .mockResolvedValue("#!/bin/sh\nexec npm test\n")
+  const commands = await nativeVerificationCommandContext(policy, null, read)
+  expect(commands.map(({ definition }) => definition.complete)).toEqual([false, true])
+  expect(read).toHaveBeenCalledTimes(2)
 })
