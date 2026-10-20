@@ -8,7 +8,7 @@ import { expect, it } from "vitest"
 import { WebSocket, WebSocketServer } from "ws"
 import {
   loadNativeGatewaySdkCall,
-  NATIVE_BOARD_MAX_PAYLOAD_BYTES,
+  NATIVE_BOARD_UNCAPPED_RESPONSE,
   NATIVE_CARD_STATUSES,
   NativeSdkGateway,
   nativeCards
@@ -58,7 +58,9 @@ it("requires explicit SDK support before a board poll, preserving other methods"
   }`,
     async (command) => {
       const gateway = new NativeSdkGateway(command)
-      await expect(nativeCards(gateway, "board")).rejects.toThrow("public bounded Gateway response SDK extension")
+      await expect(nativeCards(gateway, "board")).rejects.toThrow(
+        "public local uncapped Gateway response SDK extension"
+      )
       expect(await gateway.request("workboard.cards.runs", { id: "one" })).toEqual({ method: "workboard.cards.runs" })
     }
   )
@@ -81,7 +83,7 @@ it("uses the explicit capability only for full lists with unchanged scope, param
           "workboard.cards.list",
           args[0],
           args[1],
-          { ...args[2], maxPayloadBytes: NATIVE_BOARD_MAX_PAYLOAD_BYTES }
+          { ...args[2], maxPayloadBytes: NATIVE_BOARD_UNCAPPED_RESPONSE }
         ]
       })
       expect(await call("workboard.cards.runs", ...args)).toEqual({
@@ -92,10 +94,10 @@ it("uses the explicit capability only for full lists with unchanged scope, param
   )
 })
 
-it("rejects zero, nonfinite, fractional and over-ceiling bounds while preserving the default", () => {
+it("accepts the explicit uncapped opt-in and rejects invalid finite bounds while preserving the default", () => {
   expect(limits.resolveGatewayMaxPayloadBytes()).toBe(26_214_400)
-  expect(limits.resolveGatewayMaxPayloadBytes(NATIVE_BOARD_MAX_PAYLOAD_BYTES)).toBe(67_108_864)
-  for (const value of [0, -1, NaN, Infinity, 1.5, 67_108_865])
+  expect(limits.resolveGatewayMaxPayloadBytes(NATIVE_BOARD_UNCAPPED_RESPONSE)).toBe(0)
+  for (const value of [-1, NaN, Infinity, 1.5, 67_108_865])
     expect(() => limits.resolveGatewayMaxPayloadBytes(value)).toThrow(/maxPayloadBytes/)
 })
 
@@ -138,7 +140,7 @@ async function receive(payload: string, maxPayloadBytes?: number) {
   }
 }
 
-it("reproduces a >25 MiB message rejection and retains every card, status and evidence byte at the opt-in bound", async () => {
+it("reproduces a >25 MiB message rejection and retains every card, status and evidence byte with uncapped opt-in", async () => {
   const cards = NATIVE_CARD_STATUSES.map((status, i) => ({
     id: `card-${i}`,
     boardId: "board",
@@ -148,9 +150,8 @@ it("reproduces a >25 MiB message rejection and retains every card, status and ev
   }))
   const payload = JSON.stringify({ cards, statuses: [...NATIVE_CARD_STATUSES], boards: [{ id: "board" }] })
   expect(Buffer.byteLength(payload)).toBeGreaterThan(26_214_400)
-  expect(Buffer.byteLength(payload)).toBeLessThan(NATIVE_BOARD_MAX_PAYLOAD_BYTES)
   await expect(receive(payload)).rejects.toThrow(/Max payload size exceeded/)
-  const received = await receive(payload, NATIVE_BOARD_MAX_PAYLOAD_BYTES)
+  const received = await receive(payload, NATIVE_BOARD_UNCAPPED_RESPONSE)
   expect(createHash("sha256").update(received).digest("hex")).toBe(createHash("sha256").update(payload).digest("hex"))
   const result = JSON.parse(received)
   expect(result.statuses).toEqual(NATIVE_CARD_STATUSES)
@@ -159,9 +160,7 @@ it("reproduces a >25 MiB message rejection and retains every card, status and ev
 }, 30_000)
 
 it("propagates receive-limit failures without returning a partial board or retrying", async () => {
-  await expect(receive("x".repeat(67_108_865), NATIVE_BOARD_MAX_PAYLOAD_BYTES)).rejects.toThrow(
-    /Max payload size exceeded/
-  )
+  await expect(receive("x".repeat(1025), 1024)).rejects.toThrow(/Max payload size exceeded/)
   await fixtureSdk(
     `export async function callGatewayFromCli() { throw new Error('wrong call'); }
     let calls = 0;

@@ -1,59 +1,42 @@
-# Bounded complete Workboard responses
+# Complete Workboard responses with local uncapped opt-in
 
-The installed Workboard `workboard.cards.list` accepts only `boardId` and returns
-all cards, board summaries and statuses. It has no pagination or status filter.
-The installed public `callGatewayFromCli` and `GatewayClient` have no supported
-receive-limit option. A 26,219,791-byte success response exceeds the client's
-26,214,400-byte WebSocket message limit; restarting the Gateway cannot fix it.
+`workboard.cards.list` accepts only `boardId` and returns the complete board. Its
+26,219,791-byte reply exceeded the default 26,214,400-byte receive limit. No
+pagination is currently supported. This source patch preserves the ordinary
+25 MiB default and adds an explicit public SDK capability,
+`callGatewayFromCliWithResponseLimit`, with `maxPayloadBytes: 0` for uncapped
+complete responses. Positive limits remain bounded to 1..64 MiB; zero removes
+the wire-message cap rather than moving the failure to 64 MiB.
 
-`bounded-gateway-response.patch` is an unapplied OpenClaw **source** change based
-on core commit `5e7165a9992aa3501596f34b5d08193f6232d678`. Source hashes are in
-`bounded-gateway-response-source.json`. It adds a generic opt-in
-`maxPayloadBytes` argument, validated as an integer from 1 through 67,108,864.
-The default remains 26,214,400. The public SDK export
-`callGatewayFromCliWithResponseLimit` validates before connection and forwards
-through the existing lazy RPC facade, call owner and client to WebSocket's
-complete, decompressed message limit. Authentication, target selection, scopes,
-timeouts and request failure handling remain with their existing owners.
+AutoCode opts into zero only for `workboard.cards.list`. The actual core call
+owner checks the final resolved target before dispatch: configured numeric
+loopback, local mode, shared token/password authentication, no URL override or
+SSH tunnel. Remote targets and missing shared auth fail closed. Authentication,
+scopes, deadlines and failure propagation retain their existing owners. The
+low-level GatewayClient also supports explicit zero; its ordinary default is
+unchanged. No global client setting, retries, truncation, filtering or DB edits
+are introduced.
 
-AutoCode requires this explicit SDK export for `workboard.cards.list` and opts
-into 64 MiB. Other RPCs use the original public call. Old SDKs fail with an
-activation-prerequisite error before polling the board; unknown options are never
-silently passed to an old SDK. No retries, card/status/evidence filtering,
-truncation, DB access, trusted-plugin impersonation or installed-code edits are
-introduced. Responses over 64 MiB still fail; further growth needs supported
-server pagination, not repeated limit increases. 64 MiB bounds the wire message,
-not total process RSS; concurrent reads and parsed-object overhead still need
-parent resource admission.
+Uncapped does not mean bounded memory: complete decompressed strings, parsing,
+objects and concurrent reads can consume more than wire size. Parent resource
+admission, bounded concurrency, deadlines and process limits remain necessary.
+Supported server pagination is the preferred future growth mechanism.
 
-## Verification and activation
-
-From the framework checkout, run the synthetic one-worker suite:
-
-```
-rtk proxy pnpm exec vitest run tests/native-board-payload.test.ts tests/native-gateway-sdk.test.ts tests/native-gateway-contract.test.ts --maxWorkers=1 --fileParallelism=false
-```
-
-To test the exact hash-bound core source without editing or duplicating its Git
-checkout, the following runner overlays only patched modules in Vite memory and
-writes its synthetic test/config/receipt to an external proof directory:
+The patch is based on core `5e7165a9992aa3501596f34b5d08193f6232d678`; its per-file
+before/after hashes are in `bounded-gateway-response-source.json`. The historical
+mocked overlay template is retained only as prior evidence. The current runner
+requires an integrated clean hash-matching candidate and executes its tracked
+public SDK test through the real call owner, without mocks or source overlays:
 
 ```
 rtk proxy node scripts/check-native-board-payload-source.mjs CORE_SOURCE PROOF_DIRECTORY
+rtk proxy pnpm exec vitest run tests/native-board-payload.test.ts tests/native-gateway-sdk.test.ts tests/native-gateway-contract.test.ts --maxWorkers=1 --fileParallelism=false
 ```
 
-It verifies the source commit/hashes and `git apply --check`, exercises the real
-patched GatewayClient against a loopback synthetic Gateway with a >25 MiB
-response, and tests the actual SDK facade/runtime forwarding. Core call-owner
-forwarding is source-reviewed; the runner mocks that boundary to avoid loading
-host authentication/configuration. The framework wire suite also tests the hard
-64 MiB ceiling, exact byte completeness, all currently accepted card statuses,
-legacy capability rejection and failure propagation.
-
-These checks do not substitute for integrating the core patch, canonical SDK
-API/export regeneration, core typecheck/build/owner checks and authenticated
-integration against the resulting published SDK. Parent must own that source
-integration/publication and fresh activation/idle/ownership/resource gates, then
-activate the framework candidate and perform one bounded status/Doctor read.
-This framework commit alone cannot repair the installed client. No runtime or
-verifier operation is authorized by these source receipts.
+These are synthetic source checks using ephemeral authentication and isolated
+state/ports. They do not prove packaged capability or authorize installation,
+restart, activation, live board calls or verifier operations. Canonical core
+build/typecheck requires checkout-local dependencies: the current shared
+`node_modules` symlink is rejected by the declaration ownership checker. Parent
+must first provide an owned dependency graph, complete build/package/owner
+checks and exact-SHA review, then use its existing runtime activation gates.

@@ -6,26 +6,26 @@
 +export const MAX_GATEWAY_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 +export function resolveGatewayMaxPayloadBytes(value?: number): number {
 +  if (value === undefined) return DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES;
-+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_GATEWAY_MAX_PAYLOAD_BYTES) {
-+    throw new Error("Gateway maxPayloadBytes must be an integer between 1 and 67108864");
++  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_GATEWAY_MAX_PAYLOAD_BYTES) {
++    throw new Error("Gateway maxPayloadBytes must be an integer between 0 and 67108864");
 +  }
 +  return value;
 +}
 --- a/packages/gateway-client/src/client.ts
 +++ b/packages/gateway-client/src/client.ts
-@@ -69,6 +69,7 @@
-   resolvePreauthHandshakeTimeoutMs,
-   resolveSafeTimeoutDelayMs,
- } from "./timeouts.js";
+@@ -63,6 +63,7 @@
+ } from "./protocol-request.js";
+ import { shouldPauseGatewayReconnect } from "./reconnect-policy.js";
+ import { GatewayClientRequestError, markGatewayConnectAssemblyError } from "./request-error.js";
 +import { resolveGatewayMaxPayloadBytes } from "./response-limit.js";
- import { rawDataToString } from "./websocket-data.js";
  import {
-   GatewayWebSocketTransportConfigurationError,
+   DEFAULT_GATEWAY_REQUEST_TIMEOUT_MS,
+   resolveConnectChallengeTimeoutMs,
 @@ -174,6 +175,8 @@
      tickWatchMinIntervalMs?: number;
      tickWatchTimeoutMs?: number;
      requestTimeoutMs?: number;
-+    /** Opt-in complete-message receive bound; default 25 MiB, hard ceiling 64 MiB. */
++    /** Opt-in complete-message receive bound; default 25 MiB; 0 disables the cap, positive ceiling 64 MiB. */
 +    maxPayloadBytes?: number;
      /** Prefer one setup credential for the first successful device-auth exchange. */
      preferBootstrapToken?: boolean;
@@ -49,7 +49,15 @@
          ...(edgeAuthHeaders
 --- a/src/gateway/call.ts
 +++ b/src/gateway/call.ts
-@@ -109,7 +109,7 @@
+@@ -1,6 +1,7 @@
+ // Gateway RPC call helper.
+ // Builds a GatewayClient, resolves auth/scopes, and performs one request.
+ import { randomUUID } from "node:crypto";
++import { isLoopbackIpAddress } from "@openclaw/net-policy/ip";
+ import { redactSensitiveUrlLikeString } from "@openclaw/net-policy/redact-sensitive-url";
+ import { isRecord } from "@openclaw/normalization-core/record-coerce";
+ import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+@@ -109,7 +110,7 @@
    opts?: GatewayClientRequestOptions,
  ) => Promise<T>;
  
@@ -58,7 +66,7 @@
    GatewayCallDeviceAuthOptions & {
      url?: string;
      /** Require this resolved endpoint without overriding target selection or authentication. */
-@@ -717,6 +717,7 @@
+@@ -717,6 +718,7 @@
        clientDisplayName: resolveGatewayClientDisplayName(opts),
        clientVersion: opts.clientVersion ?? VERSION,
        caps: ["ultrafast", ...(opts.caps ?? [])],
@@ -66,6 +74,30 @@
        platform: opts.platform,
        mode: opts.mode ?? GATEWAY_CLIENT_MODES.CLI,
        ...(opts.approvalRuntimeToken ? { approvalRuntimeToken: opts.approvalRuntimeToken } : {}),
+@@ -928,6 +930,23 @@
+   const deviceAuthScope = bootstrap.deviceAuthScope;
+   const token = useStoredDeviceAuth ? undefined : bootstrap.auth.token;
+   const password = useStoredDeviceAuth ? undefined : bootstrap.auth.password;
++  // Bind the uncapped opt-in to the final resolved local, shared-auth endpoint.
++  // A separate facade precheck could observe a different target/config generation.
++  if (opts.maxPayloadBytes === 0) {
++    const target = new URL(url);
++    if (
++      context.isRemoteMode ||
++      urlOverrideSource ||
++      bootstrap.sshTunnel ||
++      !["ws:", "wss:"].includes(target.protocol) ||
++      !isLoopbackIpAddress(target.hostname.replace(/^\[|\]$/g, "")) ||
++      !(token || password)
++    ) {
++      throw new Error(
++        "Uncapped Gateway responses require the configured loopback Gateway with shared authentication and no URL override or tunnel",
++      );
++    }
++  }
+   const { clientOptions, omitDeviceIdentity, deviceIdentity } = resolveGatewayCallDeviceAuth({
+     opts,
+     url,
 --- a/src/cli/gateway-rpc.runtime.ts
 +++ b/src/cli/gateway-rpc.runtime.ts
 @@ -11,6 +11,7 @@
@@ -86,17 +118,19 @@
          scopes: extra?.scopes,
 --- a/src/cli/gateway-rpc.ts
 +++ b/src/cli/gateway-rpc.ts
-@@ -1,4 +1,5 @@
+@@ -1,5 +1,6 @@
++import type { Command } from "commander";
  // Lazy gateway RPC facade and shared Commander options for CLI subcommands.
+-import type { Command } from "commander";
 +import { resolveGatewayMaxPayloadBytes } from "../../packages/gateway-client/src/response-limit.js";
- import type { Command } from "commander";
  import type { OpenClawConfig } from "../config/types.openclaw.js";
  import { createLazyImportLoader } from "../shared/lazy-promise.js";
+ import { inheritOptionFromParent } from "./command-options.js";
 @@ -61,6 +62,17 @@
    return await callGatewayFromCliWithTransport(method, opts, params, extra);
  }
  
-+/** Explicit public capability: validates a finite receive bound before any connection. */
++/** Explicit public capability: 0 requests uncapped local shared-auth reads; positive limits are bounded. */
 +export async function callGatewayFromCliWithResponseLimit(
 +  method: string,
 +  opts: GatewayRpcOpts,
@@ -112,9 +146,214 @@
    const runtime = await gatewayRpcRuntimeLoader.load();
 --- a/src/plugin-sdk/gateway-runtime.ts
 +++ b/src/plugin-sdk/gateway-runtime.ts
-@@ -1,4 +1,4 @@
+@@ -1,4 +1,8 @@
 -export { addGatewayClientOptions, callGatewayFromCli } from "../cli/gateway-rpc.js";
-+export { addGatewayClientOptions, callGatewayFromCli, callGatewayFromCliWithResponseLimit } from "../cli/gateway-rpc.js";
++export {
++  addGatewayClientOptions,
++  callGatewayFromCli,
++  callGatewayFromCliWithResponseLimit,
++} from "../cli/gateway-rpc.js";
  export type { GatewayRpcOpts } from "../cli/gateway-rpc.js";
  export { isGatewayClientRequestError, isGatewayTransportError } from "../gateway/call.js";
  // Plugin CLIs echo gateway URLs/close reasons into operator-visible errors;
+--- /dev/null
++++ b/src/cli/gateway-rpc.response-limit.test.ts
+@@ -0,0 +1,171 @@
++// Regression boundary: public SDK -> lazy runtime -> actual call owner -> wire.
++// Tiny finite caps expose forwarding errors without another large payload fixture.
++import { randomUUID } from "node:crypto";
++import { once } from "node:events";
++import { mkdtemp, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterAll, beforeAll, expect, it, vi } from "vitest";
++import { WebSocketServer } from "../../packages/gateway-client/src/websocket.js";
++import type { OpenClawConfig } from "../config/types.openclaw.js";
++
++let state: string;
++let server: WebSocketServer;
++let port: number;
++let authenticated = 0;
++let requests = 0;
++const token = randomUUID();
++const evidence = "synthetic-evidence-ø".repeat(256);
++let sdk: typeof import("../plugin-sdk/gateway-runtime.js");
++
++beforeAll(async () => {
++  state = await mkdtemp(join(tmpdir(), "gateway-response-sdk-"));
++  vi.stubEnv("OPENCLAW_STATE_DIR", state);
++  vi.stubEnv("OPENCLAW_CONFIG_PATH", join(state, "missing-config.json"));
++  for (const name of [
++    "OPENCLAW_GATEWAY_URL",
++    "OPENCLAW_GATEWAY_TOKEN",
++    "OPENCLAW_GATEWAY_PASSWORD",
++  ])
++    vi.stubEnv(name, "");
++  sdk = await import("../plugin-sdk/gateway-runtime.js");
++  server = new WebSocketServer({ host: "127.0.0.1", port: 0, perMessageDeflate: false });
++  await once(server, "listening");
++  const address = server.address();
++  if (!address || typeof address === "string") throw new Error("Missing synthetic listener");
++  port = address.port;
++  server.on("connection", (socket) => {
++    socket.on("error", () => {});
++    socket.send(
++      JSON.stringify({
++        type: "event",
++        event: "connect.challenge",
++        payload: { nonce: "synthetic", ts: Date.now() },
++      }),
++    );
++    socket.on("message", (data) => {
++      const frame = JSON.parse(data.toString());
++      if (frame.method === "connect") {
++        if (
++          frame.params.auth?.token !== token ||
++          JSON.stringify(frame.params.scopes) !== JSON.stringify(["operator.read"])
++        ) {
++          socket.close(1008, "Synthetic authentication or scopes rejected");
++          return;
++        }
++        authenticated++;
++        socket.send(
++          JSON.stringify({
++            type: "res",
++            id: frame.id,
++            ok: true,
++            payload: {
++              type: "hello-ok",
++              protocol: 4,
++              server: { version: "synthetic", connId: "synthetic" },
++              features: { methods: ["workboard.cards.list"], events: [] },
++              snapshot: {
++                presence: [],
++                health: {},
++                stateVersion: { presence: 1, health: 1 },
++                uptimeMs: 1,
++              },
++              auth: { role: "operator", scopes: ["operator.read"] },
++              policy: { maxPayload: 524288, maxBufferedBytes: 1048576, tickIntervalMs: 30000 },
++            },
++          }),
++        );
++      } else if (
++        frame.method === "workboard.cards.list" &&
++        frame.params.boardId === "synthetic-board"
++      ) {
++        requests++;
++        socket.send(
++          JSON.stringify({
++            type: "res",
++            id: frame.id,
++            ok: true,
++            payload: { cards: [{ id: "one", metadata: { evidence } }], statuses: ["done"] },
++          }),
++          () => {},
++        );
++      } else socket.close(1008, "Unexpected synthetic request");
++    });
++  });
++});
++afterAll(async () => {
++  if (server) {
++    for (const socket of server.clients) socket.terminate();
++    await new Promise<void>((resolve) => server.close(() => resolve()));
++  }
++  vi.unstubAllEnvs();
++  if (state) await rm(state, { recursive: true, force: true });
++});
++function options(config?: OpenClawConfig) {
++  return {
++    json: true,
++    timeout: "3000",
++    config: config ?? {
++      gateway: {
++        mode: "local" as const,
++        port,
++        bind: "loopback" as const,
++        auth: { mode: "token" as const, token },
++      },
++    },
++  };
++}
++const extra = {
++  scopes: ["operator.read"] as ["operator.read"],
++  progress: false,
++  deviceIdentity: null,
++  sharedStateMode: "read-only" as const,
++};
++const params = { boardId: "synthetic-board" };
++it("preserves the default and delivers complete uncapped responses through the authenticated SDK chain", async () => {
++  const expected = { cards: [{ id: "one", metadata: { evidence } }], statuses: ["done"] };
++  await expect(
++    sdk.callGatewayFromCli("workboard.cards.list", options(), params, extra),
++  ).resolves.toEqual(expected);
++  await expect(
++    sdk.callGatewayFromCliWithResponseLimit("workboard.cards.list", options(), params, {
++      ...extra,
++      maxPayloadBytes: 1024,
++    }),
++  ).rejects.toThrow();
++  await expect(
++    sdk.callGatewayFromCliWithResponseLimit("workboard.cards.list", options(), params, {
++      ...extra,
++      maxPayloadBytes: 0,
++    }),
++  ).resolves.toEqual(expected);
++  expect(authenticated).toBe(3);
++  expect(requests).toBe(3);
++});
++it("rejects uncapped URL overrides, remote mode and missing shared auth before dispatch", async () => {
++  const before = authenticated;
++  const unsafe = [
++    { ...options(), url: `ws://127.0.0.1:${port}`, token },
++    options({ gateway: { mode: "remote", remote: { url: `ws://127.0.0.1:${port}`, token } } }),
++    options({ gateway: { mode: "local", port, auth: { mode: "none" } } }),
++  ];
++  for (const opts of unsafe)
++    await expect(
++      sdk.callGatewayFromCliWithResponseLimit("workboard.cards.list", opts, params, {
++        ...extra,
++        maxPayloadBytes: 0,
++      }),
++    ).rejects.toThrow(/Uncapped Gateway responses/);
++  expect(authenticated).toBe(before);
++});
++it("rejects invalid explicit limits before dispatch", async () => {
++  const before = authenticated;
++  for (const maxPayloadBytes of [-1, NaN, Infinity, 1.5, 67108865])
++    await expect(
++      sdk.callGatewayFromCliWithResponseLimit("workboard.cards.list", options(), params, {
++        ...extra,
++        maxPayloadBytes,
++      }),
++    ).rejects.toThrow(/maxPayloadBytes/);
++  expect(authenticated).toBe(before);
++});
+--- a/docs/plugins/sdk-runtime/gateway-and-nodes.md
++++ b/docs/plugins/sdk-runtime/gateway-and-nodes.md
+@@ -9,6 +9,24 @@
+ ---
+ 
+ Reach the Gateway and paired nodes from plugin code, and the events a long-lived Gateway service receives. Part of the [Plugin runtime helpers](/plugins/sdk-runtime) reference.
++
++## CLI response limits
++
++Import `callGatewayFromCliWithResponseLimit` from
++`openclaw/plugin-sdk/gateway-runtime` when a CLI read needs an explicit complete,
++decompressed WebSocket message limit. Its fourth argument requires
++`maxPayloadBytes`: positive safe integers from 1 through 67,108,864 select a
++finite cap. Ordinary `callGatewayFromCli` calls retain the 26,214,400-byte default.
++
++Zero explicitly removes the receive cap. The call owner admits zero only for
++the configured local Gateway at a numeric loopback address, with shared token
++or password authentication and without a URL override or SSH tunnel. Remote
++mode and missing shared authentication are rejected before dispatch. This does
++not change scopes, authentication requirements, deadlines or retry policy.
++Only opt in for a trusted complete read whose resource admission is owned by
++the caller. Uncapped messages can consume unbounded memory, and parsing and
++concurrent reads add overhead; deadlines do not bound peak memory. Prefer
++supported pagination when the server contract offers it.
+ 
+ ## Service scheduling
+ 

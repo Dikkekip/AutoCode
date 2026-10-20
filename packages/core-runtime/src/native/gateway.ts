@@ -52,7 +52,7 @@ async function loadAdminAbortCall(command: string): Promise<NativeAdminAbortCall
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
   return sdk.callGatewayFromCli
 }
-export const NATIVE_BOARD_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+export const NATIVE_BOARD_UNCAPPED_RESPONSE = 0
 export async function loadNativeGatewaySdkCall(command: string): Promise<NativeGatewaySdkCall> {
   const sdk = await import(pathToFileURL(resolveNativeGatewaySdkPath(command)).href)
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
@@ -61,10 +61,10 @@ export async function loadNativeGatewaySdkCall(command: string): Promise<NativeG
     // Legacy SDKs silently ignore unknown options. Require the explicit public
     // capability instead of retrying an oversized read or accepting partial data.
     if (typeof sdk.callGatewayFromCliWithResponseLimit !== "function")
-      throw new Error("Complete Workboard reads require the public bounded Gateway response SDK extension")
+      throw new Error("Complete Workboard reads require the public local uncapped Gateway response SDK extension")
     return sdk.callGatewayFromCliWithResponseLimit(method, options, params, {
       ...extra,
-      maxPayloadBytes: NATIVE_BOARD_MAX_PAYLOAD_BYTES
+      maxPayloadBytes: NATIVE_BOARD_UNCAPPED_RESPONSE
     })
   }
 }
