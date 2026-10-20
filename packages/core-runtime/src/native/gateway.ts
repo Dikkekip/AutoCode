@@ -60,9 +60,9 @@ export async function loadNativeGatewaySdkCall(command: string): Promise<NativeG
     if (method !== "workboard.cards.list") return sdk.callGatewayFromCli(method, options, params, extra)
     // Legacy SDKs silently ignore unknown options. Require the explicit public
     // capability instead of retrying an oversized read or accepting partial data.
-    if (typeof sdk.callGatewayFromCliWithResponseLimit !== "function")
+    if (sdk.callGatewayFromCli.responseLimitVersion !== 1)
       throw new Error("Complete Workboard reads require the public local uncapped Gateway response SDK extension")
-    return sdk.callGatewayFromCliWithResponseLimit(method, options, params, {
+    return sdk.callGatewayFromCli(method, options, params, {
       ...extra,
       maxPayloadBytes: NATIVE_BOARD_UNCAPPED_RESPONSE
     })

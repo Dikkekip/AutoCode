@@ -68,8 +68,8 @@ it("requires explicit SDK support before a board poll, preserving other methods"
 
 it("uses the explicit capability only for full lists with unchanged scope, params and deadline", async () => {
   await fixtureSdk(
-    `export async function callGatewayFromCli(...args) { return { kind: 'default', args }; }
-    export async function callGatewayFromCliWithResponseLimit(...args) { return { kind: 'bounded', args }; }`,
+    `export async function callGatewayFromCli(...args) { return { kind: args[3]?.maxPayloadBytes === 0 ? 'bounded' : 'default', args }; }
+    callGatewayFromCli.responseLimitVersion = 1;`,
     async (command) => {
       const call = await loadNativeGatewaySdkCall(command)
       const args = [
@@ -162,9 +162,9 @@ it("reproduces a >25 MiB message rejection and retains every card, status and ev
 it("propagates receive-limit failures without returning a partial board or retrying", async () => {
   await expect(receive("x".repeat(1025), 1024)).rejects.toThrow(/Max payload size exceeded/)
   await fixtureSdk(
-    `export async function callGatewayFromCli() { throw new Error('wrong call'); }
-    let calls = 0;
-    export async function callGatewayFromCliWithResponseLimit() { calls++; throw new Error('receive failed, calls=' + calls); }`,
+    `let calls = 0;
+    export async function callGatewayFromCli() { calls++; throw new Error('receive failed, calls=' + calls); }
+    callGatewayFromCli.responseLimitVersion = 1;`,
     async (command) => {
       await expect(nativeCards(new NativeSdkGateway(command), "board")).rejects.toThrow("receive failed, calls=1")
     }

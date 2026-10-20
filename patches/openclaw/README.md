@@ -3,8 +3,8 @@
 `workboard.cards.list` accepts only `boardId` and returns the complete board. Its
 26,219,791-byte reply exceeded the default 26,214,400-byte receive limit. No
 pagination is currently supported. This source patch preserves the ordinary
-25 MiB default and adds an explicit public SDK capability,
-`callGatewayFromCliWithResponseLimit`, with `maxPayloadBytes: 0` for uncapped
+25 MiB default and extends the existing `callGatewayFromCli` public SDK function with an explicit
+`responseLimitVersion === 1` marker and `maxPayloadBytes: 0` for uncapped
 complete responses. Positive limits remain bounded to 1..64 MiB; zero removes
 the wire-message cap rather than moving the failure to 64 MiB.
 
@@ -36,7 +36,8 @@ rtk proxy pnpm exec vitest run tests/native-board-payload.test.ts tests/native-g
 These are synthetic source checks using ephemeral authentication and isolated
 state/ports. They do not prove packaged capability or authorize installation,
 restart, activation, live board calls or verifier operations. Canonical core
-build/typecheck requires checkout-local dependencies: the current shared
-`node_modules` symlink is rejected by the declaration ownership checker. Parent
-must first provide an owned dependency graph, complete build/package/owner
-checks and exact-SHA review, then use its existing runtime activation gates.
+build/typecheck requires checkout-local dependencies. Frozen dependencies are
+prepared in the same candidate checkout, preserving the original shared-install
+symlink recoverably. No public named export or budget increase is added. Build,
+package, owner checks and exact-SHA review receipts remain required before the
+parent uses its existing runtime activation gates.
