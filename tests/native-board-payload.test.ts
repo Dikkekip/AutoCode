@@ -19,7 +19,7 @@ const patch = await readFile(new URL("../patches/openclaw/bounded-gateway-respon
 // implementation of its limit validation. Upstream integration CI remains a gate.
 const limitSource = patch
   .split("+++ b/packages/gateway-client/src/response-limit.ts\n")[1]
-  ?.split("--- a/")[0]
+  ?.split(/\n(?:diff --git |--- )/)[0]
   ?.split("\n")
   .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
   .map((line) => line.slice(1))
