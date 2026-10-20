@@ -68,15 +68,17 @@ index c9f6f2b23..b9ef45bfe 100644
          ...(edgeAuthHeaders
 diff --git a/packages/gateway-client/src/response-limit.ts b/packages/gateway-client/src/response-limit.ts
 new file mode 100644
-index 000000000..dfcc79e1f
+index 000000000..9f7a582d4
 --- /dev/null
 +++ b/packages/gateway-client/src/response-limit.ts
-@@ -0,0 +1,10 @@
+@@ -0,0 +1,12 @@
 +/** Receive limits apply to a complete, decompressed WebSocket message. */
 +export const DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES = 25 * 1024 * 1024;
 +export const MAX_GATEWAY_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 +export function resolveGatewayMaxPayloadBytes(value?: number): number {
-+  if (value === undefined) return DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES;
++  if (value === undefined) {
++    return DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES;
++  }
 +  if (!Number.isSafeInteger(value) || value < 0 || value > MAX_GATEWAY_MAX_PAYLOAD_BYTES) {
 +    throw new Error("Gateway maxPayloadBytes must be an integer between 0 and 67108864");
 +  }
@@ -84,10 +86,10 @@ index 000000000..dfcc79e1f
 +}
 diff --git a/src/cli/gateway-rpc.response-limit.test.ts b/src/cli/gateway-rpc.response-limit.test.ts
 new file mode 100644
-index 000000000..a952a019e
+index 000000000..f03f9f2de
 --- /dev/null
 +++ b/src/cli/gateway-rpc.response-limit.test.ts
-@@ -0,0 +1,172 @@
+@@ -0,0 +1,186 @@
 +// Regression boundary: public SDK -> lazy runtime -> actual call owner -> wire.
 +// Tiny finite caps expose forwarding errors without another large payload fixture.
 +import { randomUUID } from "node:crypto";
@@ -96,6 +98,7 @@ index 000000000..a952a019e
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
 +import { afterAll, beforeAll, expect, it, vi } from "vitest";
++import { rawDataToString } from "../../packages/gateway-client/src/websocket-data.js";
 +import { WebSocketServer } from "../../packages/gateway-client/src/websocket.js";
 +import type { OpenClawConfig } from "../config/types.openclaw.js";
 +
@@ -116,13 +119,16 @@ index 000000000..a952a019e
 +    "OPENCLAW_GATEWAY_URL",
 +    "OPENCLAW_GATEWAY_TOKEN",
 +    "OPENCLAW_GATEWAY_PASSWORD",
-+  ])
++  ]) {
 +    vi.stubEnv(name, "");
++  }
 +  sdk = await import("../plugin-sdk/gateway-runtime.js");
 +  server = new WebSocketServer({ host: "127.0.0.1", port: 0, perMessageDeflate: false });
 +  await once(server, "listening");
 +  const address = server.address();
-+  if (!address || typeof address === "string") throw new Error("Missing synthetic listener");
++  if (!address || typeof address === "string") {
++    throw new Error("Missing synthetic listener");
++  }
 +  port = address.port;
 +  server.on("connection", (socket) => {
 +    socket.on("error", () => {});
@@ -134,7 +140,7 @@ index 000000000..a952a019e
 +      }),
 +    );
 +    socket.on("message", (data) => {
-+      const frame = JSON.parse(data.toString());
++      const frame = JSON.parse(rawDataToString(data));
 +      if (frame.method === "connect") {
 +        if (
 +          frame.params.auth?.token !== token ||
@@ -179,17 +185,25 @@ index 000000000..a952a019e
 +          }),
 +          () => {},
 +        );
-+      } else socket.close(1008, "Unexpected synthetic request");
++      } else {
++        socket.close(1008, "Unexpected synthetic request");
++      }
 +    });
 +  });
 +});
 +afterAll(async () => {
 +  if (server) {
-+    for (const socket of server.clients) socket.terminate();
-+    await new Promise<void>((resolve) => server.close(() => resolve()));
++    for (const socket of server.clients) {
++      socket.terminate();
++    }
++    await new Promise<void>((resolve) => {
++      server.close(() => resolve());
++    });
 +  }
 +  vi.unstubAllEnvs();
-+  if (state) await rm(state, { recursive: true, force: true });
++  if (state) {
++    await rm(state, { recursive: true, force: true });
++  }
 +});
 +function options(config?: OpenClawConfig) {
 +  return {
@@ -240,24 +254,26 @@ index 000000000..a952a019e
 +    options({ gateway: { mode: "remote", remote: { url: `ws://127.0.0.1:${port}`, token } } }),
 +    options({ gateway: { mode: "local", port, auth: { mode: "none" } } }),
 +  ];
-+  for (const opts of unsafe)
++  for (const opts of unsafe) {
 +    await expect(
 +      sdk.callGatewayFromCli("workboard.cards.list", opts, params, {
 +        ...extra,
 +        maxPayloadBytes: 0,
 +      }),
 +    ).rejects.toThrow(/Uncapped Gateway responses/);
++  }
 +  expect(authenticated).toBe(before);
 +});
 +it("rejects invalid explicit limits before dispatch", async () => {
 +  const before = authenticated;
-+  for (const maxPayloadBytes of [-1, NaN, Infinity, 1.5, 67108865])
++  for (const maxPayloadBytes of [-1, Number.NaN, Infinity, 1.5, 67108865]) {
 +    await expect(
 +      sdk.callGatewayFromCli("workboard.cards.list", options(), params, {
 +        ...extra,
 +        maxPayloadBytes,
 +      }),
 +    ).rejects.toThrow(/maxPayloadBytes/);
++  }
 +  expect(authenticated).toBe(before);
 +});
 diff --git a/src/cli/gateway-rpc.runtime.ts b/src/cli/gateway-rpc.runtime.ts

@@ -3,7 +3,7 @@
   "paths": {
     "packages/gateway-client/src/response-limit.ts": {
       "beforeSha256": null,
-      "afterSha256": "2c5e08f5fe8eb170f18249f106d6b91f7fca7afbfbe44f653c5e00fa769cce70"
+      "afterSha256": "bddd63b6bff456132eea36064a31e5cad4bd1d0d9b408204f1540a9c7d5cea0a"
     },
     "packages/gateway-client/src/client.ts": {
       "beforeSha256": "4693f7f63e763248738c89730b26f193140daa5176e48b088f2583d766514e46",
@@ -27,7 +27,7 @@
     },
     "src/cli/gateway-rpc.response-limit.test.ts": {
       "beforeSha256": null,
-      "afterSha256": "7629d3adb3caabd726bcc2af2bb321bf9f49073321b700b0444e7a43fc498928"
+      "afterSha256": "52c95b10be2754c70b6db441051f916e9f8148fc00f6b2b1e4086c293ae4b2a5"
     },
     "docs/plugins/sdk-runtime/gateway-and-nodes.md": {
       "beforeSha256": "d13d8ed62901228d12316ede468ad7397259cbd453d6af4527dfdb52dbaebf56",
