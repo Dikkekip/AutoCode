@@ -3,7 +3,7 @@
   "paths": {
     "packages/gateway-client/src/response-limit.ts": {
       "beforeSha256": null,
-      "afterSha256": "bddd63b6bff456132eea36064a31e5cad4bd1d0d9b408204f1540a9c7d5cea0a"
+      "afterSha256": "c364637a9a7a0f4e9b5c1c0ffe5baf3b094c2ea7fbc6bb93f0ddfeac30fbfbce"
     },
     "packages/gateway-client/src/client.ts": {
       "beforeSha256": "4693f7f63e763248738c89730b26f193140daa5176e48b088f2583d766514e46",
