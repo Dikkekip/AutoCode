@@ -52,10 +52,21 @@ async function loadAdminAbortCall(command: string): Promise<NativeAdminAbortCall
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
   return sdk.callGatewayFromCli
 }
-async function loadGatewaySdkCall(command: string): Promise<NativeGatewaySdkCall> {
+export const NATIVE_BOARD_UNCAPPED_RESPONSE = 0
+export async function loadNativeGatewaySdkCall(command: string): Promise<NativeGatewaySdkCall> {
   const sdk = await import(pathToFileURL(resolveNativeGatewaySdkPath(command)).href)
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
-  return sdk.callGatewayFromCli
+  return async (method, options, params, extra) => {
+    if (method !== "workboard.cards.list") return sdk.callGatewayFromCli(method, options, params, extra)
+    // Legacy SDKs silently ignore unknown options. Require the explicit public
+    // capability instead of retrying an oversized read or accepting partial data.
+    if (sdk.callGatewayFromCli.responseLimitVersion !== 1)
+      throw new Error("Complete Workboard reads require the public local uncapped Gateway response SDK extension")
+    return sdk.callGatewayFromCli(method, options, params, {
+      ...extra,
+      maxPayloadBytes: NATIVE_BOARD_UNCAPPED_RESPONSE
+    })
+  }
 }
 function nativeGatewayTimeout(method: string): number {
   return method === "autocode.reconcile"
@@ -253,7 +264,7 @@ function nativeGatewayScope(method: string): "operator.read" | "operator.write" 
 export class NativeSdkGateway extends NativeCliGateway {
   constructor(
     command = "openclaw",
-    private readonly loadCall: (command: string) => Promise<NativeGatewaySdkCall> = loadGatewaySdkCall
+    private readonly loadCall: (command: string) => Promise<NativeGatewaySdkCall> = loadNativeGatewaySdkCall
   ) {
     super(command)
   }

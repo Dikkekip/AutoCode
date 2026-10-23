@@ -146,6 +146,19 @@ it("uses trusted local factory authority, allows confined sessions and refuses R
           }
         ]
       } as any
+    if (method === "workboard.cards.runs") {
+      expect(params).toEqual({ id: "card" })
+      return {
+        card: {
+          id: "card",
+          title: "Investigation",
+          agentId: "research",
+          status: "running",
+          sessionKey: "assigned-session",
+          metadata: { automation: { boardId: "app" } }
+        }
+      } as any
+    }
     expect(method).toBe("autocode.tool")
     return await new Promise((resolve, reject) => {
       server.methods.get(method)({
