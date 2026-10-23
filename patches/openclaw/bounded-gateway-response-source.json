@@ -15,7 +15,7 @@
     },
     "packages/gateway-client/src/response-limit.ts": {
       "beforeSha256": null,
-      "afterSha256": "2924bd25a1df64742ca06ea733ffc66006c3c346379c63eeebb555d7d0fc460a"
+      "afterSha256": "1d312afae05aa768978b8be7e6dde900527300ba61135d268af549d81fc86dcd"
     },
     "src/cli/gateway-rpc.response-limit.test.ts": {
       "beforeSha256": null,

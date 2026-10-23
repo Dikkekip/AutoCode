@@ -115,13 +115,13 @@ index c9f6f2b2383b183a39ad136bc926da661b32d903..35b5f59d88e11ea8724af84e59a8cfb6
          ...(edgeAuthHeaders
 diff --git a/packages/gateway-client/src/response-limit.ts b/packages/gateway-client/src/response-limit.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..95be8dcbabe6c0ae92e1457460587b5bc0850cb2
+index 0000000000000000000000000000000000000000..e57e252720ca4ae394d8fb9c11e60b8ce2b910b8
 --- /dev/null
 +++ b/packages/gateway-client/src/response-limit.ts
 @@ -0,0 +1,17 @@
 +/** Receive limits apply to a complete, decompressed WebSocket message. */
-+export const DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES = 25 * 1024 * 1024;
-+export const MAX_GATEWAY_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
++const DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES = 25 * 1024 * 1024;
++const MAX_GATEWAY_MAX_PAYLOAD_BYTES = 64 * 1024 * 1024;
 +export function resolveGatewayMaxPayloadBytes(value?: number): number {
 +  if (value === undefined) {
 +    return DEFAULT_GATEWAY_MAX_PAYLOAD_BYTES;
