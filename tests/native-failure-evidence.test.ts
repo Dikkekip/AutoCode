@@ -47,6 +47,7 @@ function fixture(stdout = "actual hidden button locator failure", stderr = "") {
     startedAt: receipt.startedAt,
     finishedAt: receipt.finishedAt,
     exitCode: 1,
+    outcome: receipt.outcome as "nonzero",
     artifact,
     artifactSha256: nativeContentDigest(readFileSync(artifact))
   }
@@ -165,6 +166,7 @@ it("rejects a redirected artifact directory", () => {
 it("does not read artifacts when a design repair has no failed command", () => {
   const f = fixture()
   f.evidence.checks[0]!.exitCode = 0
+  Object.assign(f.evidence.checks[0]!, { outcome: "success" })
   expect(nativeFailureEvidence(f.policy, f.evidence, f.expected)).toEqual([])
   expect(nativeFailureEvidence(f.policy, undefined, f.expected)).toEqual([])
 })

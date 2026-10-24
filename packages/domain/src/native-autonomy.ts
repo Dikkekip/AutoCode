@@ -580,6 +580,8 @@ export interface NativeVerificationEvidence {
     argv: string[]
     cwd: string
     exitCode: number | null
+    /** Absent on legacy receipts; never implies success. */
+    outcome?: string
     startedAt: string
     finishedAt: string
     artifact: string
@@ -623,9 +625,12 @@ export function assertNativeReleaseGate(input: {
         )
     ) ||
     [...verification.plan.ruleIds, ...verification.plan.coverage.flatMap((entry) => entry.ruleIds)].some(
-      (id) => !verification.checks.some((check) => check.ruleId === id && check.exitCode === 0)
+      (id) =>
+        !verification.checks.some((check) => check.ruleId === id && check.outcome === "success" && check.exitCode === 0)
     ) ||
-    verification.checks.some((c) => c.exitCode !== 0 || !c.artifact || !c.startedAt || !c.finishedAt)
+    verification.checks.some(
+      (c) => c.outcome !== "success" || c.exitCode !== 0 || !c.artifact || !c.startedAt || !c.finishedAt
+    )
   ) {
     throw new Error("Release requires passing verification for the current commit")
   }

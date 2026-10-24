@@ -106,9 +106,9 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
     baseSha = "b".repeat(40),
     mergedSha = "c".repeat(40)
   const artifact = join(root, "check.json")
-  writeFileSync(artifact, JSON.stringify({ exitCode: 0, startedAt: "start", finishedAt: "end" }))
+  writeFileSync(artifact, JSON.stringify({ outcome: "success", exitCode: 0, startedAt: "start", finishedAt: "end" }))
   const artifactSha256 = createHash("sha256")
-    .update(JSON.stringify({ exitCode: 0, startedAt: "start", finishedAt: "end" }))
+    .update(JSON.stringify({ outcome: "success", exitCode: 0, startedAt: "start", finishedAt: "end" }))
     .digest("hex")
   const workflow: NativeWorkflow = {
     submission: { agentId: "coder", sessionKey: "coder-session", executionId: "coder-execution" },
@@ -137,6 +137,7 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
           ruleId: nativeVerificationRuleId(policy.verification[0]!),
           argv: ["test"],
           cwd: root,
+          outcome: "success",
           exitCode: 0,
           startedAt: "start",
           finishedAt: "end",
@@ -213,6 +214,8 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
         artifact,
         startedAt: "start",
         finishedAt: "end",
+        stderr: "",
+        outcome: "success",
         exitCode: 0,
         stdout:
           command.argv[0] === "check"
@@ -607,7 +610,9 @@ describe("native release reconciliation", () => {
       artifact: "check",
       startedAt: "start",
       finishedAt: "end",
+      outcome: "success",
       exitCode: 0,
+      stderr: "",
       stdout: JSON.stringify({ deployedSha: "wrong", workflowPassed: true })
     })
     await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(/unresolved/)

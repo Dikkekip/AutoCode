@@ -19,8 +19,14 @@ export interface NativeRepairObservation {
 export function nativeRepairObservation(workflow: NativeWorkflow, reason: string): NativeRepairObservation {
   if (!workflow.candidate) throw new Error("Repair requires a preserved candidate")
   const checks = (workflow.verification?.checks ?? [])
-    .filter((check) => check.exitCode !== 0)
-    .map((check) => ({ ruleId: check.ruleId, argv: check.argv, cwd: check.cwd, exitCode: check.exitCode }))
+    .filter((check) => check.outcome !== "success" || check.exitCode !== 0)
+    .map((check) => ({
+      ruleId: check.ruleId,
+      argv: check.argv,
+      cwd: check.cwd,
+      exitCode: check.exitCode,
+      outcome: check.outcome
+    }))
     .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
   const criteria = (workflow.review?.assessment?.criteria ?? [])
     .filter((criterion) => !criterion.satisfied)
@@ -43,7 +49,7 @@ export function nativeRepairObservation(workflow: NativeWorkflow, reason: string
       failureDigest,
       policy: workflow.verification?.provenance?.policyDigest,
       artifacts: (workflow.verification?.checks ?? [])
-        .filter((check) => check.exitCode !== 0)
+        .filter((check) => check.outcome !== "success" || check.exitCode !== 0)
         .map((check) => [check.ruleId, check.artifactSha256 ?? null])
         .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
       assessment: workflow.review?.assessment,

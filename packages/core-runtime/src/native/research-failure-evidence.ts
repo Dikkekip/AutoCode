@@ -42,7 +42,7 @@ export function nativeResearchFailureCandidate(
           (path) => scopedPath(policy, personaId, path) && scopedPath(policy, sourcePersonaId, path)
         ) &&
         w.lifecycle?.state !== "verification" &&
-        w.verification?.checks.some((check) => check.exitCode !== 0)
+        w.verification?.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
       )
     })
     .sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id))[0]

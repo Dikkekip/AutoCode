@@ -24,9 +24,15 @@ function setup() {
   writeFileSync(join(root, "src.ts"), "export const value = 1\n")
   git("add", "src.ts")
   git("commit", "-m", "fixture")
+  const baseSha = git("rev-parse", "HEAD")
+  writeFileSync(join(root, "src.ts"), "export const value = 2\n")
+  git("add", "src.ts")
+  git("commit", "-m", "candidate")
+  const state = mkdtempSync(join(tmpdir(), "verification-lease-state-"))
+  cleanups.push(() => rmSync(state, { recursive: true, force: true }))
   let now = 1_000
-  const first = new NativeEvidenceStore(join(root, "evidence.db"), () => now)
-  const second = new NativeEvidenceStore(join(root, "evidence.db"), () => now)
+  const first = new NativeEvidenceStore(join(state, "evidence.db"), () => now)
+  const second = new NativeEvidenceStore(join(state, "evidence.db"), () => now)
   cleanups.push(
     () => first.close(),
     () => second.close()
@@ -42,13 +48,24 @@ function setup() {
   }
   const command = { argv: ["/usr/bin/true"], cwd: ".", timeoutSeconds: 10 }
   const sandbox = { backend: "bubblewrap" as const, rootFilesystem: "/usr", inputFiles: ["src.ts"] }
-  return { root, first, lease, authority, takeover, command, sandbox, headSha: git("rev-parse", "HEAD") }
+  return {
+    baseSha,
+    state,
+    root,
+    first,
+    lease,
+    authority,
+    takeover,
+    command,
+    sandbox,
+    headSha: git("rev-parse", "HEAD")
+  }
 }
 
 it("does not launch verification after losing ownership during async input preparation", async () => {
   const s = setup()
   const execute = vi.spyOn(osAdapters, "executeSandboxedCommand").mockResolvedValue({ stdout: "", stderr: "" })
-  const artifact = join(s.root, "command.json")
+  const artifact = join(s.state, "command.json")
   const pending = s.first.withLease(s.lease, 120_000, () =>
     runNativeCommand(s.command, s.root, artifact, s.sandbox, undefined, s.authority)
   )
@@ -91,17 +108,26 @@ it("preserves the successor receipt when an already-started verification finishe
     verificationSandbox: s.sandbox,
     deployment: null
   })
-  const artifactRoot = join(s.root, "artifacts")
+  expect(
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: s.root, encoding: "utf8" })
+  ).toBe("")
+  const artifactRoot = join(s.state, "artifacts")
   const pending = s.first.withLease(s.lease, 120_000, () =>
     verifyNativeCandidate(
       policy,
-      { cwd: s.root, headSha: s.headSha, baseSha: s.headSha, files: ["src.ts"] },
+      { cwd: s.root, headSha: s.headSha, baseSha: s.baseSha, files: ["src.ts"] },
       artifactRoot,
       undefined,
       s.authority
     )
   )
-  await running
+  // Attach the rejection handler before waiting for a mock that may never run.
+  await Promise.race([
+    running,
+    pending.then(() => {
+      throw new Error("Verification completed before launch")
+    })
+  ])
   s.takeover()
   const receipt = join(artifactRoot, "receipt.json")
   writeFileSync(receipt, "successor evidence")

@@ -776,6 +776,7 @@ describe("independent commit-bound verification", () => {
           ruleId: "test",
           argv: ["test"],
           cwd: "/worktree",
+          outcome: "success",
           exitCode: 0,
           startedAt: "now",
           finishedAt: "later",

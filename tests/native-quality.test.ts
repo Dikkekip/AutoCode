@@ -298,6 +298,7 @@ function fixtureVerification(
     cwd: worktree,
     stdout: "Synthetic fixture failure log",
     stderr: "Synthetic fixture stderr",
+    outcome: exitCode === 0 ? "success" : "nonzero",
     exitCode,
     startedAt: "fixture-start",
     finishedAt: "fixture-end"
@@ -345,6 +346,7 @@ function fixtureVerification(
         ruleId: nativeVerificationRuleId(command),
         argv: command.argv,
         cwd: worktree,
+        outcome: exitCode === 0 ? "success" : "nonzero",
         exitCode,
         startedAt: "fixture-start",
         finishedAt: "fixture-end",

@@ -641,7 +641,11 @@ export class NativeAutonomyRuntime {
       verification: workflow.verification
         ? {
             headSha: workflow.verification.headSha,
-            checks: workflow.verification.checks.map((check) => ({ ruleId: check.ruleId, exitCode: check.exitCode }))
+            checks: workflow.verification.checks.map((check) => ({
+              ruleId: check.ruleId,
+              exitCode: check.exitCode,
+              outcome: check.outcome
+            }))
           }
         : null,
       review: workflow.review ? { verdict: workflow.review.verdict, headSha: workflow.review.headSha } : null,
@@ -895,7 +899,8 @@ export class NativeAutonomyRuntime {
           deployedSha: value.deployedSha ?? null,
           candidateSha: value.candidate?.headSha ?? null,
           verifiedSha:
-            value.verification?.checks.length && value.verification.checks.every((check) => check.exitCode === 0)
+            value.verification?.checks.length &&
+            value.verification.checks.every((check) => check.outcome === "success" && check.exitCode === 0)
               ? value.verification.headSha
               : null,
           reviewVerdict: value.review?.verdict ?? null,
@@ -1676,7 +1681,7 @@ export class NativeAutonomyRuntime {
         !workflow.lifecycle ||
         workflow.verification.checks.length !==
           nativeVerificationCommands(this.policy, workflow.candidate.files).length ||
-        workflow.verification.checks.some((check) => check.exitCode !== 0)
+        workflow.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
       )
         throw new Error("Final review requires a verified committed candidate")
       assertNativeVerificationEvidence(
@@ -1858,7 +1863,7 @@ export class NativeAutonomyRuntime {
       w.review ||
       w.deployedSha ||
       w.archivedAt ||
-      !w.verification.checks.some((check) => check.exitCode !== 0)
+      !w.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
     )
       return undefined
     const attempt = w.lifecycle.attempt + 1
@@ -2111,12 +2116,12 @@ export class NativeAutonomyRuntime {
         this.store.put("workflow", id, w)
         if (
           w.verification.checks.length !== nativeVerificationCommands(this.policy, w.candidate.files).length ||
-          w.verification.checks.some((c) => c.exitCode !== 0)
+          w.verification.checks.some((c) => c.outcome !== "success" || c.exitCode !== 0)
         ) {
           await this.requestRepair(
             id,
             w,
-            `Verification failed: ${JSON.stringify(w.verification.checks.filter((c) => c.exitCode !== 0).map((c) => ({ argv: c.argv, exitCode: c.exitCode })))}`
+            `Verification failed: ${JSON.stringify(w.verification.checks.filter((c) => c.outcome !== "success" || c.exitCode !== 0).map((c) => ({ argv: c.argv, exitCode: c.exitCode, outcome: c.outcome })))}`
           )
           advanced++
           return advanced
@@ -2128,12 +2133,12 @@ export class NativeAutonomyRuntime {
       if (
         w.verification &&
         (w.verification.checks.length !== nativeVerificationCommands(this.policy, w.candidate.files).length ||
-          w.verification.checks.some((check) => check.exitCode !== 0))
+          w.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0))
       ) {
         await this.requestRepair(
           id,
           w,
-          `Verification failed: ${JSON.stringify(w.verification.checks.filter((check) => check.exitCode !== 0).map((check) => ({ argv: check.argv, exitCode: check.exitCode })))}`
+          `Verification failed: ${JSON.stringify(w.verification.checks.filter((check) => check.outcome !== "success" || check.exitCode !== 0).map((check) => ({ argv: check.argv, exitCode: check.exitCode, outcome: check.outcome })))}`
         )
         return advanced + 1
       }

@@ -39,7 +39,7 @@ function fixture() {
   })
   const candidate = { cwd: root, headSha: "a".repeat(40), baseSha: "b".repeat(40), files: ["src/index.ts"] }
   const artifact = join(root, "check.json"),
-    contents = JSON.stringify({ exitCode: 0, startedAt: "start", finishedAt: "end" })
+    contents = JSON.stringify({ outcome: "success", exitCode: 0, startedAt: "start", finishedAt: "end" })
   writeFileSync(artifact, contents)
   const evidence = {
     headSha: candidate.headSha,
@@ -55,6 +55,7 @@ function fixture() {
         artifactSha256: createHash("sha256").update(contents).digest("hex"),
         startedAt: "start",
         finishedAt: "end",
+        outcome: "success",
         exitCode: 0
       }
     ]
@@ -173,4 +174,23 @@ it("binds new acceptance criteria only with authenticated exact-candidate review
     "binding"
   )
   expect(() => nativeAcceptanceBindings(s.policy, ["New behavior"], [], s.candidate.headSha, review)).toThrow("binding")
+})
+
+it.each([
+  undefined,
+  "timeout",
+  "cancelled",
+  "unknown",
+  "nonzero"
+])("rejects zero-exit check with outcome %s at both receipt boundaries", (outcome) => {
+  const s = fixture()
+  Object.assign(s.evidence.checks[0]!, { outcome })
+  expect(() => assertNativeVerificationEvidence(s.policy, s.candidate, s.evidence, ["Works"])).toThrow(
+    "required verification"
+  )
+  s.evidence.checks[0]!.outcome = "success"
+  const contents = JSON.stringify({ exitCode: 0, outcome, startedAt: "start", finishedAt: "end" })
+  writeFileSync(s.artifact, contents)
+  s.evidence.checks[0]!.artifactSha256 = createHash("sha256").update(contents).digest("hex")
+  expect(() => assertNativeVerificationEvidence(s.policy, s.candidate, s.evidence, ["Works"])).toThrow("trusted result")
 })

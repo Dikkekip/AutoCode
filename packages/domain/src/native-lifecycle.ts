@@ -20,7 +20,11 @@ export interface NativeLifecycleEvidence {
   recovery?: { action: string; planDigest: string; operator: string; fromAttemptId: string }
   repairCount?: number
   candidate?: { headSha: string }
-  verification?: { headSha: string; provenance?: { attemptId: string }; checks: Array<{ exitCode: number | null }> }
+  verification?: {
+    headSha: string
+    provenance?: { attemptId: string }
+    checks: Array<{ exitCode: number | null; outcome?: string }>
+  }
   review?: { headSha: string; verdict: string; attemptId?: string }
   mergedSha?: string
   deployedSha?: string
@@ -39,7 +43,14 @@ const allowed: Record<NativeWorkflowState, readonly NativeWorkflowState[]> = {
   cancelled: [],
   completed: []
 }
+/** Structural compatibility only: historical missing outcomes confer no current authority. */
+export function validateNativeLifecycleRecord(lifecycle: NativeLifecycle, evidence: NativeLifecycleEvidence): void {
+  validateLifecycle(lifecycle, evidence, true)
+}
 export function validateNativeLifecycle(lifecycle: NativeLifecycle, evidence: NativeLifecycleEvidence): void {
+  validateLifecycle(lifecycle, evidence, false)
+}
+function validateLifecycle(lifecycle: NativeLifecycle, evidence: NativeLifecycleEvidence, historical: boolean): void {
   if (
     lifecycle.version !== 1 ||
     !Object.hasOwn(allowed, lifecycle.state) ||
@@ -62,7 +73,10 @@ export function validateNativeLifecycle(lifecycle: NativeLifecycle, evidence: Na
     throw new Error("Lifecycle requires committed candidate")
   if (
     ["review", "release", "deployment", "completed"].includes(lifecycle.state) &&
-    (!evidence.verification?.checks.length || evidence.verification.checks.some((c) => c.exitCode !== 0))
+    (!evidence.verification?.checks.length ||
+      evidence.verification.checks.some(
+        (c) => (c.outcome !== "success" && !(historical && c.outcome === undefined)) || c.exitCode !== 0
+      ))
   )
     throw new Error("Lifecycle requires successful verification")
   if (["release", "deployment", "completed"].includes(lifecycle.state) && evidence.review?.verdict !== "approved")
@@ -83,7 +97,8 @@ export function upgradeNativeLifecycle(id: string, evidence: NativeLifecycleEvid
         ? "deployment"
         : evidence.review?.verdict === "approved"
           ? "release"
-          : evidence.verification?.checks.length && evidence.verification.checks.every((c) => c.exitCode === 0)
+          : evidence.verification?.checks.length &&
+              evidence.verification.checks.every((c) => c.outcome === "success" && c.exitCode === 0)
             ? "review"
             : evidence.candidate
               ? "verification"
@@ -98,7 +113,7 @@ export function upgradeNativeLifecycle(id: string, evidence: NativeLifecycleEvid
     attemptId: `${id}:attempt:${attempt}`,
     ...(evidence.candidate ? { headSha: evidence.candidate.headSha } : {})
   }
-  validateNativeLifecycle(lifecycle, evidence)
+  validateNativeLifecycleRecord(lifecycle, evidence)
   return lifecycle
 }
 export function transitionNativeLifecycle(

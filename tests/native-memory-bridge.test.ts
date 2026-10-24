@@ -47,7 +47,7 @@ function setup() {
     candidate: { headSha: head },
     verification: {
       headSha: head,
-      checks: [{ exitCode: 0 }],
+      checks: [{ outcome: "success", exitCode: 0 }],
       provenanceArtifact: { path: receipt, sha256: receiptDigest }
     },
     review: {

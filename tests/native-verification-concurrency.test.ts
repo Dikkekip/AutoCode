@@ -79,7 +79,7 @@ it.each([1, undefined])("uses the independent verification ceiling across store 
   verify.mockReset()
   verify.mockImplementation(async (_policy, candidate) => {
     await gate
-    return { headSha: candidate.headSha, checks: [{ exitCode: 0 }] } as any
+    return { headSha: candidate.headSha, checks: [{ outcome: "success", exitCode: 0 }] } as any
   })
   const first = s.runtimes[0]!.advanceWorkflow("first")
   await vi.waitFor(() => {
@@ -108,7 +108,7 @@ it("defers a prebuild storage race without blocking or consuming repair attempts
   verify.mockReset()
   verify.mockRejectedValueOnce(new NativeStoragePending("reserve reached after admission"))
   verify.mockImplementationOnce(
-    async (_policy, candidate) => ({ headSha: candidate.headSha, checks: [{ exitCode: 0 }] }) as any
+    async (_policy, candidate) => ({ headSha: candidate.headSha, checks: [{ outcome: "success", exitCode: 0 }] }) as any
   )
   expect(await s.runtimes[0]!.advanceWorkflow("first")).toBe(0)
   const deferred = s.stores[0]!.get<any>("workflow", "first")
