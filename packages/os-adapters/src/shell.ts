@@ -918,7 +918,14 @@ export async function executeDockerSandboxedCommand(
     const cid = created.stdout.trim()
     if (!/^[a-f0-9]{64}$/.test(cid)) throw new Error("Docker create returned an unknown CID")
     receipt.cid = cid
-    const identity = await call(["inspect", "--type=container", "--format", "{{json .}}", name], deadline)
+    // Full container metadata includes Config, mounts and overlay-layer paths.
+    // Keep this bounded independently from the small create/remove responses.
+    const identity = await call(
+      ["inspect", "--type=container", "--format", "{{json .}}", name],
+      deadline,
+      false,
+      1024 * 1024
+    )
     receipt.inspection = identity
     if (!identity.ok) throw failure(identity, "Docker identity inspection failed")
     const actual = JSON.parse(identity.stdout)
