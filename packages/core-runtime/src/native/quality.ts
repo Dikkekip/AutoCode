@@ -419,7 +419,7 @@ export class NativeQualityRuntime {
         })
         if (result.status !== "terminal") continue
         // Cancellation can race with natural completion or replacement. Never overwrite either.
-        const current = (await nativeCards(this.gateway, this.policy.boardId)).find((value) => value.id === card.id)
+        const current = await nativeCardById(this.gateway, this.policy.boardId, card.id)
         if (!current || current.sessionKey !== sessionKey || current.runId !== runId)
           throw new Error("Investigation cancellation ownership changed after abort")
         if (current.status === "running") {

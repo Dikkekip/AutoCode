@@ -842,10 +842,44 @@ describe("native quality investigations", () => {
     c.card.runId = "owned-run"
     c.card.updatedAt = Date.now()
     s.policy.enabled = false
+    const callsBefore = s.gateway.calls.length
     await s.runtime.quality.enforceBudgets()
+    const budgetCalls = s.gateway.calls.slice(callsBefore)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.list")).toHaveLength(1)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.runs")).toEqual([
+      { method: "workboard.cards.runs", params: { id: c.card.id } }
+    ])
     expect(s.gateway.calls.some((call) => call.method === "sessions.abort" && call.params.key === c.session)).toBe(true)
     expect(c.card.status).toBe("blocked")
     expect(s.store.get<Investigation>("investigation", `${c.roundId}:ux`)?.state).toBe("timed_out")
+  })
+  it.each([
+    "session",
+    "run",
+    "missing",
+    "board",
+    "revision"
+  ])("refuses post-abort %s changes without overwriting investigation ownership", async (change) => {
+    const s = setup()
+    await s.runtime.discover()
+    const c = s.start()
+    c.card.startedAt = Date.now() - 301_000
+    c.card.runId = "owned-run"
+    c.card.updatedAt = Date.now()
+    s.gateway.abortOwnedInvestigation = async () => {
+      if (change === "session") c.card.sessionKey = "replacement-session"
+      if (change === "run") c.card.runId = "replacement-run"
+      if (change === "missing") s.gateway.cards = s.gateway.cards.filter((card) => card.id !== c.card.id)
+      if (change === "board") c.card.boardId = "other-board"
+      if (change === "revision") delete c.card.updatedAt
+      return { status: "terminal" }
+    }
+    const callsBefore = s.gateway.calls.length
+    await expect(s.runtime.quality.enforceBudgets()).rejects.toThrow("Investigation cancellation failed")
+    const budgetCalls = s.gateway.calls.slice(callsBefore)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.list")).toHaveLength(1)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.update")).toHaveLength(0)
+    expect(s.store.get<Investigation>("investigation", `${c.roundId}:ux`)?.cancellation?.status).toBe("failed")
   })
   it("preserves both persona investigations for an equivalent finding but admits it once", async () => {
     const s = setup()
