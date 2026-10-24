@@ -5,10 +5,12 @@ import { isAbsolute, relative, resolve } from "node:path"
 import { promisify } from "node:util"
 import {
   type NativeAutonomyPolicy,
+  type NativeCommand,
   type NativeVerificationSandbox,
   nativeVerificationRuleId,
   validateNativeAutonomyPolicy
 } from "@openclaw/domain"
+import { historicalBa7Definitions } from "./historical-ba7-definitions.js"
 import { nativeContentDigest } from "./provenance.js"
 import { redactNativeSourceText } from "./source-redaction.js"
 import { nativeVerificationCommands } from "./verification.js"
@@ -62,6 +64,58 @@ export async function readNativeVerifierDefinition(sandbox: NativeVerificationSa
   return readFile(file, "utf8")
 }
 
+// This capture is historical source evidence, never an image-presence or execution receipt.
+// Keep the trust anchor in reviewed FRAME source, with no policy/path override.
+function historicalDefinition(sandbox: NativeVerificationSandbox, command: NativeCommand) {
+  if (
+    sandbox.backend !== "docker" ||
+    Buffer.byteLength(historicalBa7Definitions) > 2_097_152 ||
+    nativeContentDigest(historicalBa7Definitions) !== "745eb66616d78ed001b88c61f88f1cab6e4e84a26adcda66b7abd6a6200b92f9"
+  )
+    throw new Error("No trusted historical definition")
+  const capture = JSON.parse(historicalBa7Definitions) as {
+    image: string
+    sourceContextId: string
+    provenanceSha256: string
+    auditSha256: string
+    definitions: Array<{ ruleId: string; command: NativeCommand; path: string; sha256: string; content: string }>
+  }
+  // Compare all command fields, including absence of additional execution bounds.
+  const binding = (value: NativeCommand) =>
+    JSON.stringify([
+      value.id,
+      value.argv,
+      value.cwd,
+      value.timeoutSeconds,
+      value.paths,
+      value.idleTimeoutSeconds,
+      value.outputLimitBytes
+    ])
+  const entry = capture.definitions.find(
+    (value) => value.ruleId === nativeVerificationRuleId(command) && binding(value.command) === binding(command)
+  )
+  if (
+    sandbox.image !== capture.image ||
+    !entry ||
+    entry.path !== command.argv[0] ||
+    nativeContentDigest(entry.content) !== entry.sha256
+  )
+    throw new Error("Historical definition binding mismatch")
+  return {
+    source: entry.content,
+    provenance: {
+      kind: "historical-operator-capture" as const,
+      image: capture.image,
+      sourceContextId: capture.sourceContextId,
+      provenanceSha256: capture.provenanceSha256,
+      auditSha256: capture.auditSha256,
+      scope: "top-level-definition-source-only" as const,
+      imagePresenceAttested: false,
+      executionAttested: false
+    }
+  }
+}
+
 export async function nativeVerificationCommandContext(
   policy: NativeAutonomyPolicy,
   files: string[] | null,
@@ -73,10 +127,27 @@ export async function nativeVerificationCommandContext(
   const selected =
     files === null ? validateNativeAutonomyPolicy(policy).verification : nativeVerificationCommands(policy, files)
   for (const command of selected) {
-    let definition: { path: string; content?: string; sha256?: string; complete: boolean; reason?: string }
+    let definition: {
+      path: string
+      content?: string
+      sha256?: string
+      complete: boolean
+      reason?: string
+      provenance?: ReturnType<typeof historicalDefinition>["provenance"]
+    }
     try {
       if (!policy.verificationSandbox) throw new Error("No toolchain")
-      const source = await readDefinition(policy.verificationSandbox, command.argv[0]!)
+      let source: string
+      let provenance: ReturnType<typeof historicalDefinition>["provenance"] | undefined
+      try {
+        source = await readDefinition(policy.verificationSandbox, command.argv[0]!)
+      } catch {
+        // Only unavailable reads fall back. Successful malformed/redacted reads
+        // must still fail the same bounded-text/redaction checks below.
+        const historical = historicalDefinition(policy.verificationSandbox, command)
+        source = historical.source
+        provenance = historical.provenance
+      }
       // biome-ignore lint/suspicious/noControlCharactersInRegex: reject binary and malformed UTF-8 definitions
       if (Buffer.byteLength(source) > limit || /[\x00-\x08\x0e-\x1f\ufffd]/.test(source))
         throw new Error("Not a bounded text definition")
@@ -85,7 +156,8 @@ export async function nativeVerificationCommandContext(
         path: command.argv[0]!,
         content,
         sha256: nativeContentDigest(source),
-        complete: content === source
+        complete: content === source,
+        ...(provenance ? { provenance } : {})
       }
     } catch {
       definition = {
