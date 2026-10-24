@@ -90,6 +90,7 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
   const cards: Record<string, any> = { root: { id: "root", title: "Root", status: "blocked" } }
   const gateway = {
     request: vi.fn(async (method: string, params: Record<string, any>): Promise<any> => {
+      if (method === "workboard.boards.list") return { boards: [] }
       if (method === "workboard.cards.list") return { cards: Object.values(cards) }
       if (method === "workboard.cards.create") {
         const id = params.idempotencyKey
@@ -461,7 +462,11 @@ describe("native release reconciliation", () => {
     await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(/unresolved/)
     expect(s.store.get<any>("operation", "workflow:merge").state).toBe("started")
     expect(vi.mocked(s.io.github).mock.calls.filter(([, args]) => args[1] === "merge")).toHaveLength(1)
-    expect((await s.runtime.status()).operations.some((op) => op.id === "workflow:merge")).toBe(true)
+    const request = vi.spyOn(s.runtime.gateway, "request")
+    const status = await s.runtime.status()
+    expect(status.operations.some((op) => op.id === "workflow:merge")).toBe(true)
+    expect(status.counts).toEqual({})
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["workboard.boards.list"])
   })
   it("stops new merge and deployment effects when paused during a PR read", async () => {
     const s = setup()

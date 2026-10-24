@@ -38,6 +38,7 @@ import { nativeFailureEvidence } from "./failure-evidence.js"
 import {
   type NativeCard,
   type NativeGateway,
+  nativeBoardCounts,
   nativeCard,
   nativeCardById,
   nativeCardIdempotencyKey,
@@ -872,17 +873,14 @@ export class NativeAutonomyRuntime {
     })
   }
   async status() {
-    const cards = await nativeCards(this.gateway, this.policy.boardId)
+    const counts = await nativeBoardCounts(this.gateway, this.policy.boardId)
     return {
       boardId: this.policy.boardId,
       enabled: this.policy.enabled,
       gatewayPid: process.pid,
       resourcePressure: this.resources.inspect(),
       control: this.control.state,
-      counts: cards.reduce<Record<string, number>>((acc, c) => {
-        acc[c.status] = (acc[c.status] ?? 0) + 1
-        return acc
-      }, {}),
+      counts,
       workflows: this.store
         .list<NativeWorkflow>("workflow")
         .filter(({ value }) => !value.archivedAt)

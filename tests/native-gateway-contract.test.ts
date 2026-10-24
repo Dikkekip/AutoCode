@@ -1,5 +1,10 @@
 import { expect, it } from "vitest"
-import { type NativeGateway, nativeCard, nativeCards } from "../packages/core-runtime/src/native/gateway.js"
+import {
+  type NativeGateway,
+  nativeBoardCounts,
+  nativeCard,
+  nativeCards
+} from "../packages/core-runtime/src/native/gateway.js"
 
 const gateway = (value: unknown): NativeGateway => ({ request: async () => value as any })
 it("rejects malformed card identities before they enter workflow decisions", async () => {
@@ -62,4 +67,50 @@ it("bounds production-length stage keys while retaining every identity binding",
   expect(new Set([sent[0], ...sent.slice(2)]).size).toBe(6)
   expect(sent.every((key) => key.length <= 160)).toBe(true)
   expect(sent.at(-1)).toBe("x".repeat(160))
+})
+
+const summary = { id: "app", total: 3, active: 2, archived: 1, byStatus: { done: 2, running: 1, blocked: 0 } }
+it("reads diagnostic counts from board aggregates including archived cards", async () => {
+  const calls: string[] = []
+  const remote: NativeGateway = {
+    request: async (method, params) => {
+      calls.push(method)
+      expect(params).toEqual({})
+      return { boards: [{ ...summary, id: "other", total: 0, active: 0, archived: 0, byStatus: {} }, summary] } as any
+    }
+  }
+  expect(await nativeBoardCounts(remote, "app")).toEqual({ done: 2, running: 1 })
+  expect(calls).toEqual(["workboard.boards.list"])
+  expect(await nativeBoardCounts(gateway({ boards: [] }), "missing")).toEqual({})
+  expect(
+    await nativeBoardCounts(
+      gateway({ boards: [{ ...summary, total: 0, active: 0, archived: 0, byStatus: {} }] }),
+      "app"
+    )
+  ).toEqual({})
+})
+it.each([
+  {},
+  { boards: null },
+  { boards: [summary], hasMore: true },
+  { boards: [summary], nextCursor: "next" },
+  { boards: [summary, summary] },
+  { boards: [{ ...summary, id: "" }] },
+  ...[null, [], { done: -1 }, { done: 0.5 }, { done: "3" }, { done: 2 }, { " ": 3 }, { "future-state": 3 }].map(
+    (byStatus) => ({
+      boards: [{ ...summary, byStatus }]
+    })
+  ),
+  ...[-1, 1.5, Number.MAX_SAFE_INTEGER + 1].map((total) => ({ boards: [{ ...summary, total }] })),
+  { boards: [{ ...summary, active: 3 }] }
+])("rejects incomplete or malformed aggregate counts without fetching cards: %j", async (response) => {
+  await expect(nativeBoardCounts(gateway(response), "app")).rejects.toThrow(/contract/)
+})
+it("propagates aggregate transport failures without a full-board fallback", async () => {
+  const remote: NativeGateway = {
+    request: async () => {
+      throw new Error("offline")
+    }
+  }
+  await expect(nativeBoardCounts(remote, "app")).rejects.toThrow("offline")
 })
