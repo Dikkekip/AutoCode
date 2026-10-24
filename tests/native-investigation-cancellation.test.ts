@@ -60,6 +60,10 @@ function fixture() {
     override async request<T = any>(method: string, _params: Record<string, unknown>): Promise<T> {
       this.calls.push(method)
       if (method === "workboard.cards.list") return { cards: [card] } as T
+      if (method === "workboard.cards.runs") {
+        expect(_params).toEqual({ id: card.id })
+        return { card, runs: [] } as T
+      }
       if (method === "sessions.list") return { sessions: [session] } as T
       throw new Error("unexpected RPC")
     }
@@ -329,6 +333,10 @@ it("continues independent cancellations before reporting an aggregate failure", 
       abortOwnedInvestigation: abort,
       request: async (method: string, params: any) => {
         if (method === "workboard.cards.list") return { cards: [first.card, second.card] }
+        if (method === "workboard.cards.runs") {
+          expect(params).toEqual({ id: second.card.id })
+          return { card: second.card, runs: [] }
+        }
         if (method === "workboard.cards.update") {
           update(params)
           second.card.status = "blocked"
