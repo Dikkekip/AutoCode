@@ -170,6 +170,10 @@ integration("Kernel verification isolation", () => {
     writeFileSync(join(repo, "source.txt"), "source")
     git("add", "source.txt")
     git("commit", "-m", "source")
+    const baseSha = git("rev-parse", "HEAD")
+    writeFileSync(join(repo, "source.txt"), "candidate source")
+    git("add", "source.txt")
+    git("commit", "-m", "candidate")
     const headSha = git("rev-parse", "HEAD")
     const result = await runNativeCommand(
       {
@@ -181,7 +185,7 @@ integration("Kernel verification isolation", () => {
       sandbox,
       undefined,
       undefined,
-      { headSha, changedFiles: ["source.txt"] }
+      { headSha, baseSha, changedFiles: ["source.txt"] }
     )
     expect(result.exitCode).toBe(0)
     expect(JSON.parse(result.stdout)).toEqual({ version: 1, headSha, changedFiles: ["source.txt"] })

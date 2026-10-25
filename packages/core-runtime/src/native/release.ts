@@ -15,6 +15,7 @@ import {
   nativeGit,
   runNativeDeploymentCommand
 } from "./verification.js"
+import { retireNativeAcceptedWorkspace } from "./workspace-retirement.js"
 
 export class NativeReleasePending extends Error {}
 const exec = promisify(execFile)
@@ -205,13 +206,20 @@ export async function releaseNativeWorkflow(
   if (!candidate.branch || candidate.branch === policy.baseBranch)
     throw new Error("Promotion requires a dedicated candidate branch")
   if (!w.prNumber) {
-    const pushKey = `${id}:push`
+    if ((await io.git(candidate.cwd, "rev-parse", `origin/${policy.baseBranch}`)) !== candidate.baseSha)
+      throw new Error("Base advanced; rebase and reverify before promotion")
+    const legacyPush = store.get<{ state: string; headSha: string }>("operation", `${id}:push`)
+    if (legacyPush && legacyPush.headSha !== candidate.headSha && legacyPush.state !== "confirmed")
+      throw new NativeReleasePending("Previous attempt push outcome unresolved; reconcile before new promotion")
+    const pushKey =
+      !legacyPush || legacyPush.headSha === candidate.headSha ? `${id}:push` : `${id}:${w.lifecycle!.attemptId}:push`
     const previousPush = store.get<{ headSha: string }>("operation", pushKey)
     if (previousPush) {
       const remote = await io.git(candidate.cwd, "ls-remote", "origin", `refs/heads/${candidate.branch}`)
       if (previousPush.headSha !== candidate.headSha || remote.split(/\s+/)[0] !== candidate.headSha)
         throw new NativeReleasePending("Push outcome unresolved; inspect remote branch before retry")
     } else {
+      assertNativePromotion(policy)
       runtime.control.assert()
       runtime.reserveBudget(id, w.lifecycle!.attemptId, "release", pushKey)
       store.put("operation", pushKey, { state: "started", headSha: candidate.headSha })
@@ -235,6 +243,7 @@ export async function releaseNativeWorkflow(
       const key = `${id}:pr`
       if (store.get("operation", key))
         throw new NativeReleasePending("PR creation outcome unresolved; inspect GitHub before retry")
+      assertNativePromotion(policy)
       runtime.control.assert()
       runtime.reserveBudget(id, w.lifecycle!.attemptId, "release", key)
       store.put("operation", key, { state: "started", headSha: candidate.headSha })
@@ -292,6 +301,7 @@ export async function releaseNativeWorkflow(
       if (error instanceof NativeCiPending) throw new NativeReleasePending(error.message)
       throw error
     }
+    assertNativePromotion(policy)
     runtime.control.assert()
     runtime.reserveBudget(id, w.lifecycle!.attemptId, "release", key)
     store.put("operation", key, { state: "started", headSha: candidate.headSha, prNumber: w.prNumber })
@@ -330,4 +340,5 @@ export async function releaseNativeWorkflow(
     personaId: w.proposal.personaId,
     goal: w.proposal.goal
   })
+  await retireNativeAcceptedWorkspace(runtime, id, w)
 }

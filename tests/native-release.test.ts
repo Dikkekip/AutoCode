@@ -11,6 +11,7 @@ import {
   nativeVerificationDigest
 } from "../packages/core-runtime/src/native/provenance.js"
 import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
+import * as recoveryEvidenceModule from "../packages/core-runtime/src/native/recovery-evidence.js"
 import * as releaseModule from "../packages/core-runtime/src/native/release.js"
 import {
   type NativeReleaseIO,
@@ -21,6 +22,7 @@ import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-run
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
 import * as verificationModule from "../packages/core-runtime/src/native/verification.js"
 import { planNativeVerification } from "../packages/core-runtime/src/native/verification.js"
+import { retireNativeAcceptedWorkspace } from "../packages/core-runtime/src/native/workspace-retirement.js"
 import { nativeVerificationRuleId, validateNativeAutonomyPolicy } from "../packages/domain/src/native-autonomy.js"
 
 const cleanup: Array<() => void> = []
@@ -89,6 +91,7 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
   const cards: Record<string, any> = { root: { id: "root", title: "Root", status: "blocked" } }
   const gateway = {
     request: vi.fn(async (method: string, params: Record<string, any>): Promise<any> => {
+      if (method === "workboard.boards.list") return { boards: [] }
       if (method === "workboard.cards.list") return { cards: Object.values(cards) }
       if (method === "workboard.cards.create") {
         const id = params.idempotencyKey
@@ -104,9 +107,9 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
     baseSha = "b".repeat(40),
     mergedSha = "c".repeat(40)
   const artifact = join(root, "check.json")
-  writeFileSync(artifact, JSON.stringify({ exitCode: 0, startedAt: "start", finishedAt: "end" }))
+  writeFileSync(artifact, JSON.stringify({ outcome: "success", exitCode: 0, startedAt: "start", finishedAt: "end" }))
   const artifactSha256 = createHash("sha256")
-    .update(JSON.stringify({ exitCode: 0, startedAt: "start", finishedAt: "end" }))
+    .update(JSON.stringify({ outcome: "success", exitCode: 0, startedAt: "start", finishedAt: "end" }))
     .digest("hex")
   const workflow: NativeWorkflow = {
     submission: { agentId: "coder", sessionKey: "coder-session", executionId: "coder-execution" },
@@ -135,6 +138,7 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
           ruleId: nativeVerificationRuleId(policy.verification[0]!),
           argv: ["test"],
           cwd: root,
+          outcome: "success",
           exitCode: 0,
           startedAt: "start",
           finishedAt: "end",
@@ -211,6 +215,8 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
         artifact,
         startedAt: "start",
         finishedAt: "end",
+        stderr: "",
+        outcome: "success",
         exitCode: 0,
         stdout:
           command.argv[0] === "check"
@@ -243,7 +249,7 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
   store.put("workflow", "workflow", workflow)
   return { runtime, store, workflow, io, cards, mergedSha }
 }
-function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow }) {
+function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow }, approved = true) {
   const { policy } = s.runtime,
     w = s.workflow
   w.lifecycle ??= {
@@ -291,6 +297,7 @@ function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow })
     policyDigest: nativePromotionDigest(policy),
     canaryArtifact: { path: canaryPath, sha256: nativeContentDigest(canaryRaw) }
   }
+  if (!approved) delete policy.promotion
   w.verification!.plan = planNativeVerification(policy, w.candidate!.files)
   w.verification!.provenance = {
     version: 1,
@@ -325,6 +332,145 @@ function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow })
   w.review!.verificationDigest = nativeVerificationDigest(w.verification!)
 }
 describe("native release reconciliation", () => {
+  it.each([
+    "resume-release",
+    "retry"
+  ] as const)("requires exact remote push truth before %s of a promotion-refused attempt", async (action) => {
+    const s = setup()
+    delete s.workflow.prNumber
+    s.workflow.blocker = "Error: Release mode requires current independent operator promotion approval"
+    s.workflow.lifecycle!.state = "blocked"
+    s.store.put("workflow", "workflow", s.workflow)
+    s.store.put("operation", "workflow:push", { state: "started", headSha: s.workflow.candidate!.headSha })
+    s.cards.implementation = { id: "implementation", title: "Implementation", status: "done" }
+    s.runtime.control.change(true)
+    vi.spyOn(verificationModule, "nativeGit").mockImplementation(s.io.git)
+    vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
+      complete: true,
+      headSha: s.workflow.candidate!.headSha,
+      baseSha: s.workflow.candidate!.baseSha,
+      diffDigest: s.workflow.verification!.provenance!.diffDigest
+    } as any)
+    const sourceEvidence = vi.spyOn(recoveryEvidenceModule, "nativeRecoveryEvidence").mockResolvedValue({
+      complete: true,
+      content: "preserved source",
+      headSha: s.workflow.candidate!.headSha
+    } as any)
+    const before = structuredClone(s.workflow)
+    const absent = await s.runtime.planWorkflowRecovery("workflow", action, "Reconcile promotion preflight")
+    expect(absent.allowed).toBe(false)
+    await expect(s.runtime.applyWorkflowRecovery(absent, "operator")).rejects.toThrow()
+    expect(s.store.get("operation", "workflow:push")).toMatchObject({ state: "started" })
+    // Simulate independently completed push; recovery itself must never issue it.
+    await s.io.git(s.workflow.candidate!.cwd, "push", "origin", "candidate")
+    vi.mocked(s.io.git).mockClear()
+    for (const corrupt of [
+      (w: NativeWorkflow) => {
+        w.blocker = "Unrelated failure"
+      },
+      (w: NativeWorkflow) => {
+        w.review!.verificationDigest = "0".repeat(64)
+      },
+      (w: NativeWorkflow) => {
+        w.review!.verdict = "rejected"
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.checks[0]!.exitCode = 1
+      }
+    ]) {
+      const invalid = Object.assign(s.runtime.requireWorkflow("workflow"), structuredClone(before))
+      corrupt(invalid)
+      s.store.put("workflow", "workflow", invalid)
+      const refused = await s.runtime.planWorkflowRecovery("workflow", action, "Reject altered evidence")
+      expect(refused.allowed).toBe(false)
+    }
+    s.store.put("workflow", "workflow", Object.assign(s.runtime.requireWorkflow("workflow"), structuredClone(before)))
+    s.store.put("operation", "workflow:pr", { state: "started" })
+    expect((await s.runtime.planWorkflowRecovery("workflow", action, "Reject unknown PR effect")).allowed).toBe(false)
+    s.store.put("operation", "workflow:pr", { state: "confirmed" })
+    const plan = await s.runtime.planWorkflowRecovery("workflow", action, "Reconcile exact remote push")
+    expect(plan.blockers).toEqual([])
+    expect(plan.allowed).toBe(true)
+    await s.runtime.applyWorkflowRecovery(plan, "operator")
+    const recovered = s.runtime.requireWorkflow("workflow")
+    if (action === "resume-release") {
+      expect(recovered.lifecycle).toMatchObject({ ...before.lifecycle, state: "release" })
+      expect(recovered.candidate).toEqual(before.candidate)
+      expect(recovered.verification).toEqual(before.verification)
+      expect(recovered.review).toEqual(before.review)
+      expect(sourceEvidence).not.toHaveBeenCalled()
+    } else {
+      expect(recovered.lifecycle!.attempt).toBe(before.lifecycle!.attempt + 1)
+      expect(recovered.candidate).toBeUndefined()
+      expect(recovered.verification).toBeUndefined()
+      expect(recovered.review).toBeUndefined()
+      expect(s.store.list<any>("attempt-history")[0]!.value).toEqual(before)
+      expect(sourceEvidence).toHaveBeenCalledWith(
+        s.runtime.policy.repository,
+        before.proposal.allowedPaths,
+        expect.objectContaining({ candidate: before.candidate, attemptId: before.lifecycle!.attemptId })
+      )
+      const card = s.cards[recovered.implementationCardId]
+      expect(card.workspace.sourceBranch).toBe("origin/main")
+      expect(JSON.parse(card.notes).previousCandidate.content).toBe("preserved source")
+    }
+    expect(recovered.blocker).toBeUndefined()
+    expect(s.store.get("operation", "workflow:push")).toMatchObject({
+      state: "confirmed",
+      recoveryPlanDigest: plan.digest
+    })
+    expect(s.io.git).not.toHaveBeenCalledWith(expect.anything(), "push", expect.anything(), expect.anything())
+    expect(s.io.github).not.toHaveBeenCalled()
+  })
+
+  it("refuses an advanced base before pushing or creating a PR", async () => {
+    const s = setup()
+    delete s.workflow.prNumber
+    const git = s.io.git
+    s.io.git = vi.fn(async (...args) =>
+      args[1] === "rev-parse" && args[2] === "origin/main" ? "d".repeat(40) : git(...args)
+    )
+    await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("Base advanced")
+    expect(s.store.get("operation", "workflow:push")).toBeNull()
+    expect(vi.mocked(s.io.git).mock.calls.some(([, command]) => command === "push")).toBe(false)
+    expect(s.io.github).not.toHaveBeenCalled()
+  })
+
+  it.each(["started", "confirmed"])("preserves a previous %s push when a new attempt promotes", async (state) => {
+    const s = setup()
+    delete s.workflow.prNumber
+    const old = { state, headSha: "d".repeat(40) }
+    s.store.put("operation", "workflow:push", old)
+    const key = `workflow:${s.workflow.lifecycle!.attemptId}:push`
+    if (state === "started") {
+      await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(
+        "Previous attempt push outcome unresolved"
+      )
+      expect(s.store.get("operation", key)).toBeNull()
+      expect(vi.mocked(s.io.git).mock.calls.some(([, command]) => command === "push")).toBe(false)
+    } else {
+      await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+      expect(s.store.get("operation", key)).toMatchObject({
+        state: "confirmed",
+        headSha: s.workflow.candidate!.headSha
+      })
+      expect(vi.mocked(s.io.git).mock.calls.filter(([, command]) => command === "push")).toHaveLength(1)
+    }
+    expect(s.store.get("operation", "workflow:push")).toEqual(old)
+  })
+
+  it("refuses missing promotion before reserving or journaling a push", async () => {
+    const s = setup()
+    delete s.workflow.prNumber
+    reseal(s, false)
+    await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(
+      "current independent operator promotion approval"
+    )
+    expect(s.store.get("operation", "workflow:push")).toBeNull()
+    expect(s.io.git).not.toHaveBeenCalledWith(expect.anything(), "push", expect.anything(), expect.anything())
+    expect(s.io.github).not.toHaveBeenCalled()
+  })
+
   it.each(["push", "pr"])("reconciles an accepted %s after a lost response instead of replaying it", async (effect) => {
     const s = setup()
     delete s.workflow.prNumber
@@ -460,7 +606,11 @@ describe("native release reconciliation", () => {
     await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(/unresolved/)
     expect(s.store.get<any>("operation", "workflow:merge").state).toBe("started")
     expect(vi.mocked(s.io.github).mock.calls.filter(([, args]) => args[1] === "merge")).toHaveLength(1)
-    expect((await s.runtime.status()).operations.some((op) => op.id === "workflow:merge")).toBe(true)
+    const request = vi.spyOn(s.runtime.gateway, "request")
+    const status = await s.runtime.status()
+    expect(status.operations.some((op) => op.id === "workflow:merge")).toBe(true)
+    expect(status.counts).toEqual({})
+    expect(request.mock.calls.map(([method]) => method)).toEqual(["workboard.boards.list"])
   })
   it("stops new merge and deployment effects when paused during a PR read", async () => {
     const s = setup()
@@ -601,7 +751,9 @@ describe("native release reconciliation", () => {
       artifact: "check",
       startedAt: "start",
       finishedAt: "end",
+      outcome: "success",
       exitCode: 0,
+      stderr: "",
       stdout: JSON.stringify({ deployedSha: "wrong", workflowPassed: true })
     })
     await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(/unresolved/)
@@ -633,6 +785,7 @@ describe("native release reconciliation", () => {
 describe("native pause control", () => {
   it("allows evidence from accepted verification but revokes the next command authorization", async () => {
     const s = setup("verification")
+    vi.spyOn(verificationModule, "nativeGit").mockResolvedValue(s.workflow.candidate!.baseSha)
     delete s.workflow.verification
     delete s.workflow.review
     s.store.put("workflow", "workflow", s.workflow)
@@ -1091,7 +1244,8 @@ describe("verification refresh after a policy change", () => {
     vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
       baseSha: s.workflow.candidate!.baseSha,
       headSha: s.workflow.candidate!.headSha,
-      changesDigest: s.workflow.verification!.provenance!.diffDigest,
+      changesDigest: nativeContentDigest(JSON.stringify("classified fixture")),
+      diffDigest: s.workflow.verification!.provenance!.diffDigest,
       patchSha256: nativeContentDigest("fixture"),
       content: "fixture",
       complete: true,
@@ -1106,4 +1260,50 @@ describe("verification refresh after a policy change", () => {
     s.workflow.verification!.provenanceArtifact!.sha256 = nativeContentDigest(raw)
     expect(await s.runtime.stage("workflow", s.workflow, "Review", "ready", "{}")).not.toBe(review)
   })
+})
+
+it("retires the exact managed workspace only after accepted deployment and preserves release evidence", async () => {
+  const s = setup()
+  const cwd = join(s.runtime.policy.repository, "candidate-worktree")
+  mkdirSync(cwd)
+  s.workflow.candidate!.cwd = cwd
+  const original = s.runtime.gateway.request
+  const calls: Array<[string, Record<string, unknown>]> = []
+  s.runtime.gateway.request = async <T>(method: string, params: Record<string, unknown>): Promise<T> => {
+    calls.push([method, params])
+    if (method === "worktrees.list")
+      return { worktrees: [{ id: "managed", path: cwd, ownerKind: "workboard", ownerId: "implementation" }] } as T
+    if (method === "worktrees.remove") return { removed: true } as T
+    return original<T>(method, params)
+  }
+  await retireNativeAcceptedWorkspace(s.runtime, "workflow", s.workflow)
+  expect(calls).toEqual([])
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  expect(calls.filter(([method]) => method === "worktrees.remove")).toEqual([
+    ["worktrees.remove", { id: "managed", ifLossless: true, expectedHead: s.workflow.candidate!.headSha }]
+  ])
+  expect(s.store.get("workspace-retirement", "workflow")).toMatchObject({ state: "removed" })
+  await retireNativeAcceptedWorkspace(s.runtime, "workflow", s.workflow)
+  expect(calls.filter(([method]) => method === "worktrees.remove")).toHaveLength(1)
+})
+
+it("retains an accepted workspace when its protected provenance would be removed", async () => {
+  const s = setup()
+  const request = vi.spyOn(s.runtime.gateway, "request")
+  const cwd = join(s.runtime.policy.repository, "candidate-worktree")
+  mkdirSync(cwd)
+  s.workflow.candidate!.cwd = cwd
+  const evidence = s.workflow.verification!
+  const provenancePath = join(cwd, "provenance.json")
+  writeFileSync(provenancePath, JSON.stringify(evidence.provenance))
+  evidence.provenanceArtifact = {
+    path: provenancePath,
+    sha256: nativeContentDigest(JSON.stringify(evidence.provenance))
+  }
+  await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+  expect(s.store.get("workspace-retirement", "workflow")).toMatchObject({
+    state: "retained",
+    reason: expect.stringContaining("provenance")
+  })
+  expect(request).not.toHaveBeenCalledWith("worktrees.remove", expect.anything())
 })

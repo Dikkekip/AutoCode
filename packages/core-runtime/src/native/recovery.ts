@@ -1,7 +1,14 @@
 /** Read-only recovery plans; this module never owns task dispatch. */
 import { createHash } from "node:crypto"
 import type { NativeLifecycle } from "@openclaw/domain"
-export type NativeRecoveryAction = "retry" | "cancel" | "supersede" | "abandon" | "archive"
+export type NativeRecoveryAction =
+  | "resume-review"
+  | "resume-release"
+  | "retry"
+  | "cancel"
+  | "supersede"
+  | "abandon"
+  | "archive"
 export interface NativeRecoverySnapshot {
   boardId: string
   workflowId: string
@@ -16,6 +23,9 @@ export interface NativeRecoverySnapshot {
   successor?: { id: string; version: number; terminal: boolean }
   hasPullRequest: boolean
   hasMerge: boolean
+  releaseResumable?: boolean
+  confirmedPush?: { id: string; headSha: string }
+  reviewResumable?: boolean
   archived: boolean
 }
 export interface NativeRecoveryPlan {
@@ -36,7 +46,7 @@ export function planNativeRecovery(
   action: NativeRecoveryAction,
   reason: string
 ): NativeRecoveryPlan {
-  if (!["retry", "cancel", "supersede", "abandon", "archive"].includes(action))
+  if (!["resume-review", "resume-release", "retry", "cancel", "supersede", "abandon", "archive"].includes(action))
     throw new Error("Unsupported recovery action")
   if (typeof reason !== "string" || !reason.trim() || reason.length > 2000)
     throw new Error("Recovery requires a bounded operator reason")
@@ -64,6 +74,11 @@ export function planNativeRecovery(
     snapshot.operations.some((op) => {
       const value = op.value as { state?: string; supersessionClosed?: boolean; custodyHeld?: boolean }
       return (
+        !(
+          ["resume-release", "retry"].includes(action) &&
+          snapshot.releaseResumable === true &&
+          snapshot.confirmedPush?.id === op.id
+        ) &&
         value?.state !== "confirmed" &&
         !(value?.state === "superseded" && value.supersessionClosed === true) &&
         !(value?.state === "pending" && value.custodyHeld === true)
@@ -94,21 +109,39 @@ export function planNativeRecovery(
     (!snapshot.successor || snapshot.successor.id === snapshot.workflowId || snapshot.successor.terminal)
   )
     blockers.push("Supersession requires a distinct existing nonterminal successor workflow")
+  if (action === "resume-review" && (snapshot.lifecycle.state !== "blocked" || snapshot.reviewResumable !== true))
+    blockers.push("Resume review requires revalidated successful verification and complete committed source evidence")
+  if (action === "resume-review" && snapshot.operations.some((op) => !op.id.startsWith("card:")))
+    blockers.push("Resume review cannot inherit external release operations")
+  if (action === "resume-release" && (snapshot.lifecycle.state !== "blocked" || snapshot.releaseResumable !== true))
+    blockers.push(
+      "Resume release requires current promotion, exact verified approval, and positive remote push reconciliation"
+    )
   const effects =
-    action === "retry"
+    action === "resume-release"
       ? [
-          "Preserve the original attempt and all receipts",
-          "Create a blocked Workboard implementation card with a new immutable attempt",
-          "Allow two fresh coding repairs while continuing immutable attempt numbering",
-          "Require fresh candidate verification and independent review after explicit resume"
+          "Preserve the blocked attempt and all receipts",
+          "Reconcile the exact remote push and resume release after explicit resume"
         ]
-      : action === "archive"
-        ? ["Hide terminal work from active status while retaining its evidence"]
-        : [
-            "Mark the workflow cancelled with the operator disposition",
-            "Release local scope reservations only after owned work and effects are quiescent",
-            "Preserve Workboard cards and the entire operation history"
+      : action === "resume-review"
+        ? [
+            "Preserve the blocked attempt and receipts",
+            "Resume independent review of the same verified commit after explicit resume"
           ]
+        : action === "retry"
+          ? [
+              "Preserve the original attempt and all receipts",
+              "Create a blocked Workboard implementation card with a new immutable attempt",
+              "Allow two fresh coding repairs while continuing immutable attempt numbering",
+              "Require fresh candidate verification and independent review after explicit resume"
+            ]
+          : action === "archive"
+            ? ["Hide terminal work from active status while retaining its evidence"]
+            : [
+                "Mark the workflow cancelled with the operator disposition",
+                "Release local scope reservations only after owned work and effects are quiescent",
+                "Preserve Workboard cards and the entire operation history"
+              ]
   const body = {
     version: 1 as const,
     action,

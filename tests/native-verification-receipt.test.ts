@@ -13,7 +13,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
 import * as snapshot from "../packages/core-runtime/src/native/snapshot.js"
-import { runNativeCommand } from "../packages/core-runtime/src/native/verification.js"
+import { type NativeCommandObserver, runNativeCommand } from "../packages/core-runtime/src/native/verification.js"
 import * as osAdapters from "../packages/os-adapters/src/index.js"
 
 const roots: string[] = []
@@ -103,7 +103,11 @@ it("still executes committed input and creates a fresh receipt in a new parent d
   }))
   const result = await runNativeCommand(command, root, artifact, sandbox)
   expect(result.exitCode).toBe(0)
-  expect(JSON.parse(readFileSync(artifact, "utf8"))).toMatchObject({ exitCode: 0, stdout: "committed input" })
+  expect(JSON.parse(readFileSync(artifact, "utf8"))).toMatchObject({
+    outcome: "success",
+    exitCode: 0,
+    stdout: "committed input"
+  })
   expect(lstatSync(artifact).mode & 0o777).toBe(0o600)
 })
 
@@ -120,4 +124,72 @@ it("passes the policy's bounded resource capacity to the isolated verifier", asy
     command.argv,
     expect.objectContaining({ pidsLimit: 1024, memoryMb: 3072, cpus: 1, image: sandbox.image })
   )
+})
+
+it.each([
+  "collision",
+  "authority"
+])("captures completed Docker failure before %s persistence refusal and workspace deletion", async (mode) => {
+  const root = repository(),
+    artifact = join(temp(), "receipt.json")
+  const dockerReceipt = { cleanup: { status: "INCOMPLETE", error: "remove failed" } }
+  const executionError = Object.assign(new Error("primary command failed"), {
+    code: 42,
+    outcome: "nonzero",
+    dockerReceipt
+  })
+  const persistenceError = new Error("lease refused")
+  let executed = false
+  vi.spyOn(osAdapters, "executeDockerSandboxedCommand").mockImplementation(async () => {
+    executed = true
+    if (mode === "collision") writeFileSync(artifact, "successor evidence", { flag: "wx" })
+    throw executionError
+  })
+  const capture = vi.fn(async (event: Parameters<NativeCommandObserver["captureWorkspace"]>[0]) => {
+    expect(existsSync(event.workspace)).toBe(true)
+    expect(event.result).toMatchObject({ exitCode: 42, outcome: "nonzero", dockerReceipt })
+    expect(event.executionError).toBe(executionError)
+    expect(event.error).toMatchObject({ executionError })
+    expect(event.persistenceError).toBe(event.error)
+  })
+  const authority = {
+    authorize() {},
+    mutate(action: () => void) {
+      if (executed && mode === "authority") throw persistenceError
+      action()
+    }
+  }
+  await expect(
+    runNativeCommand(command, root, artifact, sandbox, undefined, authority, undefined, { captureWorkspace: capture })
+  ).rejects.toMatchObject({
+    executionError,
+    completedResult: { exitCode: 42, dockerReceipt }
+  })
+  expect(capture).toHaveBeenCalledTimes(1)
+  const event = capture.mock.calls[0]![0]
+  expect(existsSync(event.workspace)).toBe(false)
+  if (mode === "collision") expect(readFileSync(artifact, "utf8")).toBe("successor evidence")
+  else {
+    expect(event.persistenceError).toBe(persistenceError)
+    expect(existsSync(artifact)).toBe(false)
+  }
+})
+
+it("cannot persist a thrown zero-code timeout as successful verification", async () => {
+  const root = repository(),
+    artifact = join(temp(), "receipt.json")
+  vi.spyOn(osAdapters, "executeDockerSandboxedCommand").mockRejectedValue(
+    Object.assign(new Error("terminal timeout"), {
+      code: 0,
+      clientExitCode: 0,
+      outcome: "timeout"
+    })
+  )
+  const result = await runNativeCommand(command, root, artifact, sandbox)
+  expect(result).toMatchObject({ exitCode: null, clientExitCode: 0, outcome: "timeout" })
+  expect(JSON.parse(readFileSync(artifact, "utf8"))).toMatchObject({
+    exitCode: null,
+    clientExitCode: 0,
+    outcome: "timeout"
+  })
 })

@@ -52,10 +52,21 @@ async function loadAdminAbortCall(command: string): Promise<NativeAdminAbortCall
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
   return sdk.callGatewayFromCli
 }
-async function loadGatewaySdkCall(command: string): Promise<NativeGatewaySdkCall> {
+export const NATIVE_BOARD_UNCAPPED_RESPONSE = 0
+export async function loadNativeGatewaySdkCall(command: string): Promise<NativeGatewaySdkCall> {
   const sdk = await import(pathToFileURL(resolveNativeGatewaySdkPath(command)).href)
   if (typeof sdk.callGatewayFromCli !== "function") throw new Error("Public gateway SDK unavailable")
-  return sdk.callGatewayFromCli
+  return async (method, options, params, extra) => {
+    if (method !== "workboard.cards.list") return sdk.callGatewayFromCli(method, options, params, extra)
+    // Legacy SDKs silently ignore unknown options. Require the explicit public
+    // capability instead of retrying an oversized read or accepting partial data.
+    if (sdk.callGatewayFromCli.responseLimitVersion !== 1)
+      throw new Error("Complete Workboard reads require the public local uncapped Gateway response SDK extension")
+    return sdk.callGatewayFromCli(method, options, params, {
+      ...extra,
+      maxPayloadBytes: NATIVE_BOARD_UNCAPPED_RESPONSE
+    })
+  }
 }
 function nativeGatewayTimeout(method: string): number {
   return method === "autocode.reconcile"
@@ -68,6 +79,7 @@ function nativeGatewayTimeout(method: string): number {
           "autocode.resume",
           "workboard.cards.list",
           "workboard.cards.start",
+          "worktrees.remove",
           "config.patch"
         ].includes(method)
       ? 180_000
@@ -252,7 +264,7 @@ function nativeGatewayScope(method: string): "operator.read" | "operator.write" 
 export class NativeSdkGateway extends NativeCliGateway {
   constructor(
     command = "openclaw",
-    private readonly loadCall: (command: string) => Promise<NativeGatewaySdkCall> = loadGatewaySdkCall
+    private readonly loadCall: (command: string) => Promise<NativeGatewaySdkCall> = loadNativeGatewaySdkCall
   ) {
     super(command)
   }
@@ -358,6 +370,37 @@ export function decodeNativeCard(value: unknown, boardId?: string): NativeCard {
     }
   }
   return card as NativeCard
+}
+/** Diagnostic counts use the Workboard aggregate owner, without transferring card bodies. */
+export async function nativeBoardCounts(gateway: NativeGateway, boardId: string): Promise<Record<string, number>> {
+  if (typeof boardId !== "string" || !boardId.trim()) throw new Error("Workboard contract: board identity required")
+  const result = nativeObject(await gateway.request("workboard.boards.list", {}), "Workboard boards.list")
+  if (!Array.isArray(result.boards)) throw new Error("Workboard boards.list contract unavailable")
+  if (result.hasMore === true || result.nextCursor != null)
+    throw new Error("Workboard boards.list contract: unsupported partial listing")
+  const seen = new Set<string>()
+  let counts: Record<string, number> = {}
+  for (const value of result.boards) {
+    const board = nativeObject(value, "Workboard board summary")
+    if (typeof board.id !== "string" || !board.id.trim() || seen.has(board.id))
+      throw new Error("Workboard boards.list contract: invalid or duplicate identity")
+    seen.add(board.id)
+    if (board.id !== boardId) continue
+    const byStatus = nativeObject(board.byStatus, "Workboard board counts")
+    const entries = Object.entries(byStatus)
+    if (
+      ![board.total, board.active, board.archived, ...entries.map(([, count]) => count)].every(
+        (count) => Number.isSafeInteger(count) && count >= 0
+      ) ||
+      board.active + board.archived !== board.total ||
+      entries.some(([status]) => !(NATIVE_CARD_STATUSES as readonly string[]).includes(status)) ||
+      entries.reduce((sum, [, count]) => sum + count, 0) !== board.total
+    )
+      throw new Error("Workboard board counts contract: invalid totals")
+    // Aggregate statuses include archived cards, matching the complete-card count.
+    counts = Object.fromEntries(entries.filter(([, count]) => count > 0))
+  }
+  return counts
 }
 export async function nativeCards(gateway: NativeGateway, boardId: string): Promise<NativeCard[]> {
   if (typeof boardId !== "string" || !boardId.trim()) throw new Error("Workboard contract: board identity required")

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync, realpathSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { resolve } from "node:path"
 import type { GitStagePlan } from "@openclaw/domain"
 import {
@@ -38,6 +39,7 @@ import { nativeFailureEvidence } from "./failure-evidence.js"
 import {
   type NativeCard,
   type NativeGateway,
+  nativeBoardCounts,
   nativeCard,
   nativeCardById,
   nativeCardIdempotencyKey,
@@ -49,7 +51,7 @@ import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
 import { nativeOutcomeReport } from "./outcomes.js"
-import { assertNativeMode, nativeModeAllows } from "./promotion-mode.js"
+import { assertNativeMode, assertNativePromotion, nativeModeAllows } from "./promotion-mode.js"
 import {
   assertNativeProvenance,
   nativeContentDigest,
@@ -70,6 +72,7 @@ import { type NativeRepairObservation, nativeRepairObservation, planNativeRepair
 import { nativeRepairSupersessionClosed, supersedeLegacyNativeRepairIntent } from "./repair-intent.js"
 import { NativeResourceGuard } from "./resource-pressure.js"
 import { nativeReviewContext } from "./review-context.js"
+import { inspectNativeStorage, NativeStoragePending } from "./storage-pressure.js"
 import { type NativeEvidenceStore, NativeLeaseLost, type NativeRecordWrite, NativeRevisionConflict } from "./store.js"
 import { type NativeTraceStage, nativePolicyTraceDigest, nativeTraceReport, withNativeStageTrace } from "./telemetry.js"
 import {
@@ -81,6 +84,7 @@ import {
   nativeVerificationCommands,
   verifyNativeCandidate
 } from "./verification.js"
+import { retireNativeAcceptedWorkspace } from "./workspace-retirement.js"
 
 export interface NativeWorkflow {
   gitStagePlan?: GitStagePlan
@@ -538,6 +542,73 @@ export class NativeAutonomyRuntime {
     assertNativeHeldCardAbsence(this.store, allCards)
     const cards = allCards.filter((card) => owned.has(card.id))
     const successor = successorId ? this.store.get<NativeWorkflow>("workflow", successorId) : null
+    let reviewResumable = false
+    if (
+      action === "resume-review" &&
+      workflow.blocker === "Error: Final review requires complete committed source evidence" &&
+      lifecycle.state === "blocked" &&
+      !workflow.reviewCardId &&
+      !workflow.stageCards.Review &&
+      !workflow.review &&
+      !workflow.prNumber &&
+      !workflow.mergedSha &&
+      !workflow.deployedSha
+    ) {
+      try {
+        await this.assertCommittedReviewEvidence(workflowId, workflow)
+        reviewResumable = true
+      } catch {
+        // An exact successful receipt and current complete source are mandatory.
+      }
+    }
+    let releaseResumable = false
+    let confirmedPush: { id: string; headSha: string } | undefined
+    if (
+      ["resume-release", "retry"].includes(action) &&
+      workflow.blocker === "Error: Release mode requires current independent operator promotion approval" &&
+      lifecycle.state === "blocked" &&
+      !workflow.prNumber &&
+      !workflow.mergedSha &&
+      !workflow.deployedSha
+    ) {
+      try {
+        assertNativePromotion(this.policy)
+        await this.assertCommittedReviewEvidence(workflowId, workflow)
+        assertNativeReleaseGate({
+          headSha: workflow.candidate!.headSha,
+          authorAgentId: workflow.submission?.agentId ?? this.policy.coderAgentId,
+          reviewerAgentId: this.policy.reviewerAgentId,
+          verification: workflow.verification!,
+          review: workflow.review ?? null
+        })
+        if (
+          workflow.review?.receiptVersion !== 1 ||
+          workflow.review.attemptId !== lifecycle.attemptId ||
+          workflow.review.verificationDigest !== nativeVerificationDigest(workflow.verification!)
+        )
+          throw new Error("Review belongs to another verification attempt")
+        const scopedPushId = `${workflowId}:${lifecycle.attemptId}:push`
+        const pushId = this.store.get("operation", scopedPushId) ? scopedPushId : `${workflowId}:push`
+        const push = this.store.get<{ state: string; headSha: string }>("operation", pushId)
+        if (push) {
+          const candidate = workflow.candidate!
+          if (
+            !["started", "confirmed"].includes(push.state) ||
+            push.headSha !== candidate.headSha ||
+            !candidate.branch ||
+            candidate.branch === this.policy.baseBranch
+          )
+            throw new Error("Push binding changed")
+          const remote = await nativeGit(candidate.cwd, "ls-remote", "origin", `refs/heads/${candidate.branch}`)
+          if (remote !== `${candidate.headSha}\trefs/heads/${candidate.branch}`)
+            throw new Error("Remote push unconfirmed")
+          confirmedPush = { id: pushId, headSha: candidate.headSha }
+        }
+        releaseResumable = true
+      } catch {
+        // Never infer absence of effects: an existing push needs positive remote equality.
+      }
+    }
     return planNativeRecovery(
       {
         boardId: this.policy.boardId,
@@ -546,6 +617,10 @@ export class NativeAutonomyRuntime {
         workflowDigest: nativeRecoveryDigest(workflow),
         policyDigest: nativeRecoveryDigest(this.policy),
         lifecycle,
+        ...(action === "resume-review" ? { reviewResumable } : {}),
+        ...(["resume-release", "retry"].includes(action)
+          ? { releaseResumable, ...(confirmedPush ? { confirmedPush } : {}) }
+          : {}),
         control: this.control.state,
         cards: cards
           .map((card) => ({
@@ -679,7 +754,11 @@ export class NativeAutonomyRuntime {
       verification: workflow.verification
         ? {
             headSha: workflow.verification.headSha,
-            checks: workflow.verification.checks.map((check) => ({ ruleId: check.ruleId, exitCode: check.exitCode }))
+            checks: workflow.verification.checks.map((check) => ({
+              ruleId: check.ruleId,
+              exitCode: check.exitCode,
+              outcome: check.outcome
+            }))
           }
         : null,
       review: workflow.review ? { verdict: workflow.review.verdict, headSha: workflow.review.headSha } : null,
@@ -844,7 +923,10 @@ export class NativeAutonomyRuntime {
             intentReconciliation?.assertConfirmed(card)
             workflow.implementationCardId = card.id
             workflow.stageCards = {}
-          } else workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
+          } else {
+            if (["resume-review", "resume-release"].includes(plan.action)) delete workflow.blocker
+            workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
+          }
         }
         const latest = await this.planWorkflowRecovery(
           workflowId,
@@ -857,6 +939,21 @@ export class NativeAutonomyRuntime {
         const result = { applied: true, workflowId, action: plan.action }
         this.store.commit(
           [
+            ...(["resume-release", "retry"].includes(plan.action) && plan.snapshot.confirmedPush
+              ? [
+                  {
+                    kind: "operation",
+                    id: plan.snapshot.confirmedPush.id,
+                    value: {
+                      state: "confirmed",
+                      headSha: plan.snapshot.confirmedPush.headSha,
+                      recoveryPlanDigest: plan.digest
+                    },
+                    expectedVersion: plan.snapshot.operations.find((op) => op.id === plan.snapshot.confirmedPush!.id)!
+                      .version
+                  }
+                ]
+              : []),
             ...(intentReconciliation?.writes ?? []),
             {
               kind: "attempt-history",
@@ -911,7 +1008,7 @@ export class NativeAutonomyRuntime {
     })
   }
   async status() {
-    const cards = await nativeCards(this.gateway, this.policy.boardId)
+    const counts = await nativeBoardCounts(this.gateway, this.policy.boardId)
     return {
       boardId: this.policy.boardId,
       enabled: this.policy.enabled,
@@ -919,10 +1016,7 @@ export class NativeAutonomyRuntime {
       gatewayPid: process.pid,
       resourcePressure: this.resources.inspect(),
       control: this.control.state,
-      counts: cards.reduce<Record<string, number>>((acc, c) => {
-        acc[c.status] = (acc[c.status] ?? 0) + 1
-        return acc
-      }, {}),
+      counts,
       workflows: this.store
         .list<NativeWorkflow>("workflow")
         .filter(({ value }) => !value.archivedAt)
@@ -946,7 +1040,8 @@ export class NativeAutonomyRuntime {
             : null,
           dependencyCardIds: value.dependencyCardIds ?? [],
           verifiedSha:
-            value.verification?.checks.length && value.verification.checks.every((check) => check.exitCode === 0)
+            value.verification?.checks.length &&
+            value.verification.checks.every((check) => check.outcome === "success" && check.exitCode === 0)
               ? value.verification.headSha
               : null,
           reviewVerdict: value.review?.verdict ?? null,
@@ -1800,41 +1895,45 @@ export class NativeAutonomyRuntime {
       }
     })
   }
+  private async assertCommittedReviewEvidence(id: string, workflow: NativeWorkflow) {
+    if (
+      !workflow.candidate ||
+      !workflow.verification ||
+      !workflow.lifecycle ||
+      workflow.verification.checks.length !==
+        nativeVerificationCommands(this.policy, workflow.candidate.files).length ||
+      workflow.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
+    )
+      throw new Error("Final review requires a verified committed candidate")
+    assertNativeVerificationEvidence(
+      this.policy,
+      workflow.candidate,
+      workflow.verification,
+      workflow.proposal.acceptance,
+      this.quality.designApproved(workflow)
+        ? { headSha: workflow.candidate.headSha, reviewedBy: this.policy.reviewerAgentId }
+        : undefined
+    )
+    assertNativeProvenance(this.policy, workflow.verification, {
+      workflowId: id,
+      attemptId: workflow.lifecycle.attemptId,
+      skillDigest: workflow.proposal.quality?.skillHash ?? nativeContentDigest(workflow.proposal.implementationPrompt)
+    })
+    const committedDiff = await this.quality.committedReviewEvidence(workflow)
+    if (
+      !committedDiff?.complete ||
+      committedDiff.headSha !== workflow.verification.headSha ||
+      committedDiff.baseSha !== workflow.verification.baseSha ||
+      committedDiff.diffDigest !== workflow.verification.provenance!.diffDigest ||
+      workflow.candidate.headSha !== committedDiff.headSha ||
+      workflow.candidate.baseSha !== committedDiff.baseSha
+    )
+      throw new Error("Final review requires complete committed source evidence")
+    return committedDiff
+  }
   async stage(id: string, workflow: NativeWorkflow, stage: string, status: string, notes: string): Promise<string> {
     if (stage === "Review") {
-      if (
-        !workflow.candidate ||
-        !workflow.verification ||
-        !workflow.lifecycle ||
-        workflow.verification.checks.length !==
-          nativeVerificationCommands(this.policy, workflow.candidate.files).length ||
-        workflow.verification.checks.some((check) => check.exitCode !== 0)
-      )
-        throw new Error("Final review requires a verified committed candidate")
-      assertNativeVerificationEvidence(
-        this.policy,
-        workflow.candidate,
-        workflow.verification,
-        workflow.proposal.acceptance,
-        this.quality.designApproved(workflow)
-          ? { headSha: workflow.candidate.headSha, reviewedBy: this.policy.reviewerAgentId }
-          : undefined
-      )
-      assertNativeProvenance(this.policy, workflow.verification, {
-        workflowId: id,
-        attemptId: workflow.lifecycle.attemptId,
-        skillDigest: workflow.proposal.quality?.skillHash ?? nativeContentDigest(workflow.proposal.implementationPrompt)
-      })
-      const committedDiff = await this.quality.committedReviewEvidence(workflow)
-      if (
-        !committedDiff?.complete ||
-        committedDiff.headSha !== workflow.verification.headSha ||
-        committedDiff.baseSha !== workflow.verification.baseSha ||
-        committedDiff.changesDigest !== workflow.verification.provenance!.diffDigest ||
-        workflow.candidate.headSha !== committedDiff.headSha ||
-        workflow.candidate.baseSha !== committedDiff.baseSha
-      )
-        throw new Error("Final review requires complete committed source evidence")
+      const committedDiff = await this.assertCommittedReviewEvidence(id, workflow)
       const context = nativeObject(JSON.parse(notes), "Final review context")
       notes = JSON.stringify({
         ...context,
@@ -1884,6 +1983,13 @@ export class NativeAutonomyRuntime {
       pool === "verification" && this.policy.verificationSandbox?.backend === "docker"
         ? (this.policy.verificationSandbox.memoryMb ?? 4096) * 1024 * 1024
         : undefined
+    for (const path of pool === "verification" ? [this.policy.repository, tmpdir(), "/"] : []) {
+      const storage = inspectNativeStorage(path)
+      if (!storage.allowed) {
+        this.store.event("storage.deferred", this.policy.boardId, { operation: pool, ...storage })
+        return null
+      }
+    }
     const pressure = this.resourceAdmission(pool, verifierBytes)
     if (!pressure.allowed) return null
     for (let slot = 0; slot < limit; slot++) {
@@ -1984,7 +2090,7 @@ export class NativeAutonomyRuntime {
       w.review ||
       w.deployedSha ||
       w.archivedAt ||
-      !w.verification.checks.some((check) => check.exitCode !== 0)
+      !w.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
     )
       return undefined
     const attempt = w.lifecycle.attempt + 1
@@ -2045,6 +2151,7 @@ export class NativeAutonomyRuntime {
       for (const cardId of [w.stageCards.Deploy, w.rootCardId].filter(Boolean)) {
         await this.gateway.request("workboard.cards.move", { id: cardId, status: "done" })
       }
+      await retireNativeAcceptedWorkspace(this, id, w)
       return advanced
     }
     const preservedRepairReason = this.blockedLegacyRepairReason(id, w)
@@ -2182,6 +2289,18 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!w.verification) {
+        // Promotion requires the candidate's exact base to remain current. Route
+        // known stale candidates through repair before spending a verification run.
+        const currentBase = await nativeGit(this.policy.repository, "rev-parse", `origin/${this.policy.baseBranch}`)
+        this.control.assert()
+        if (currentBase !== w.candidate.baseSha) {
+          await this.requestRepair(
+            id,
+            w,
+            `Base advanced from ${w.candidate.baseSha} to ${currentBase}; adapt the preserved candidate to the current base before verification`
+          )
+          return advanced + 1
+        }
         if (!w.submission)
           throw new Error(
             "Legacy candidate lacks authenticated submission identity; use an explicit retry recovery plan"
@@ -2237,12 +2356,12 @@ export class NativeAutonomyRuntime {
         this.store.put("workflow", id, w)
         if (
           w.verification.checks.length !== nativeVerificationCommands(this.policy, w.candidate.files).length ||
-          w.verification.checks.some((c) => c.exitCode !== 0)
+          w.verification.checks.some((c) => c.outcome !== "success" || c.exitCode !== 0)
         ) {
           await this.requestRepair(
             id,
             w,
-            `Verification failed: ${JSON.stringify(w.verification.checks.filter((c) => c.exitCode !== 0).map((c) => ({ argv: c.argv, exitCode: c.exitCode })))}`
+            `Verification failed: ${JSON.stringify(w.verification.checks.filter((c) => c.outcome !== "success" || c.exitCode !== 0).map((c) => ({ argv: c.argv, exitCode: c.exitCode, outcome: c.outcome })))}`
           )
           advanced++
           return advanced
@@ -2254,12 +2373,12 @@ export class NativeAutonomyRuntime {
       if (
         w.verification &&
         (w.verification.checks.length !== nativeVerificationCommands(this.policy, w.candidate.files).length ||
-          w.verification.checks.some((check) => check.exitCode !== 0))
+          w.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0))
       ) {
         await this.requestRepair(
           id,
           w,
-          `Verification failed: ${JSON.stringify(w.verification.checks.filter((check) => check.exitCode !== 0).map((check) => ({ argv: check.argv, exitCode: check.exitCode })))}`
+          `Verification failed: ${JSON.stringify(w.verification.checks.filter((check) => check.outcome !== "success" || check.exitCode !== 0).map((check) => ({ argv: check.argv, exitCode: check.exitCode, outcome: check.outcome })))}`
         )
         return advanced + 1
       }
@@ -2296,6 +2415,10 @@ export class NativeAutonomyRuntime {
       }
     } catch (error) {
       if (error instanceof NativeLeaseLost || error instanceof NativeRevisionConflict) return advanced
+      if (error instanceof NativeStoragePending) {
+        this.store.event("storage.deferred", id, { reason: error.message })
+        return advanced
+      }
       if (error instanceof NativeReleasePending || error instanceof NativeControlRevoked) {
         this.store.event("release.waiting", id, { reason: error.message })
         return advanced

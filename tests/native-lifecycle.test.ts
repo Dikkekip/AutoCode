@@ -31,7 +31,7 @@ function stores() {
 }
 const evidence: NativeLifecycleEvidence = {
   candidate: { headSha: "head" },
-  verification: { headSha: "head", checks: [{ exitCode: 0 }] },
+  verification: { headSha: "head", checks: [{ outcome: "success", exitCode: 0 }] },
   review: { headSha: "head", verdict: "approved" },
   mergedSha: "merged",
   deployedSha: "merged"
@@ -57,7 +57,10 @@ it("rejects missing prerequisites and cross-attempt evidence", () => {
   expect(() => transitionNativeLifecycle(state, "release", {})).toThrow(/Illegal/)
   expect(() => transitionNativeLifecycle(state, "verification", {})).toThrow(/candidate/)
   expect(() =>
-    upgradeNativeLifecycle("workflow", { ...evidence, verification: { headSha: "other", checks: [{ exitCode: 0 }] } })
+    upgradeNativeLifecycle("workflow", {
+      ...evidence,
+      verification: { headSha: "other", checks: [{ outcome: "success", exitCode: 0 }] }
+    })
   ).toThrow(/another attempt/)
   const bound = upgradeNativeLifecycle("workflow", { candidate: evidence.candidate! })
   expect(() => transitionNativeLifecycle(bound, "review", { ...evidence, candidate: { headSha: "changed" } })).toThrow(
@@ -197,4 +200,28 @@ it("rejects receipts from another attempt even when the commit is identical", ()
       review: { ...evidence.review!, attemptId: "w:attempt:9" }
     })
   ).toThrow(/another attempt/)
+})
+
+it.each([
+  "review",
+  "release",
+  "deployment",
+  "completed"
+] as const)("reads legacy %s history without granting transition or persistence authority", (state) => {
+  const { a } = stores()
+  const legacy = {
+    ...evidence,
+    archivedAt: 1,
+    verification: { headSha: "head", checks: [{ exitCode: 0 }] },
+    lifecycle: { version: 1 as const, state, attempt: 0, attemptId: "historical:attempt:0", headSha: "head" }
+  }
+  // Seed historical bytes directly; current writers must refuse this evidence.
+  a.db
+    .prepare("INSERT INTO native_records(kind,id,data,updated_at) VALUES(?,?,?,?)")
+    .run("workflow", "historical", JSON.stringify(legacy), 1)
+  expect(a.get("workflow", "historical")).toEqual(legacy)
+  expect(a.list("workflow")).toEqual([{ id: "historical", updatedAt: 1, value: legacy }])
+  expect(upgradeNativeLifecycle("historical", legacy).attemptId).toBe("historical:attempt:0")
+  expect(() => transitionNativeLifecycle(legacy.lifecycle, state, legacy)).toThrow(/verification/)
+  expect(() => a.put("workflow", "historical", legacy)).toThrow(/verification/)
 })

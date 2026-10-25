@@ -35,8 +35,10 @@
   "devDependencies": {
     "@biomejs/biome": "^2.4.11",
     "@types/node": "^24.10.1",
+    "@types/ws": "8.18.1",
     "typescript": "^7.0.2",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "ws": "8.21.3"
   }
 }

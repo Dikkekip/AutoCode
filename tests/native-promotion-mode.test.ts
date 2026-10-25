@@ -11,7 +11,12 @@ import {
   nativePromotionDigest
 } from "../packages/core-runtime/src/native/promotion-mode.js"
 import { nativeContentDigest } from "../packages/core-runtime/src/native/provenance.js"
-import { type NativePromotionMode, validateNativeAutonomyPolicy } from "../packages/domain/src/native-autonomy.js"
+import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
+import {
+  type NativePromotionMode,
+  nativePolicyDigest,
+  validateNativeAutonomyPolicy
+} from "../packages/domain/src/native-autonomy.js"
 
 const dirs: string[] = []
 afterEach(() => {
@@ -119,4 +124,37 @@ it("binds scoped operator approval and refuses controlled evidence for productio
   p.deployment!.environment = "production"
   p.promotion.policyDigest = nativePromotionDigest(p)
   expect(() => assertNativePromotion(p)).toThrow("live staging evidence")
+})
+
+it("keeps execution evidence stable across approval publication while binding executable policy", () => {
+  const policy = fixture("staging-canary")
+  const before = nativePolicyDigest(policy)
+  policy.promotion = {
+    approvedBy: "operator",
+    approvedAt: Date.now(),
+    policyDigest: before,
+    canaryArtifact: { path: join(policy.repository, "not-present.json"), sha256: "a".repeat(64) }
+  }
+  expect(nativePolicyDigest(policy)).toBe(before)
+  // Stable verification never authorizes effects without substantive canary validation.
+  expect(() => assertNativePromotion(policy)).toThrow()
+  policy.verification[0]!.argv.push("--different-input")
+  expect(nativePolicyDigest(policy)).not.toBe(before)
+  expect(() => assertNativePromotion(policy)).toThrow("current independent")
+})
+
+it("preserves design approval across promotion approval but invalidates changed verification", () => {
+  const policy = fixture("staging-canary")
+  const quality = new NativeQualityRuntime({ policy } as any)
+  const workflow = { lifecycle: { attemptId: "attempt:1" }, proposal: { allowedPaths: ["src"] } } as any
+  workflow.designReview = { verdict: "approved", digest: quality.designDigest(workflow) }
+  policy.promotion = {
+    approvedBy: "operator",
+    approvedAt: Date.now(),
+    policyDigest: nativePromotionDigest(policy),
+    canaryArtifact: { path: "/canary", sha256: "a".repeat(64) }
+  }
+  expect(quality.designApproved(workflow)).toBe(true)
+  policy.verification[0]!.argv = ["changed-command"]
+  expect(quality.designApproved(workflow)).toBe(false)
 })

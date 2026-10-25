@@ -53,7 +53,7 @@ export function nativeFailureEvidence(
   evidence: NativeVerificationEvidence | undefined,
   expected: { workflowId: string; attemptId: string; skillDigest: string }
 ) {
-  const failed = evidence?.checks.filter((check) => check.exitCode !== 0) ?? []
+  const failed = evidence?.checks.filter((check) => check.outcome !== "success" || check.exitCode !== 0) ?? []
   if (!failed.length) return []
   if (
     !evidence ||
@@ -89,6 +89,7 @@ export function nativeFailureEvidence(
     const receipt = JSON.parse(raw.toString()) as Record<string, unknown>
     if (
       receipt.exitCode !== check.exitCode ||
+      receipt.outcome !== check.outcome ||
       receipt.startedAt !== check.startedAt ||
       receipt.finishedAt !== check.finishedAt ||
       receipt.cwd !== check.cwd ||
@@ -104,6 +105,7 @@ export function nativeFailureEvidence(
       verificationDigest: nativeVerificationDigest(evidence),
       ruleId: check.ruleId,
       exitCode: check.exitCode,
+      outcome: check.outcome,
       artifactSha256: check.artifactSha256,
       stdout: boundedLog(receipt.stdout, limit),
       stderr: boundedLog(receipt.stderr, limit),

@@ -760,7 +760,34 @@ export async function executeSandboxedCommand(
   return { stdout: result.stdout, stderr: result.stderr }
 }
 
-/** Explicit Docker isolation for hosts without unprivileged user namespaces; never an automatic fallback. */
+export interface DockerSandboxReceipt {
+  name: string
+  image: string
+  cid: string | null
+  identity: { id: string; name: string; image: string } | null
+  creation: ProcessExecutionResult | null
+  inspection: ProcessExecutionResult | null
+  command: ProcessExecutionResult | null
+  terminal: ProcessExecutionResult | null
+  containerExitCode?: number
+  failure?: { message: string; outcome: string; code: number | null }
+  cleanup: {
+    status: "VERIFIED_ABSENT" | "INCOMPLETE"
+    removal: ProcessExecutionResult | null
+    absence: ProcessExecutionResult | null
+    nameAbsence: ProcessExecutionResult | null
+    error?: string
+  }
+}
+
+/** Evidence only: these callbacks grant no admission, policy or runtime authority.
+ * The owner must settle callbacks within its reserved observer budget. */
+export interface DockerSandboxObserver {
+  created(receipt: Readonly<DockerSandboxReceipt>): Promise<void>
+  settled(receipt: Readonly<DockerSandboxReceipt>): Promise<void>
+}
+
+/** Explicit Docker isolation; a single execution, never an automatic fallback/retry. */
 export async function executeDockerSandboxedCommand(
   argv: string[],
   options: {
@@ -774,8 +801,10 @@ export async function executeDockerSandboxedCommand(
     idleTimeoutMs?: number
     signal?: AbortSignal
     maxBufferBytes?: number
+    cleanupTimeoutMs?: number
+    observer?: DockerSandboxObserver
   }
-) {
+): Promise<{ stdout: string; stderr: string; dockerReceipt?: DockerSandboxReceipt }> {
   if (!/^sha256:[a-f0-9]{64}$/.test(options.image)) throw new Error("Immutable Docker image ID required")
   const pidsLimit = options.pidsLimit ?? 256
   if (!Number.isInteger(pidsLimit) || pidsLimit < 64 || pidsLimit > 4096)
@@ -788,6 +817,13 @@ export async function executeDockerSandboxedCommand(
     throw new Error("Docker verification cpus must be between 0.25 and 8")
   if (!options.workspace.startsWith("/") || options.workspace.includes(",")) throw new Error("Invalid source mount")
   if (options.cwd !== "/work" && !options.cwd.startsWith("/work/")) throw new Error("Invalid sandbox working directory")
+  if (!Number.isFinite(options.timeoutMs) || options.timeoutMs <= 0) throw new Error("Bounded command timeout required")
+  const cleanupTimeoutMs = options.cleanupTimeoutMs ?? 10_000
+  if (!Number.isFinite(cleanupTimeoutMs) || cleanupTimeoutMs <= 0 || cleanupTimeoutMs > 30_000)
+    throw new Error("Cleanup timeout must be positive and at most 30000 ms")
+  const uid = process.getuid!(),
+    gid = process.getgid!()
+  if (uid === 0 || gid === 0) throw new Error("Docker verification requires a nonroot uid/gid")
   const name = `autocode-verification-${randomUUID()}`
   const environment = {
     ...allowlistedEnvironment(BUILD_ENVIRONMENT_ALLOWLIST),
@@ -795,12 +831,59 @@ export async function executeDockerSandboxedCommand(
     HOME: "/tmp/home",
     TMPDIR: "/tmp"
   }
+  const receipt: DockerSandboxReceipt = {
+    name,
+    image: options.image,
+    cid: null,
+    identity: null,
+    creation: null,
+    inspection: null,
+    command: null,
+    terminal: null,
+    cleanup: { status: "INCOMPLETE", removal: null, absence: null, nameAbsence: null }
+  }
+  const deadline = performance.now() + options.timeoutMs
+  let attempted = false
+  let primaryError: unknown
+  const failure = (result: ProcessExecutionResult, message: string) =>
+    Object.assign(new Error(result.error?.message ?? message), {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      code: null,
+      clientExitCode: result.exitCode,
+      outcome:
+        result.error?.name === "AbortError"
+          ? "cancelled"
+          : result.timedOut
+            ? "timeout"
+            : result.outputTruncated
+              ? "output_limit"
+              : result.signal
+                ? "signal"
+                : "nonzero"
+    })
+  const call = async (args: string[], until: number, cleanup = false, output = 4096) => {
+    const remaining = until - performance.now()
+    if (remaining <= 0) throw Object.assign(new Error("Docker deadline exhausted"), { outcome: "timeout" })
+    return executeCommandAsync("/usr/bin/docker", args, {
+      env: { PATH: "/usr/bin:/bin" },
+      cwd: "/",
+      timeoutMs: remaining,
+      ...(cleanup ? {} : { abortSignal: options.signal }),
+      ...(args[0] === "start" && options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
+      timeoutKillGraceMs: 250,
+      maxBufferBytes: output,
+      terminateProcessGroup: true,
+      terminateOnOutputLimit: true,
+      truncateOutput: false
+    })
+  }
   try {
-    const result = await executeCommandAsync(
-      "/usr/bin/docker",
+    options.signal?.throwIfAborted()
+    attempted = true
+    const created = await call(
       [
-        "run",
-        "--rm",
+        "create",
         "--init",
         "--pull=never",
         "--name",
@@ -814,7 +897,7 @@ export async function executeDockerSandboxedCommand(
         `--memory-swap=${memoryMb}m`,
         `--cpus=${cpus}`,
         "--user",
-        `${process.getuid!()}:${process.getgid!()}`,
+        `${uid}:${gid}`,
         "--tmpfs",
         "/tmp:rw,nosuid,nodev,size=512m,mode=1777",
         "--mount",
@@ -828,43 +911,139 @@ export async function executeDockerSandboxedCommand(
         ...Object.entries(environment).map(([key, value]) => `${key}=${value}`),
         ...argv
       ],
+      deadline
+    )
+    receipt.creation = created
+    if (!created.ok) throw failure(created, "Docker create failed")
+    const cid = created.stdout.trim()
+    if (!/^[a-f0-9]{64}$/.test(cid)) throw new Error("Docker create returned an unknown CID")
+    receipt.cid = cid
+    // Full container metadata includes Config, mounts and overlay-layer paths.
+    // Keep this bounded independently from the small create/remove responses.
+    const identity = await call(
+      ["inspect", "--type=container", "--format", "{{json .}}", name],
+      deadline,
+      false,
+      1024 * 1024
+    )
+    receipt.inspection = identity
+    if (!identity.ok) throw failure(identity, "Docker identity inspection failed")
+    const actual = JSON.parse(identity.stdout)
+    if (actual.Id !== cid || actual.Name !== `/${name}` || actual.Image !== options.image)
+      throw new Error("Docker generated name/CID/image identity mismatch")
+    receipt.identity = { id: cid, name: actual.Name, image: actual.Image }
+    await options.observer?.created(structuredClone(receipt))
+    const result = await call(["start", "--attach", cid], deadline, false, options.maxBufferBytes ?? 16 * 1024 * 1024)
+    receipt.command = result
+    if (!result.ok) throw failure(result, "Docker sandbox command failed")
+  } catch (error) {
+    primaryError = error instanceof Error ? error : new Error("Docker execution failed", { cause: error })
+    if (error instanceof Error && error.name === "AbortError") Object.assign(error, { outcome: "cancelled" })
+  }
+  {
+    // Reserve a separate deadline. Never reuse an aborted main signal, retry an
+    // unknown execution, or replace the primary failure with cleanup success.
+    const cleanupDeadline = performance.now() + cleanupTimeoutMs
+    try {
+      if (receipt.identity && receipt.cid) {
+        receipt.terminal = await call(
+          ["inspect", "--type=container", "--format", "{{json .State}}", receipt.cid],
+          cleanupDeadline,
+          true
+        )
+        if (!receipt.terminal.ok) throw failure(receipt.terminal, "Docker terminal inspection failed")
+        const state = JSON.parse(receipt.terminal.stdout)
+        if (state.Running !== false || state.Status !== "exited" || !Number.isInteger(state.ExitCode)) {
+          if (!primaryError) primaryError = new Error("Docker command has no settled terminal state")
+        } else {
+          receipt.containerExitCode = state.ExitCode
+          // Only inspected container state supplies the substantive command exit.
+          if (primaryError && (primaryError as { outcome?: string }).outcome === "nonzero" && state.ExitCode !== 0)
+            Object.assign(primaryError, { code: state.ExitCode })
+          if (state.ExitCode !== 0 && !primaryError) {
+            primaryError = Object.assign(new Error("Docker container exited nonzero"), {
+              stdout: receipt.command?.stdout ?? "",
+              stderr: receipt.command?.stderr ?? "",
+              code: state.ExitCode,
+              outcome: "nonzero"
+            })
+          }
+        }
+      }
+    } catch (error) {
+      if (!primaryError)
+        primaryError =
+          error instanceof Error ? error : new Error("Docker observer or terminal failure", { cause: error })
+      else if (primaryError instanceof Error) Object.assign(primaryError, { terminalError: error })
+    }
+    try {
+      if (attempted && receipt.cid) {
+        // Remove only the CID from our successful create, never an unknown or rebound name.
+        receipt.cleanup.removal = await call(["rm", "--force", receipt.cid], cleanupDeadline, true)
+        if (!receipt.cleanup.removal.ok) throw failure(receipt.cleanup.removal, "Docker removal failed")
+        receipt.cleanup.nameAbsence = await call(
+          ["container", "ls", "--all", "--no-trunc", "--filter", `name=^/${name}$`, "--format", "{{.ID}}"],
+          cleanupDeadline,
+          true
+        )
+        if (!receipt.cleanup.nameAbsence.ok || receipt.cleanup.nameAbsence.stdout.trim())
+          throw new Error("Docker name absence was not verified")
+        if (!receipt.identity || !receipt.cid) throw new Error("Unknown container identity; custody unresolved")
+        const cidAbsent = await call(
+          ["container", "ls", "--all", "--no-trunc", "--filter", `id=${receipt.cid}`, "--format", "{{.ID}}"],
+          cleanupDeadline,
+          true
+        )
+        receipt.cleanup.absence = cidAbsent
+        if (!cidAbsent.ok || cidAbsent.stdout.trim()) throw new Error("Docker CID absence was not verified")
+        receipt.cleanup.status = "VERIFIED_ABSENT"
+      } else {
+        // No Docker call occurred; this is not an execution/cleanup receipt.
+        receipt.cleanup.error = attempted ? "Unknown container identity; custody unresolved" : "Not launched"
+        if (attempted && !primaryError) primaryError = new Error(receipt.cleanup.error)
+      }
+    } catch (error) {
+      receipt.cleanup.error = error instanceof Error ? error.message : String(error)
+      if (!primaryError)
+        primaryError = Object.assign(new Error("Docker cleanup incomplete", { cause: error }), { outcome: "unknown" })
+    }
+    if (primaryError) {
+      const error = primaryError as Error & { outcome?: string; code?: number }
+      receipt.failure = {
+        message: error.message,
+        outcome: error.outcome ?? "unknown",
+        code: typeof error.code === "number" ? error.code : null
+      }
+    }
+    try {
+      await options.observer?.settled(structuredClone(receipt))
+    } catch (error) {
+      if (!primaryError)
+        primaryError =
+          error instanceof Error ? error : new Error("Docker observer or terminal failure", { cause: error })
+      else if (primaryError instanceof Error) Object.assign(primaryError, { observerError: error })
+    }
+  }
+  if (primaryError) {
+    const error = primaryError as Error & { outcome?: string; code?: number | null; clientExitCode?: number | null }
+    // Even owner callbacks can throw errors with a misleading zero code or
+    // success outcome. Preserve the raw diagnostic separately and fail closed.
+    if (error.code === 0) {
+      error.clientExitCode = 0
+      error.code = null
+    }
+    if (error.outcome === "success") error.outcome = "unknown"
+    receipt.failure = {
+      message: error.message,
+      outcome: error.outcome ?? "unknown",
+      code: typeof error.code === "number" ? error.code : null
+    }
+    throw Object.assign(
+      primaryError instanceof Error ? primaryError : new Error("Docker execution failed", { cause: primaryError }),
       {
-        env: { PATH: "/usr/bin:/bin" },
-        cwd: "/",
-        timeoutMs: options.timeoutMs,
-        idleTimeoutMs: options.idleTimeoutMs,
-        timeoutKillGraceMs: 250,
-        maxBufferBytes: options.maxBufferBytes ?? 16 * 1024 * 1024,
-        abortSignal: options.signal,
-        terminateProcessGroup: true,
-        terminateOnOutputLimit: true,
-        truncateOutput: false
+        dockerReceipt: receipt
       }
     )
-    if (!result.ok)
-      throw Object.assign(new Error(result.error?.message ?? "Docker sandbox command failed"), {
-        stdout: result.stdout,
-        stderr: result.stderr,
-        code: result.exitCode,
-        outcome:
-          result.error?.name === "AbortError"
-            ? "cancelled"
-            : result.timedOut
-              ? "timeout"
-              : result.outputTruncated
-                ? "output_limit"
-                : result.signal
-                  ? "signal"
-                  : "nonzero"
-      })
-    return { stdout: result.stdout, stderr: result.stderr }
-  } finally {
-    // Killing the Docker client does not stop its container. Always remove the execution by our generated name.
-    await executeCommandAsync("/usr/bin/docker", ["rm", "--force", name], {
-      env: { PATH: "/usr/bin:/bin" },
-      cwd: "/",
-      timeoutMs: 10_000,
-      maxBufferBytes: 4096
-    })
   }
+  return { stdout: receipt.command!.stdout, stderr: receipt.command!.stderr, dockerReceipt: receipt }
 }

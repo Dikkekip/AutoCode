@@ -547,8 +547,11 @@ function canonical(value: unknown): unknown {
   return value
 }
 export function nativePolicyDigest(policy: NativeAutonomyPolicy): string {
+  // Promotion authorizes later effects; it does not change executed verification inputs.
+  // Full governance/recovery digests still bind the approval, and each effect validates it.
+  const { promotion: _promotion, ...executionPolicy } = policy
   return createHash("sha256")
-    .update(JSON.stringify(canonical(policy)))
+    .update(JSON.stringify(canonical(executionPolicy)))
     .digest("hex")
 }
 export function nativeVerificationRuleId(command: NativeCommand): string {
@@ -592,6 +595,8 @@ export interface NativeVerificationEvidence {
     argv: string[]
     cwd: string
     exitCode: number | null
+    /** Absent on legacy receipts; never implies success. */
+    outcome?: string
     startedAt: string
     finishedAt: string
     artifact: string
@@ -635,9 +640,12 @@ export function assertNativeReleaseGate(input: {
         )
     ) ||
     [...verification.plan.ruleIds, ...verification.plan.coverage.flatMap((entry) => entry.ruleIds)].some(
-      (id) => !verification.checks.some((check) => check.ruleId === id && check.exitCode === 0)
+      (id) =>
+        !verification.checks.some((check) => check.ruleId === id && check.outcome === "success" && check.exitCode === 0)
     ) ||
-    verification.checks.some((c) => c.exitCode !== 0 || !c.artifact || !c.startedAt || !c.finishedAt)
+    verification.checks.some(
+      (c) => c.outcome !== "success" || c.exitCode !== 0 || !c.artifact || !c.startedAt || !c.finishedAt
+    )
   ) {
     throw new Error("Release requires passing verification for the current commit")
   }

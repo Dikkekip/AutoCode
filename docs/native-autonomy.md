@@ -401,6 +401,10 @@ and review a mode explicitly before resuming. The code enforces these permission
 
 Release modes require reviewed budgets and an independent `promotion` approval:
 `{approvedBy, approvedAt, policyDigest, canaryArtifact: {path, sha256}}`.
+Verification and promotion digests exclude only the promotion approval field, so
+publishing operator approval does not invalidate already completed checks. Full
+governance and recovery digests still bind that approval, and each new external
+effect validates the exact canary bytes and current approval before journaling intent.
 `nativePromotionDigest` computes the policy digest excluding its approval field;
 `nativeCanaryScopeDigest` binds the application scope, required checks and artifact.
 A changed policy, replaced report, broadened scope, agent acting as its own operator,
@@ -569,3 +573,13 @@ versions without `--slurp`. Branch-protection requirements are still mandatory;
 an unavailable branch-protection API does not silently authorize a release.
 
 Committed sandbox inputs are capped at 10,000 files and 256 MiB in total before any blob is read or copied. Source-only changes without a colocated test remain subject to build, type, boundary, browser and independent review checks; the focused test rule applies when a changed test is selected.
+
+A workflow blocked specifically by missing promotion approval can use `resume-release`
+under paused operator recovery after approval is installed. It retains the exact
+verified/reviewed attempt. Any existing push journal requires positive remote equality
+for its exact branch and commit; recovery never pushes or infers non-dispatch from an
+absent remote. Unknown PR, merge, or deployment operations remain blocked.
+
+## Work across multiple sessions
+
+Research and planning compare substantial user outcomes alongside short repairs. A long-horizon implementation plan records ordered milestones, dependencies, durable progress evidence, current-revision resume checks and final end-to-end acceptance. A milestone does not count as a completed outcome or release. Planners retain existing scope, resource and risk gates and explain a concrete blocker when deferring useful substantial work. Complexity routing remains evidence-based; neither release quotas nor invented large tasks establish value. These planning instructions do not extend execution budgets or automatically resume interrupted workers.

@@ -301,6 +301,7 @@ function fixtureVerification(
     cwd: worktree,
     stdout: "Synthetic fixture failure log",
     stderr: "Synthetic fixture stderr",
+    outcome: exitCode === 0 ? "success" : "nonzero",
     exitCode,
     startedAt: "fixture-start",
     finishedAt: "fixture-end"
@@ -318,7 +319,23 @@ function fixtureVerification(
     repositoryId: nativeRepositoryIdentity(s.policy),
     baseSha: candidate.baseSha,
     headSha: candidate.headSha,
-    diffDigest: workflow.riskAssessment!.changesDigest,
+    diffDigest: nativeContentDigest(
+      execFileSync(
+        "git",
+        [
+          "diff",
+          "--raw",
+          "--no-abbrev",
+          "--no-renames",
+          "--no-ext-diff",
+          "--no-textconv",
+          "-z",
+          candidate.baseSha,
+          candidate.headSha
+        ],
+        { cwd: s.root }
+      )
+    ),
     policyDigest: nativePolicyDigest(s.policy),
     policySnapshot: s.policy,
     checkIds: plan.ruleIds,
@@ -348,6 +365,7 @@ function fixtureVerification(
         ruleId: nativeVerificationRuleId(command),
         argv: command.argv,
         cwd: worktree,
+        outcome: exitCode === 0 ? "success" : "nonzero",
         exitCode,
         startedAt: "fixture-start",
         finishedAt: "fixture-end",
@@ -552,6 +570,50 @@ describe("native quality investigations", () => {
     const candidate = workflow.candidate!
     workflow.verification = fixtureVerification(s, workflow, workflowId, worktree)
     s.store.put("workflow", workflowId, workflow)
+    workflow.blocker = "Error: Final review requires complete committed source evidence"
+    s.runtime.transitionWorkflow(workflowId, workflow, "blocked")
+    for (const card of s.gateway.cards) card.status = "done"
+    s.runtime.control.change(true)
+    const retained = structuredClone(workflow)
+    for (const corrupt of [
+      (w: NativeWorkflow) => {
+        w.blocker = "Unrelated failure"
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.checks[0]!.exitCode = 1
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.checks = []
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.provenance!.diffDigest = "0".repeat(64)
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.provenanceArtifact!.sha256 = "0".repeat(64)
+      }
+    ]) {
+      const invalid = s.runtime.requireWorkflow(workflowId)
+      Object.assign(invalid, structuredClone(retained))
+      corrupt(invalid)
+      s.store.put("workflow", workflowId, invalid)
+      const refused = await s.runtime.planWorkflowRecovery(workflowId, "resume-review", "Resume exact verified commit")
+      expect(refused.allowed).toBe(false)
+      await expect(s.runtime.applyWorkflowRecovery(refused, "operator")).rejects.toThrow()
+    }
+    workflow = s.runtime.requireWorkflow(workflowId)
+    Object.assign(workflow, structuredClone(retained))
+    s.store.put("workflow", workflowId, workflow)
+    const plan = await s.runtime.planWorkflowRecovery(workflowId, "resume-review", "Resume exact verified commit")
+    expect(plan.allowed).toBe(true)
+    await s.runtime.applyWorkflowRecovery(plan, "operator")
+    await expect(s.runtime.applyWorkflowRecovery(plan, "operator")).resolves.toMatchObject({ applied: true })
+    workflow = s.runtime.requireWorkflow(workflowId)
+    expect(workflow.blocker).toBeUndefined()
+    expect(workflow.lifecycle).toMatchObject({ ...retained.lifecycle, state: "review" })
+    expect(workflow.candidate).toEqual(retained.candidate)
+    expect(workflow.verification).toEqual(retained.verification)
+    expect(s.store.list("attempt-history")).toHaveLength(1)
+    s.runtime.control.change(false)
     const reviewId = await s.runtime.stage(
       workflowId,
       workflow,
@@ -585,6 +647,8 @@ describe("native quality investigations", () => {
       truncated: false,
       redacted: false
     })
+    expect(notes.committedDiff.diffDigest).toBe(workflow.verification.provenance!.diffDigest)
+    expect(notes.committedDiff.changesDigest).not.toBe(notes.committedDiff.diffDigest)
     expect(notes.committedDiff.content).toContain("+export const navigation = true")
     expect(notes.verification.verificationDigest).toBe(nativeVerificationDigest(workflow.verification))
     expect(notes.proposal.acceptance).toEqual(workflow.proposal.acceptance)
@@ -1140,7 +1204,13 @@ describe("native quality investigations", () => {
     c.card.runId = "owned-run"
     c.card.updatedAt = Date.now()
     s.policy.enabled = false
+    const callsBefore = s.gateway.calls.length
     await s.runtime.quality.enforceBudgets()
+    const budgetCalls = s.gateway.calls.slice(callsBefore)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.list")).toHaveLength(1)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.runs")).toEqual([
+      { method: "workboard.cards.runs", params: { id: c.card.id } }
+    ])
     expect(s.gateway.calls.some((call) => call.method === "sessions.abort" && call.params.key === c.session)).toBe(true)
     expect(c.card.status).toBe("blocked")
     expect(s.gateway.calls.filter((call) => call.method === "workboard.cards.runs")).toContainEqual({
@@ -1148,6 +1218,34 @@ describe("native quality investigations", () => {
       params: { id: c.card.id }
     })
     expect(s.store.get<Investigation>("investigation", `${c.roundId}:ux`)?.state).toBe("timed_out")
+  })
+  it.each([
+    "session",
+    "run",
+    "missing",
+    "board",
+    "revision"
+  ])("refuses post-abort %s changes without overwriting investigation ownership", async (change) => {
+    const s = setup()
+    await s.runtime.discover()
+    const c = s.start()
+    c.card.startedAt = Date.now() - 301_000
+    c.card.runId = "owned-run"
+    c.card.updatedAt = Date.now()
+    s.gateway.abortOwnedInvestigation = async () => {
+      if (change === "session") c.card.sessionKey = "replacement-session"
+      if (change === "run") c.card.runId = "replacement-run"
+      if (change === "missing") s.gateway.cards = s.gateway.cards.filter((card) => card.id !== c.card.id)
+      if (change === "board") c.card.boardId = "other-board"
+      if (change === "revision") delete c.card.updatedAt
+      return { status: "terminal" }
+    }
+    const callsBefore = s.gateway.calls.length
+    await expect(s.runtime.quality.enforceBudgets()).rejects.toThrow("Investigation cancellation failed")
+    const budgetCalls = s.gateway.calls.slice(callsBefore)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.list")).toHaveLength(1)
+    expect(budgetCalls.filter((call) => call.method === "workboard.cards.update")).toHaveLength(0)
+    expect(s.store.get<Investigation>("investigation", `${c.roundId}:ux`)?.cancellation?.status).toBe("failed")
   })
   it("preserves both persona investigations for an equivalent finding but admits it once", async () => {
     const s = setup()
@@ -2255,4 +2353,20 @@ it("gives pre-implementation design review standing verification evidence withou
   expect(w.verification).toBeUndefined()
   expect(s.runtime.quality.designApproved(w)).toBe(false)
   expect(s.gateway.cards.find((card) => card.id === w.implementationCardId).status).toBe("blocked")
+})
+
+it("carries long-horizon investigation and selection requirements through created card contexts", async () => {
+  const s = setup()
+  await s.runtime.discover()
+  const notes = s.gateway.cards.map((card) => {
+    const pointer = JSON.parse(card.notes)
+    return pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+  })
+  const investigation = notes.find((value) => value.persona)
+  const planner = notes.find((value) => !value.persona && value.roundId)
+  expect(investigation.instructions.join("\n")).toContain("ordered milestones, dependencies, durable progress evidence")
+  expect(investigation.instructions.join("\n")).toContain("resume checks against the current revision")
+  expect(investigation.instructions.join("\n")).toContain("Milestones are progress, not separate proof of completion")
+  expect(planner.instructions.join("\n")).toContain("record the concrete dependency or admission reason")
+  expect(planner.instructions.join("\n")).toContain("existing scope, capacity and risk gates")
 })

@@ -2,6 +2,17 @@ import { redactCommandText, redactLogText } from "@openclaw/domain"
 
 // Protect only complete, bounded opening tags with attribute-level references.
 const REFERENCE_EXPRESSION = /^\{\s*[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\s*\}$/
+const SENSITIVE_REFERENCE = /credential|secret|token|password|passwd|authorization|bearer|ghp_|api[_-]?key/i
+// A JSX identity assembled solely from references and hyphen separators carries
+// no literal value. Literal templates and sensitive references remain masked.
+function referenceValue(value: string): boolean {
+  if (REFERENCE_EXPRESSION.test(value)) return true
+  return (
+    /^\{`\$\{[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\}(?:-\$\{[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\})+`\}$/.test(
+      value
+    ) && !SENSITIVE_REFERENCE.test(value)
+  )
+}
 const STANDALONE_REFERENCE_KEY = /^key[ \t]*=[ \t]*(\{[^}\n]*\})/
 // Equality against a browser keyboard name is not a credential assignment.
 // Keep this source-only and narrow; literals, comments and arbitrary key values
@@ -134,7 +145,7 @@ function openingTag(source: string, start: number): { end: number; keys: number[
       }
     }
     if (depth !== 0) break
-    if (name === "key" && REFERENCE_EXPRESSION.test(source.slice(valueStart, cursor))) {
+    if (name === "key" && referenceValue(source.slice(valueStart, cursor))) {
       keys.push(nameStart)
     }
   }
@@ -161,6 +172,51 @@ function derivedKeyDeclaration(source: string, start: number): { key: number; na
   )
     return undefined
   return { key: start + match[0].indexOf(match[1]!), name: match[1]!, end: start + line.length }
+}
+
+// Bounded structural source expressions, not shell assignments. Shield only
+// identifier spelling; credential scanning still visits the complete RHS.
+function protectStructuralKeys(source: string, keyMarker: string, queryMarker: string): string {
+  const reference = "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*"
+  const stateSelection = new RegExp(
+    `^(const[ \t]+)([A-Za-z_$][\\w$]*Keys?)([ \t]*=[ \t]*${reference}[ \t]*===[ \t]*${reference}[ \t]*\\?[ \t]*${reference}[ \t]*:[ \t]*\\[\\][ \t]*;?)$`
+  )
+  const lines = source.split("\n")
+  for (let i = 0; i < lines.length; i++) {
+    const prefix = /^([+\- ]?[ \t]*)(.*)$/.exec(lines[i]!)!
+    const line = prefix[2]!
+    const selection = stateSelection.exec(line)
+    if (selection && !SENSITIVE_REFERENCE.test(line)) {
+      // All key-like identifiers are references in this restricted expression.
+      // The plural suffix must survive restoration as well.
+      lines[i] = prefix[1] + line.replace(/Key(s?)\b/g, (_match, plural: string) => queryMarker + plural)
+    }
+    const declaration = /^(const[ \t]+)([A-Za-z_$][\w$]*Key)([ \t]*=[ \t]*JSON\.stringify\(\{)$/.exec(line)
+    if (declaration) {
+      let end = i + 1
+      let expression = line
+      while (end < lines.length && expression.length <= 4096) {
+        const next = lines[end]!.replace(/^[+\- ]?[ \t]*/, "")
+        expression += "\n" + next
+        if (/^\}\);?$/.test(next)) break
+        end++
+      }
+      if (
+        end < lines.length &&
+        expression.length <= 4096 &&
+        /^[A-Za-z0-9_$.,:{}()[\]=>; \t\r\n]+$/.test(expression) &&
+        !SENSITIVE_REFERENCE.test(expression)
+      )
+        lines[i] = prefix[1]! + declaration[1]! + declaration[2]!.slice(0, -3) + queryMarker + declaration[3]
+    }
+  }
+  return lines
+    .join("\n")
+    .replace(
+      /\b([A-Za-z_$][\w$]*)\.key([ \t]*===[ \t]*(['"])[a-z]+(?:-[a-z]+)+\3[ \t]*\|\|[ \t]*\1\.)key([ \t]*===[ \t]*(['"])[a-z]+(?:-[a-z]+)+\5)/g,
+      (match, object: string, middle: string, _quote: string, tail: string) =>
+        SENSITIVE_REFERENCE.test(match) ? match : `${object}.${keyMarker}${middle}${keyMarker}${tail}`
+    )
 }
 
 // A cache-key factory reference carries no literal value. Recognize only this
@@ -306,7 +362,7 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
 }
 
 const QUOTED_ASSIGNMENT_START =
-  /(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTHORIZATION|JWT)[A-Za-z0-9_]*\s*=+\s*(?:\{\s*)?)(["'])/gi
+  /(\b[A-Za-z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|PASSWD|AUTHORIZATION|JWT)[A-Za-z0-9_]*\s*=+\s*(?:\{\s*)?)(["'`])/gi
 
 function redactQuotedAssignments(source: string): string {
   const pattern = new RegExp(QUOTED_ASSIGNMENT_START)
@@ -328,7 +384,7 @@ function redactQuotedAssignments(source: string): string {
 }
 function redactSuspiciousKeyDeclarations(source: string): string {
   return source.replace(
-    /^([+\- ]?[ \t]*const[ \t]+(?:key|[A-Za-z_$][\w$]*Key)[ \t]*=[ \t]*)([^\n]*)$/gm,
+    /^([+\- ]?[ \t]*const[ \t]+(?:key|[A-Za-z_$][\w$]*Keys?)[ \t]*=[ \t]*)([^\n]*)$/gm,
     (line, prefix: string, rhs: string) =>
       /credential|secret|token|password|authorization|bearer|ghp_/i.test(rhs) ? `${prefix}***REDACTED***` : line
   )
@@ -354,7 +410,7 @@ export function redactNativeSourceText(source: string): string {
   // Non-identifier punctuation keeps adjacent credential-token scanning intact.
   const dotMarker = `:__SOURCE_MEMBER_DOT_${dotSerial}__:`
   const prepared = protectReferenceNames(
-    protectKeyboardSyntax(source, marker, queryMarker),
+    protectKeyboardSyntax(protectStructuralKeys(source, marker, queryMarker), marker, queryMarker),
     marker,
     queryMarker,
     dotMarker

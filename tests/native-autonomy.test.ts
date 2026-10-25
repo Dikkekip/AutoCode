@@ -75,6 +75,7 @@ class Gateway implements NativeGateway {
   async request<T = any>(method: string, params: Record<string, any>): Promise<T> {
     this.calls.push({ method, params })
     let result: any = {}
+    if (method === "workboard.boards.list") result = { boards: [] }
     if (method === "workboard.cards.list") result = { cards: this.cards }
     if (method === "workboard.cards.runs")
       result = {
@@ -775,6 +776,7 @@ describe("independent commit-bound verification", () => {
           ruleId: "test",
           argv: ["test"],
           cwd: "/worktree",
+          outcome: "success",
           exitCode: 0,
           startedAt: "now",
           finishedAt: "later",

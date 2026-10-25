@@ -9,7 +9,8 @@ import {
   nextNativeAttempt,
   recoverNativeLifecycle,
   transitionNativeLifecycle,
-  validateNativeLifecycle
+  validateNativeLifecycle,
+  validateNativeLifecycleRecord
 } from "@openclaw/domain"
 import { preservedNativeRepairLifecycle } from "./repair-intent.js"
 export interface NativeLease {
@@ -94,7 +95,7 @@ export class NativeEvidenceStore {
       const value = JSON.parse(String(raw))
       if (value === null || typeof value !== "object" || Array.isArray(value))
         throw new Error("expected a JSON record object")
-      if (kind === "workflow" && value.lifecycle) validateNativeLifecycle(value.lifecycle, value)
+      if (kind === "workflow" && value.lifecycle) validateNativeLifecycleRecord(value.lifecycle, value)
       return value as T
     } catch (error) {
       throw new Error(

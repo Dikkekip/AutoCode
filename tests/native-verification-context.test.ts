@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
+import { historicalBa7Definitions } from "../packages/core-runtime/src/native/historical-ba7-definitions.js"
 import { nativeContentDigest } from "../packages/core-runtime/src/native/provenance.js"
 import {
   nativeVerificationCommandContext,
@@ -85,4 +86,153 @@ it("reads only bounded text under a toolchain root and rejects escaping symlinks
   expect(await readNativeVerifierDefinition(config, "/checks/check")).toContain("exit 0")
   await expect(readNativeVerifierDefinition(config, "/checks/escape")).rejects.toThrow(/escapes/)
   await expect(readNativeVerifierDefinition(config, "/../outside")).rejects.toThrow(/absolute/)
+})
+
+// R104: tests are prepared for independent review; not run in the source-only packet task.
+const historical = JSON.parse(historicalBa7Definitions)
+const historicalPolicy = () => ({
+  ...policy,
+  verificationSandbox: { ...sandbox, image: historical.image },
+  verification: historical.definitions.map((entry: any) => structuredClone(entry.command))
+})
+const unavailable = async () => {
+  throw new Error("private unavailable-image diagnostic")
+}
+
+it("recovers all50 exact historical bodies as source coverage with explicit limited provenance", async () => {
+  const read = vi.fn(unavailable)
+  const p = historicalPolicy()
+  const commands = await nativeVerificationCommandContext(p, null, read)
+  expect(read).toHaveBeenCalledTimes(50)
+  expect(commands).toHaveLength(50)
+  expect(new Set(commands.map((entry) => entry.ruleId)).size).toBe(50)
+  commands.forEach((entry, index) => {
+    const original = historical.definitions[index]
+    expect(entry.definition).toMatchObject({
+      path: original.path,
+      content: original.content,
+      sha256: original.sha256,
+      complete: true,
+      provenance: {
+        kind: "historical-operator-capture",
+        image: historical.image,
+        sourceContextId: historical.sourceContextId,
+        provenanceSha256: historical.provenanceSha256,
+        auditSha256: historical.auditSha256,
+        scope: "top-level-definition-source-only",
+        imagePresenceAttested: false,
+        executionAttested: false
+      }
+    })
+    expect(entry.argv).toEqual(original.command.argv)
+    expect(entry.paths).toEqual(original.command.paths)
+    expect(entry).not.toHaveProperty("exitCode")
+    expect(entry).not.toHaveProperty("artifact")
+  })
+  expect(JSON.stringify(commands)).not.toContain("private unavailable-image diagnostic")
+})
+
+it("prefers available image bytes and does not use history to replace malformed or redacted reads", async () => {
+  const p = historicalPolicy()
+  p.verification = [p.verification[0]]
+  const valid = "#!/bin/sh\nexit 17\n"
+  const [current] = await nativeVerificationCommandContext(p, null, async () => valid)
+  expect(current!.definition).toMatchObject({ content: valid, complete: true })
+  expect(current!.definition).not.toHaveProperty("provenance")
+  for (const source of ["\x00binary", "\ufffd", "x".repeat(32769), 'API_KEY="credential123"']) {
+    const [entry] = await nativeVerificationCommandContext(p, null, async () => source)
+    expect(entry!.definition.complete).toBe(false)
+    expect(entry!.definition).not.toHaveProperty("provenance")
+    expect(entry!.definition.content ?? "").not.toContain("credential123")
+  }
+})
+
+it("fails closed on each binding mismatch, unknown commands and non-docker sandboxes", async () => {
+  const mutations = [
+    (p: any) => {
+      p.verificationSandbox.image = `sha256:${"8".repeat(64)}`
+    },
+    (p: any) => {
+      p.verification[0].id += "-changed"
+    },
+    (p: any) => {
+      p.verification[0].argv.push("--candidate-override")
+    },
+    (p: any) => {
+      p.verification[0].argv[0] = "/candidate/definition"
+    },
+    (p: any) => {
+      p.verification[0].cwd = "src"
+    },
+    (p: any) => {
+      p.verification[0].paths = ["src/**"]
+    },
+    (p: any) => {
+      p.verification[0].timeoutSeconds += 1
+    },
+    (p: any) => {
+      p.verification[0].idleTimeoutSeconds = 60
+    },
+    (p: any) => {
+      p.verification[0].outputLimitBytes = 4096
+    },
+    (p: any) => {
+      p.verificationSandbox = { backend: "bubblewrap", rootFilesystem: "/candidate", inputFiles: ["src/file.ts"] }
+    },
+    (p: any) => {
+      delete p.verificationSandbox
+    }
+  ]
+  for (const mutate of mutations) {
+    const p = historicalPolicy()
+    p.verification = [p.verification[0]]
+    mutate(p)
+    const [entry] = await nativeVerificationCommandContext(p, null, unavailable)
+    expect(entry!.definition.complete).toBe(false)
+    expect(entry!.definition).not.toHaveProperty("content")
+    expect(entry!.definition).not.toHaveProperty("provenance")
+  }
+})
+
+it("preserves actual path selection and empty selection with historical fallback", async () => {
+  const p = historicalPolicy()
+  const files = [
+    "apps/reports-ui/src/features/bundles/detail/components/BundleEvidenceInventoryReview.tsx",
+    "apps/reports-ui/src/features/bundles/detail/components/BundleEvidenceInventoryReview.test.tsx"
+  ]
+  const selected = await nativeVerificationCommandContext(p, files, unavailable)
+  expect(selected.map((entry) => entry.ruleId)).toEqual([
+    "legacy-006",
+    "legacy-007",
+    "legacy-008",
+    "legacy-009",
+    "legacy-010",
+    "changed-feature-tests",
+    "ui-types"
+  ])
+  expect(selected.every((entry) => entry.definition.complete)).toBe(true)
+  expect(await nativeVerificationCommandContext(p, [], unavailable)).toEqual([])
+})
+
+it("rejects changed asset bytes even when their internal body digest is updated", async () => {
+  const altered = JSON.parse(historicalBa7Definitions)
+  altered.definitions[0].content = "#!/bin/sh\nexit 0\n"
+  altered.definitions[0].sha256 = nativeContentDigest(altered.definitions[0].content)
+  vi.resetModules()
+  vi.doMock("../packages/core-runtime/src/native/historical-ba7-definitions.js", () => ({
+    historicalBa7Definitions: JSON.stringify(altered)
+  }))
+  try {
+    const { nativeVerificationCommandContext: context } = await import(
+      "../packages/core-runtime/src/native/verification-context.js"
+    )
+    const p = historicalPolicy()
+    p.verification = [p.verification[0]]
+    const [entry] = await context(p, null, unavailable)
+    expect(entry!.definition.complete).toBe(false)
+    expect(entry!.definition).not.toHaveProperty("content")
+  } finally {
+    vi.doUnmock("../packages/core-runtime/src/native/historical-ba7-definitions.js")
+    vi.resetModules()
+  }
 })

@@ -91,7 +91,8 @@ export async function reconcileNativeDeployment(
         resolve(artifacts, "prepare.json"),
         env(w.mergedSha!, "")
       )
-      if (result.exitCode !== 0) throw new NativeReleasePending("Release preparation has not succeeded")
+      if (result.outcome !== "success" || result.exitCode !== 0)
+        throw new NativeReleasePending("Release preparation has not succeeded")
       const receipt = JSON.parse(result.stdout)
       if (
         receipt.targetId !== p.targetId ||
@@ -127,7 +128,7 @@ export async function reconcileNativeDeployment(
       env(revision, artifactSha256)
     )
     const receipt =
-      result.exitCode === 0
+      result.outcome === "success" && result.exitCode === 0
         ? decodeNativeHealth(result.stdout, { targetId: p.targetId, revision, artifactSha256 }, now())
         : null
     store.event("deployment.health-observed", id, {

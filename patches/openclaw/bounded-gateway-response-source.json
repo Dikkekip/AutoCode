@@ -1,0 +1,45 @@
+{
+  "upstreamBaseSha": "192b49f9704639d248adf4a546a658a83ad0968d",
+  "paths": {
+    "docs/plugins/sdk-runtime/gateway-and-nodes.md": {
+      "beforeSha256": "d13d8ed62901228d12316ede468ad7397259cbd453d6af4527dfdb52dbaebf56",
+      "afterSha256": "ab8152bba57bd56be62a4aed8cc8b8645d205cd11d3b832fe963a44d181aaaee"
+    },
+    "packages/gateway-client/src/client.ts": {
+      "beforeSha256": "4693f7f63e763248738c89730b26f193140daa5176e48b088f2583d766514e46",
+      "afterSha256": "06d12433e97fd397df1d3ed69c7fda51d3f52eaa3425881be0726a897434ff3f"
+    },
+    "packages/gateway-client/src/client-address-utils.ts": {
+      "beforeSha256": "b0e77efa7b9d30b4c40f929e950460765c6338517750708b79d3e8bf6dc92eb9",
+      "afterSha256": "4ad8c9061c7033aebb628d03fd68bb42f0fe9e6355fa9a17ac217c8917aea4ed"
+    },
+    "packages/gateway-client/src/response-limit.ts": {
+      "beforeSha256": null,
+      "afterSha256": "1d312afae05aa768978b8be7e6dde900527300ba61135d268af549d81fc86dcd"
+    },
+    "src/cli/gateway-rpc.response-limit.test.ts": {
+      "beforeSha256": null,
+      "afterSha256": "52c95b10be2754c70b6db441051f916e9f8148fc00f6b2b1e4086c293ae4b2a5"
+    },
+    "src/cli/gateway-rpc.runtime.ts": {
+      "beforeSha256": "ea6b88c7e399997474ff093b34d5a4d66affa8b9c3ad9f2646d9a0b36aceb475",
+      "afterSha256": "ca8935ddddbed578fd16db54b2f2e6148abdfc621eaeeb64bd285dac1f8d9fde"
+    },
+    "src/cli/gateway-rpc.ts": {
+      "beforeSha256": "22a1a4909851c5101d52d04769cf585f70c9ba454c752beee56a70266efba4d9",
+      "afterSha256": "a9ab6596d71ef9cace0eb28f762c48f289c672d9c4856868466a71aee2a26a20"
+    },
+    "src/gateway/call.ts": {
+      "beforeSha256": "03d990ccd8807356389f5ee93900d7227b527437307ab24f638e5919d990080e",
+      "afterSha256": "fa71ed8317089c4f86b1fbfbc4bc8f663efafd946591505b6e41d4f78a34d0ab"
+    },
+    "src/gateway/call-scope-escalation-policy.ts": {
+      "beforeSha256": null,
+      "afterSha256": "de976f402996a4c5aba61c8f386aaf90166ab8ddb2f09fd2781df38bd06fb303"
+    },
+    "src/plugin-sdk/gateway-runtime.ts": {
+      "beforeSha256": "3dfefd195639652461d921a6950a5717923c1246688d43eb18c3d6eae7b2983b",
+      "afterSha256": "3dfefd195639652461d921a6950a5717923c1246688d43eb18c3d6eae7b2983b"
+    }
+  }
+}
