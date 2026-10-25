@@ -75,6 +75,14 @@ export interface NativeAutonomyPolicy {
   reviewerAgentId: string
   workerConcurrency: number
   verificationConcurrency?: number
+  /** Host admission safeguards. Omitted values use conservative automatic defaults. */
+  resourceControls?: {
+    minAvailableMiB?: number
+    maxGatewayRssMiB?: number
+    workerReserveMiB?: number
+    maxMemoryPressurePercent?: number
+    recoveryHoldSeconds?: number
+  }
   personasPerRound: number
   maxTasksPerRound: number
   dedupeWindowHours: number
@@ -158,6 +166,19 @@ function command(value: unknown): NativeCommand {
     ...(r.paths === undefined ? {} : { paths: strings(r.paths, "command paths").map(nativeRelativePath) })
   }
 }
+export function validateNativeResourceControls(value: unknown): NonNullable<NativeAutonomyPolicy["resourceControls"]> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid resource controls")
+  const controls = value as Record<string, unknown>
+  const result: NonNullable<NativeAutonomyPolicy["resourceControls"]> = {}
+  for (const key of ["minAvailableMiB", "maxGatewayRssMiB", "workerReserveMiB"] as const)
+    if (controls[key] !== undefined) result[key] = integer(controls[key], 64, 1_048_576)
+  if (controls.maxMemoryPressurePercent !== undefined)
+    result.maxMemoryPressurePercent = integer(controls.maxMemoryPressurePercent, 1, 100)
+  if (controls.recoveryHoldSeconds !== undefined)
+    result.recoveryHoldSeconds = integer(controls.recoveryHoldSeconds, 1, 3600)
+  return result
+}
+
 export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPolicy {
   const r = record(value)
   if (r.version !== 1) throw new Error("Unsupported native autonomy policy version")
@@ -284,6 +305,9 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
     ...(r.verificationConcurrency === undefined
       ? {}
       : { verificationConcurrency: integer(r.verificationConcurrency, 0, 8) }),
+    ...(r.resourceControls === undefined
+      ? {}
+      : { resourceControls: validateNativeResourceControls(r.resourceControls) }),
     personasPerRound: integer(r.personasPerRound, 3, 10),
     maxTasksPerRound: integer(r.maxTasksPerRound, 6, 6),
     dedupeWindowHours: integer(r.dedupeWindowHours, 72, 720),
