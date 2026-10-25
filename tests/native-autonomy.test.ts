@@ -589,7 +589,7 @@ describe("native autonomy policy and creative provenance", () => {
     }
   })
   it.each([
-    126, 127
+    78, 126, 127
   ])("preserves the candidate and repair budget when verification cannot execute (%s)", async (exitCode) => {
     const p = policy(),
       gateway = new Gateway(),

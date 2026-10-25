@@ -1533,7 +1533,8 @@ export class NativeAutonomyRuntime {
     if (!this.store.holdsLease(`workflow:${id}`))
       return this.withWorkflowLease(id, () => this.requestRepair(id, workflow, reason))
     this.assertEnabled()
-    const unavailable = workflow.verification?.checks.find((check) => [126, 127].includes(check.exitCode ?? 0))
+    // EX_CONFIG (78) is a verifier configuration refusal, not an application defect.
+    const unavailable = workflow.verification?.checks.find((check) => [78, 126, 127].includes(check.exitCode ?? 0))
     if (unavailable)
       throw new Error(
         `Verification command unavailable (exit ${unavailable.exitCode}): ${unavailable.argv[0]}; inspect ${unavailable.artifact} and repair the verification environment before operator recovery. Candidate and repair budget preserved.`
