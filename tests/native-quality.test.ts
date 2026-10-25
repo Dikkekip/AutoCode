@@ -84,7 +84,7 @@ class Gateway implements NativeGateway {
   }
 }
 const fixtureSkill = "# Prompt Engineering Expert\nCreate concrete prompts with acceptance criteria and non-goals."
-function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandidateReview = false) {
+function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandidateReview = false, reviewPlan = false) {
   const root = mkdtempSync(join(tmpdir(), "native-quality-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
   const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim()
@@ -109,7 +109,7 @@ function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandid
     plannerAgentId: "planner",
     coderAgentId: "coder",
     reviewerAgentId: "reviewer",
-    quality: { skillPath, ...(highRiskPaths ? { highRiskPaths } : {}) },
+    quality: { skillPath, ...(highRiskPaths ? { highRiskPaths } : {}), ...(reviewPlan ? { planReview: "all" } : {}) },
     discoveryDailyRoundLimit: 24,
     personas: ["ux", "backend", "legal"].map((id) => ({
       personaId: id,
@@ -120,7 +120,15 @@ function setup(skill = fixtureSkill, highRiskPaths?: string[], independentCandid
       weight: 1,
       ideationPrompt: "Inspect missing source links"
     })),
-    verification: [{ argv: [process.execPath, "-e", "process.exit(0)"], cwd: ".", timeoutSeconds: 10 }],
+    verification: [
+      {
+        argv: [process.execPath, "-e", "process.exit(0)"],
+        cwd: ".",
+        timeoutSeconds: 10,
+        ...(reviewPlan ? { paths: ["src"] } : {})
+      },
+      ...(reviewPlan ? [{ argv: [process.execPath, "-e", "process.exit(1)"], cwd: ".", paths: ["docs"] }] : [])
+    ],
     ...(independentCandidateReview
       ? { verificationAuthority: { reviewedRevision: git("rev-parse", "HEAD"), independentCandidateReview: true } }
       : {}),
@@ -1812,4 +1820,50 @@ it("requires independent plan review before routine implementation when configur
   const w = { proposal: { quality: { risk: "routine" } } } as any
   expect(s.runtime.quality.requiresDesign(w)).toBe(true)
   expect(s.runtime.quality.designApproved(w)).toBe(false)
+})
+
+it("delivers standing path-selected checks before coding without claiming candidate verification", async () => {
+  const s = setup(fixtureSkill, undefined, false, true)
+  const c = await prepare(s)
+  s.gateway.cards.forEach((card) => {
+    card.status = "done"
+  })
+  const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Review the implementation plan")
+  await s.runtime.reconcile()
+  const workflow = s.runtime.requireWorkflow(workflowId)
+  expect(workflow.candidate).toBeUndefined()
+  expect(workflow.verification).toBeUndefined()
+  const implementation = s.gateway.cards.find((card) => card.id === workflow.implementationCardId)
+  expect(implementation.status).toBe("blocked")
+  const design = s.gateway.cards.find((card) => card.id === workflow.designCardId)
+  const pointer = JSON.parse(design.notes)
+  const notes = pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+  expect(notes.plannedVerification).toMatchObject({
+    scopeSource: "admitted-proposal",
+    plannedOnly: true,
+    executionEvidence: "pending-independent-verification",
+    uncoveredPaths: [],
+    coverage: [
+      { path: "src/view.ts", ruleIds: [nativeVerificationRuleId(s.policy.verification[0]!)], exemptionIds: [] }
+    ],
+    commands: [{ argv: s.policy.verification[0]!.argv, definition: { complete: false } }]
+  })
+  expect(notes.plannedVerification.commands).toHaveLength(1)
+  expect(notes.plannedVerification).not.toHaveProperty("headSha")
+  expect(notes.reviewContract.subsequentGates).toEqual(["commit-bound verification", "independent acceptance review"])
+  design.status = "running"
+  design.sessionKey = "plan-review-session"
+  await s.runtime.quality.designReview(
+    "reviewer",
+    design.sessionKey,
+    workflowId,
+    "approved",
+    "Standing checks cover the plan",
+    assessment
+  )
+  design.status = "done"
+  await s.runtime.reconcile()
+  expect(implementation.status).toBe("ready")
+  expect(s.runtime.requireWorkflow(workflowId).verification).toBeUndefined()
+  expect(s.runtime.requireWorkflow(workflowId).review).toBeUndefined()
 })

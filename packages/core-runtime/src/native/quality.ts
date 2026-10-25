@@ -185,7 +185,10 @@ export class NativeQualityRuntime {
       reason: "Classified committed diff is unavailable; additional repository evidence is required before approval."
     }))
     w.designEvidenceComplete = committedDiff?.complete ?? true
-    const verificationPlan = w.candidate ? planNativeVerification(this.policy, w.candidate.files) : null
+    // Before coding, select standing checks from the admitted scope. Candidate
+    // verification later replaces this plan with the exact committed file set.
+    const verificationFiles = w.candidate?.files ?? w.proposal.allowedPaths
+    const verificationPlan = planNativeVerification(this.policy, verificationFiles)
     const card = await this.runtime.createCard({
       boardId: this.policy.boardId,
       title: `Design review: ${w.proposal.title}`,
@@ -201,14 +204,12 @@ export class NativeQualityRuntime {
         riskAssessment: w.riskAssessment,
         committedDiff,
         implementationNotes: w.implementationNotes ?? null,
-        plannedVerification: verificationPlan
-          ? {
-              ...verificationPlan,
-              headSha: w.candidate!.headSha,
-              commands: await nativeVerificationCommandContext(this.policy, w.candidate!.files),
-              executionEvidence: "pending-independent-verification"
-            }
-          : null,
+        plannedVerification: {
+          ...verificationPlan,
+          ...(w.candidate ? { headSha: w.candidate.headSha } : { scopeSource: "admitted-proposal", plannedOnly: true }),
+          commands: await nativeVerificationCommandContext(this.policy, verificationFiles),
+          executionEvidence: "pending-independent-verification"
+        },
         reviewContract: {
           stage: "design",
           criterionMeaning: "The design and planned verification adequately address this acceptance criterion.",
