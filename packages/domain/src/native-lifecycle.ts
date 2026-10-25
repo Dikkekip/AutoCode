@@ -155,6 +155,19 @@ export function recoverNativeLifecycle(previous: NativeLifecycle, evidence: Nati
   )
     throw new Error("Recovery requires an attributed exact-attempt plan")
   if (["completed", "cancelled"].includes(previous.state)) throw new Error("Terminal workflows cannot be recovered")
+  if (recovery.action === "resume-review") {
+    if (
+      previous.state !== "blocked" ||
+      evidence.blocker ||
+      evidence.review ||
+      evidence.mergedSha ||
+      evidence.deployedSha
+    )
+      throw new Error("Review recovery requires a blocked pre-review attempt")
+    const next = { ...previous, state: "review" as const }
+    validateNativeLifecycle(next, evidence)
+    return next
+  }
   if (recovery.action === "retry") {
     if (
       previous.state !== "blocked" ||

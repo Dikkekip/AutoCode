@@ -21,6 +21,7 @@ import { type NativeCard, nativeCardById, nativeCards } from "./gateway.js"
 import { type NativeMemoryConfig, verifiedNativeLessons } from "./memory.js"
 import { nativeOutcomeReport } from "./outcomes.js"
 import { assertNativeMode } from "./promotion-mode.js"
+import { nativeContentDigest } from "./provenance.js"
 import type { NativeOperatorRequest } from "./requests.js"
 import { nativeResearchFailureEvidence, nativeResearchFailureIdentity } from "./research-failure-evidence.js"
 import type { NativeAutonomyRuntime, NativeWorkflow } from "./runtime.js"
@@ -144,6 +145,7 @@ export class NativeQualityRuntime {
       baseSha,
       headSha,
       changesDigest,
+      diffDigest: nativeContentDigest(raw),
       patchSha256: hash(patch),
       content,
       truncated,

@@ -1103,7 +1103,8 @@ describe("verification refresh after a policy change", () => {
     vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
       baseSha: s.workflow.candidate!.baseSha,
       headSha: s.workflow.candidate!.headSha,
-      changesDigest: s.workflow.verification!.provenance!.diffDigest,
+      changesDigest: nativeContentDigest(JSON.stringify("classified fixture")),
+      diffDigest: s.workflow.verification!.provenance!.diffDigest,
       patchSha256: nativeContentDigest("fixture"),
       content: "fixture",
       complete: true,

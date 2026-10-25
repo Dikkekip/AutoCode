@@ -316,7 +316,23 @@ function fixtureVerification(
     repositoryId: nativeRepositoryIdentity(s.policy),
     baseSha: candidate.baseSha,
     headSha: candidate.headSha,
-    diffDigest: workflow.riskAssessment!.changesDigest,
+    diffDigest: nativeContentDigest(
+      execFileSync(
+        "git",
+        [
+          "diff",
+          "--raw",
+          "--no-abbrev",
+          "--no-renames",
+          "--no-ext-diff",
+          "--no-textconv",
+          "-z",
+          candidate.baseSha,
+          candidate.headSha
+        ],
+        { cwd: s.root }
+      )
+    ),
     policyDigest: nativePolicyDigest(s.policy),
     policySnapshot: s.policy,
     checkIds: plan.ruleIds,
@@ -431,6 +447,50 @@ describe("native quality investigations", () => {
     const candidate = workflow.candidate!
     workflow.verification = fixtureVerification(s, workflow, workflowId, worktree)
     s.store.put("workflow", workflowId, workflow)
+    workflow.blocker = "Error: Final review requires complete committed source evidence"
+    s.runtime.transitionWorkflow(workflowId, workflow, "blocked")
+    for (const card of s.gateway.cards) card.status = "done"
+    s.runtime.control.change(true)
+    const retained = structuredClone(workflow)
+    for (const corrupt of [
+      (w: NativeWorkflow) => {
+        w.blocker = "Unrelated failure"
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.checks[0]!.exitCode = 1
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.checks = []
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.provenance!.diffDigest = "0".repeat(64)
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.provenanceArtifact!.sha256 = "0".repeat(64)
+      }
+    ]) {
+      const invalid = s.runtime.requireWorkflow(workflowId)
+      Object.assign(invalid, structuredClone(retained))
+      corrupt(invalid)
+      s.store.put("workflow", workflowId, invalid)
+      const refused = await s.runtime.planWorkflowRecovery(workflowId, "resume-review", "Resume exact verified commit")
+      expect(refused.allowed).toBe(false)
+      await expect(s.runtime.applyWorkflowRecovery(refused, "operator")).rejects.toThrow()
+    }
+    workflow = s.runtime.requireWorkflow(workflowId)
+    Object.assign(workflow, structuredClone(retained))
+    s.store.put("workflow", workflowId, workflow)
+    const plan = await s.runtime.planWorkflowRecovery(workflowId, "resume-review", "Resume exact verified commit")
+    expect(plan.allowed).toBe(true)
+    await s.runtime.applyWorkflowRecovery(plan, "operator")
+    await expect(s.runtime.applyWorkflowRecovery(plan, "operator")).resolves.toMatchObject({ applied: true })
+    workflow = s.runtime.requireWorkflow(workflowId)
+    expect(workflow.blocker).toBeUndefined()
+    expect(workflow.lifecycle).toMatchObject({ ...retained.lifecycle, state: "review" })
+    expect(workflow.candidate).toEqual(retained.candidate)
+    expect(workflow.verification).toEqual(retained.verification)
+    expect(s.store.list("attempt-history")).toHaveLength(1)
+    s.runtime.control.change(false)
     const reviewId = await s.runtime.stage(
       workflowId,
       workflow,
@@ -464,6 +524,8 @@ describe("native quality investigations", () => {
       truncated: false,
       redacted: false
     })
+    expect(notes.committedDiff.diffDigest).toBe(workflow.verification.provenance!.diffDigest)
+    expect(notes.committedDiff.changesDigest).not.toBe(notes.committedDiff.diffDigest)
     expect(notes.committedDiff.content).toContain("+export const navigation = true")
     expect(notes.verification.verificationDigest).toBe(nativeVerificationDigest(workflow.verification))
     expect(notes.proposal.acceptance).toEqual(workflow.proposal.acceptance)

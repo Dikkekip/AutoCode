@@ -501,6 +501,25 @@ export class NativeAutonomyRuntime {
     assertNativeHeldCardAbsence(this.store, allCards)
     const cards = allCards.filter((card) => owned.has(card.id))
     const successor = successorId ? this.store.get<NativeWorkflow>("workflow", successorId) : null
+    let reviewResumable = false
+    if (
+      action === "resume-review" &&
+      workflow.blocker === "Error: Final review requires complete committed source evidence" &&
+      lifecycle.state === "blocked" &&
+      !workflow.reviewCardId &&
+      !workflow.stageCards.Review &&
+      !workflow.review &&
+      !workflow.prNumber &&
+      !workflow.mergedSha &&
+      !workflow.deployedSha
+    ) {
+      try {
+        await this.assertCommittedReviewEvidence(workflowId, workflow)
+        reviewResumable = true
+      } catch {
+        // An exact successful receipt and current complete source are mandatory.
+      }
+    }
     return planNativeRecovery(
       {
         boardId: this.policy.boardId,
@@ -509,6 +528,7 @@ export class NativeAutonomyRuntime {
         workflowDigest: nativeRecoveryDigest(workflow),
         policyDigest: nativeRecoveryDigest(this.policy),
         lifecycle,
+        ...(action === "resume-review" ? { reviewResumable } : {}),
         control: this.control.state,
         cards: cards
           .map((card) => ({
@@ -811,7 +831,10 @@ export class NativeAutonomyRuntime {
             intentReconciliation?.assertConfirmed(card)
             workflow.implementationCardId = card.id
             workflow.stageCards = {}
-          } else workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
+          } else {
+            if (plan.action === "resume-review") delete workflow.blocker
+            workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
+          }
         }
         const latest = await this.planWorkflowRecovery(
           workflowId,
@@ -1674,41 +1697,45 @@ export class NativeAutonomyRuntime {
       }
     })
   }
+  private async assertCommittedReviewEvidence(id: string, workflow: NativeWorkflow) {
+    if (
+      !workflow.candidate ||
+      !workflow.verification ||
+      !workflow.lifecycle ||
+      workflow.verification.checks.length !==
+        nativeVerificationCommands(this.policy, workflow.candidate.files).length ||
+      workflow.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
+    )
+      throw new Error("Final review requires a verified committed candidate")
+    assertNativeVerificationEvidence(
+      this.policy,
+      workflow.candidate,
+      workflow.verification,
+      workflow.proposal.acceptance,
+      this.quality.designApproved(workflow)
+        ? { headSha: workflow.candidate.headSha, reviewedBy: this.policy.reviewerAgentId }
+        : undefined
+    )
+    assertNativeProvenance(this.policy, workflow.verification, {
+      workflowId: id,
+      attemptId: workflow.lifecycle.attemptId,
+      skillDigest: workflow.proposal.quality?.skillHash ?? nativeContentDigest(workflow.proposal.implementationPrompt)
+    })
+    const committedDiff = await this.quality.committedReviewEvidence(workflow)
+    if (
+      !committedDiff?.complete ||
+      committedDiff.headSha !== workflow.verification.headSha ||
+      committedDiff.baseSha !== workflow.verification.baseSha ||
+      committedDiff.diffDigest !== workflow.verification.provenance!.diffDigest ||
+      workflow.candidate.headSha !== committedDiff.headSha ||
+      workflow.candidate.baseSha !== committedDiff.baseSha
+    )
+      throw new Error("Final review requires complete committed source evidence")
+    return committedDiff
+  }
   async stage(id: string, workflow: NativeWorkflow, stage: string, status: string, notes: string): Promise<string> {
     if (stage === "Review") {
-      if (
-        !workflow.candidate ||
-        !workflow.verification ||
-        !workflow.lifecycle ||
-        workflow.verification.checks.length !==
-          nativeVerificationCommands(this.policy, workflow.candidate.files).length ||
-        workflow.verification.checks.some((check) => check.outcome !== "success" || check.exitCode !== 0)
-      )
-        throw new Error("Final review requires a verified committed candidate")
-      assertNativeVerificationEvidence(
-        this.policy,
-        workflow.candidate,
-        workflow.verification,
-        workflow.proposal.acceptance,
-        this.quality.designApproved(workflow)
-          ? { headSha: workflow.candidate.headSha, reviewedBy: this.policy.reviewerAgentId }
-          : undefined
-      )
-      assertNativeProvenance(this.policy, workflow.verification, {
-        workflowId: id,
-        attemptId: workflow.lifecycle.attemptId,
-        skillDigest: workflow.proposal.quality?.skillHash ?? nativeContentDigest(workflow.proposal.implementationPrompt)
-      })
-      const committedDiff = await this.quality.committedReviewEvidence(workflow)
-      if (
-        !committedDiff?.complete ||
-        committedDiff.headSha !== workflow.verification.headSha ||
-        committedDiff.baseSha !== workflow.verification.baseSha ||
-        committedDiff.changesDigest !== workflow.verification.provenance!.diffDigest ||
-        workflow.candidate.headSha !== committedDiff.headSha ||
-        workflow.candidate.baseSha !== committedDiff.baseSha
-      )
-        throw new Error("Final review requires complete committed source evidence")
+      const committedDiff = await this.assertCommittedReviewEvidence(id, workflow)
       const context = nativeObject(JSON.parse(notes), "Final review context")
       notes = JSON.stringify({
         ...context,
