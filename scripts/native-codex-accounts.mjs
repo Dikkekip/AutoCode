@@ -125,6 +125,37 @@ export function mergeAccounts(store, accounts, order) {
   return changed
 }
 
+// OpenClaw owns OAuth refresh. Expired CLI copies must not displace newer
+// native credentials or make a healthy native pool look unavailable.
+export function inspectNativePool({ agentIds, entries, stateDir, config, sdk, now = Date.now() }) {
+  const profiles = new Set()
+  for (const agentId of agentIds) {
+    const agentDir = entries[agentId]?.agentDir ?? join(stateDir, "agents", agentId, "agent")
+    const store = sdk.ensureAuthProfileStore(agentDir, {
+      readOnly: true,
+      syncExternalCli: false,
+      externalCli: { mode: "none" },
+      config
+    })
+    const order = sdk.resolveAuthProfileOrder({ cfg: config, store, provider: "openai" })
+    const usable = order.filter((id) => {
+      const credential = store.profiles[id]
+      return (
+        id.startsWith(prefix) &&
+        credential?.provider === "openai" &&
+        credential.type === "oauth" &&
+        typeof credential.access === "string" &&
+        credential.access.length > 0 &&
+        credential.expires > now + 5 * 60_000
+      )
+    })
+    if (!usable.length) throw new Error("No usable native Codex account for a configured agent")
+    for (const id of usable) profiles.add(id)
+  }
+  if (!agentIds.length) throw new Error("No configured OpenAI agents")
+  return { agents: agentIds.length, profiles: profiles.size }
+}
+
 export async function synchronize({
   accounts,
   orders,
@@ -132,11 +163,33 @@ export async function synchronize({
   entries,
   sdk,
   onChange = () => {},
+  authorizedProfileIds = accounts.map((account) => account.profileId),
+  now = Date.now(),
   retryDelay = () => new Promise((resolve) => setTimeout(resolve, 2000))
 }) {
   let changed = false
+  const nativeFallbacks = new Set()
+  const preserveNativeFallbacks = (store) => {
+    for (const id of authorizedProfileIds) {
+      const credential = store.profiles[id]
+      const identity = payload(credential?.access ?? "")[claimsKey] ?? {}
+      const key = id.startsWith(prefix) ? Buffer.from(id.slice(prefix.length), "base64url").toString() : ""
+      if (
+        credential?.type === "oauth" &&
+        credential.provider === "openai" &&
+        credential.expires > now + 5 * 60_000 &&
+        identity.chatgpt_user_id &&
+        identity.chatgpt_account_id &&
+        key === `${identity.chatgpt_user_id}::${identity.chatgpt_account_id}` &&
+        credential.accountId === identity.chatgpt_account_id
+      )
+        nativeFallbacks.add(id)
+    }
+  }
   const update = (store, credentials, order) => {
-    const updated = mergeAccounts(store, credentials, order)
+    preserveNativeFallbacks(store)
+    const effectiveOrder = [...new Set([...order, ...nativeFallbacks])]
+    const updated = mergeAccounts(store, credentials, effectiveOrder)
     if (updated) {
       // Record reload debt before the SDK commits, including partial failures.
       onChange()
@@ -167,7 +220,11 @@ export async function synchronize({
     const updated = await updateWithRetry({
       agentDir,
       stateDir,
-      saveOptions: { filterExternalAuthProfiles: false, syncExternalCli: false, preserveOrderProfileIds: order },
+      saveOptions: {
+        filterExternalAuthProfiles: false,
+        syncExternalCli: false,
+        preserveOrderProfileIds: [...new Set([...order, ...nativeFallbacks])]
+      },
       updater: (store) => update(store, [], order)
     })
     if (!updated) throw new Error(`Unable to update Codex account order for ${agentId}`)
@@ -200,6 +257,18 @@ async function main() {
     return (typeof model === "string" ? model : model?.primary)?.startsWith("openai/")
   })
   if (!agentIds.length) throw new Error("No configured OpenAI agents")
+  if (!accounts.length) {
+    const binary = process.env.OPENCLAW_COMMAND ?? execFileSync("which", ["openclaw"], { encoding: "utf8" }).trim()
+    const root = process.env.OPENCLAW_PACKAGE_ROOT ?? dirname(realpathSync(binary))
+    const sdk = await import(pathToFileURL(join(root, "dist/plugin-sdk/provider-auth.js")).href)
+    const nativePool = inspectNativePool({ agentIds, entries, stateDir, config, sdk })
+    if (existsSync(join(stateDir, "codex-account-pool.reload-pending")))
+      throw new Error("Native account reload is still pending")
+    console.log(
+      JSON.stringify({ applied: false, reloaded: false, skipped: "native-pool-current-cli-expired", nativePool })
+    )
+    return
+  }
   const orders = planOrders(accounts, agentIds)
   let reloaded = false
   if (args.includes("--apply")) {
@@ -210,6 +279,9 @@ async function main() {
     await synchronize({
       accounts,
       orders,
+      authorizedProfileIds: JSON.parse(readFileSync(join(accountsDir, "registry.json"), "utf8"))
+        .accounts.filter((account) => account.auth_mode === "chatgpt")
+        .map((account) => `${prefix}${Buffer.from(account.account_key).toString("base64url")}`),
       stateDir,
       entries,
       sdk,

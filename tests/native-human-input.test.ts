@@ -22,6 +22,7 @@ function setup() {
     store,
     policy: { boardId: "board", repository: root, plannerAgentId: "planner", quality: { highRiskPaths: [] } },
     withOwnership: async (fn: any) => fn(),
+    isPaused: () => false,
     createCard: async (input: any) => {
       let card = cards.find((c) => c.idempotencyKey === input.idempotencyKey)
       if (!card) {
@@ -182,4 +183,37 @@ it("keeps decisions usable while outbound delivery is disabled", async () => {
   await deliverNativeIdeas(s.runtime, send)
   expect(send).not.toHaveBeenCalled()
   expect((await handleNativeIdeaCommand([s.runtime], context, false, invoke)).text).toContain(idea.id)
+})
+
+it("shows recent routine ideas when no approval is pending, without offering approval", async () => {
+  const s = setup()
+  const idea = s.input.gate("p1", s.proposal, "round").idea
+  const reply = await handleNativeIdeaCommand([s.runtime], context, false, invoke)
+  expect(reply.text).toContain("No ideas currently await your approval")
+  expect(reply.text).toContain(`${idea.id}: ${idea.title} (routine)`)
+  const detail = await handleNativeIdeaCommand([s.runtime], { ...context, args: idea.id }, true, invoke)
+  expect(detail.text).toContain("No product approval required")
+  expect(detail.text).not.toContain("/idea approve")
+  expect(s.input.list()[0]?.state).toBe("routine")
+})
+
+it("uses bare /idea to browse and reports a paused board truthfully", async () => {
+  const s = setup()
+  s.runtime.isPaused = () => true
+  const reply = await handleNativeIdeaCommand([s.runtime], { ...context, args: " " }, true, invoke)
+  expect(reply.text).toContain("No ideas currently await your approval")
+  expect(reply.text).toContain("AutoCode is paused")
+  expect(reply.text).not.toContain("work continues automatically")
+})
+
+it("inspects a pending idea without deciding it and reports stale identifiers", async () => {
+  const s = setup()
+  s.proposal.quality.risk = "high"
+  s.store.put("proposal", "p1", { proposal: s.proposal, roundId: "round" })
+  const idea = s.input.gate("p1", s.proposal, "round").idea
+  const detail = await handleNativeIdeaCommand([s.runtime], { ...context, args: idea.id }, true, invoke)
+  expect(detail.text).toContain(`/idea approve ${idea.id}`)
+  expect(s.input.list()[0]?.state).toBe("pending")
+  const stale = await handleNativeIdeaCommand([s.runtime], { ...context, args: "0000000000000000" }, true, invoke)
+  expect(stale.text).toContain("Unknown or stale idea")
 })

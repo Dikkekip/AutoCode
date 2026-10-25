@@ -41,6 +41,13 @@ normal evidence, scope, deduplication and budget checks run again. Existing
 technical rejections and review findings are not overridden. Changing a proposal,
 policy or decision configuration invalidates its old approval.
 
+Bare `/idea` also browses the list, and `/idea ID` shows the details without
+deciding anything. When there are no pending decisions, the list shows recent
+current routine or decided ideas instead of implying that no ideas exist.
+Routine ideas do not offer approval commands. `/idear` and `/idears` are aliases
+for `/idea` and `/ideas`. Replies report a paused board without claiming that
+automatic work is continuing.
+
 Only two unsent pending briefs are attempted each minute. Unknown delivery
 outcomes are retained without automatic re-sending; `/ideas` remains available.
 There is no repeated reminder loop. Decisions and delivery state live in the

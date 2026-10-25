@@ -9,9 +9,12 @@ import {
   type Agent,
   type BudgetStatus,
   readCodexQuotaOverview,
-  type TaskStatus
+  type TaskStatus,
+  validateNativeAutonomyPolicy
 } from "@openclaw/domain"
 import type { ProjectProfile } from "@openclaw/project-profiles"
+import { NativeCliGateway, type NativeGateway } from "./native/gateway.js"
+import { collectNativeOperationalDigestSummary } from "./native/operational-digest.js"
 
 type DigestKind = "daily" | "incident"
 
@@ -26,7 +29,7 @@ type FailureReasonSummary = {
   count: number
 }
 
-type QueueStatusSummary = Partial<Record<TaskStatus, number>>
+type QueueStatusSummary = Partial<Record<string, number>>
 
 type UsageSummary = {
   adapterType: AdapterType | "unknown"
@@ -49,6 +52,9 @@ type PressureSignal = {
 }
 
 export interface OperationalDigestSummary {
+  runtimeAuthority?: "native" | "legacy"
+  controlPaused?: boolean
+  workerCompletions?: number
   projectId: string
   projectName: string
   repoPath: string
@@ -102,6 +108,7 @@ type SendDigestInput = {
   windowHours?: number
   fetchImpl?: TelegramTransport
   openClawExecImpl?: OpenClawMessageTransport
+  nativeGateway?: NativeGateway
 }
 
 type IncidentFormatterOptions = {
@@ -165,10 +172,16 @@ function formatReasonList(reasons: FailureReasonSummary[]): string {
 }
 
 function formatQueueStatus(counts: QueueStatusSummary): string {
-  const parts = ACTIVE_QUEUE_STATUSES.map((status) => {
-    const count = counts[status] ?? 0
-    return count > 0 ? `${status} ${count}` : null
-  }).filter((value): value is string => Boolean(value))
+  const statuses = [
+    ...ACTIVE_QUEUE_STATUSES,
+    ...Object.keys(counts).filter((status) => !ACTIVE_QUEUE_STATUSES.includes(status as TaskStatus))
+  ]
+  const parts = statuses
+    .map((status) => {
+      const count = counts[status] ?? 0
+      return count > 0 ? `${status} ${count}` : null
+    })
+    .filter((value): value is string => Boolean(value))
   return parts.length > 0 ? parts.join(", ") : "idle"
 }
 
@@ -539,11 +552,17 @@ export function formatDailyTelegramDigest(summary: OperationalDigestSummary): st
   const day = summary.generatedAt.slice(0, 10)
   const lines = [
     `OpenClaw daily digest | ${summary.projectName} | ${day}`,
-    `- Done ${summary.tasksCompleted}: ${formatTaskList(summary.recentCompletedTasks, summary.tasksCompleted)}`,
+    ...(summary.runtimeAuthority === "native"
+      ? [
+          `- Runtime: native Workboard (${summary.controlPaused ? "paused" : "enabled"})`,
+          `- Deployed workflows ${summary.tasksCompleted}: ${formatTaskList(summary.recentCompletedTasks, summary.tasksCompleted)}`,
+          `- Worker completions: ${summary.workerCompletions ?? 0}`
+        ]
+      : [`- Done ${summary.tasksCompleted}: ${formatTaskList(summary.recentCompletedTasks, summary.tasksCompleted)}`]),
     `- Failed ${summary.tasksFailed}: ${formatTaskList(summary.recentFailedTasks, summary.tasksFailed)}`,
     `- Failure reasons: ${formatReasonList(summary.topFailureReasons)}`,
     `- Queue: ${formatQueueStatus(summary.activeQueuesByStatus)}`,
-    `- Usage: ${formatUsageRows(summary.modelUsage)}`,
+    `- Usage: ${summary.runtimeAuthority === "native" && !summary.modelUsage.length ? "not measured by Workboard; account quotas managed by OpenClaw" : formatUsageRows(summary.modelUsage)}`,
     `- Pressure: ${formatPressureSignals(summary.pressureSignals)}`,
     `- Recoveries: ${formatRecoveries(summary.notableRecoveries)}`
   ]
@@ -647,9 +666,24 @@ async function sendTelegramMessage(input: {
 }
 
 export async function sendTelegramDigest(input: SendDigestInput): Promise<TelegramDeliveryResult> {
-  const summary = collectOperationalDigestSummary(input.store, input.projectRef, {
-    windowHours: input.windowHours ?? (input.kind === "incident" ? 6 : 24)
-  })
+  const project = input.store.resolveProject(input.projectRef)
+  const policyPath = join(project.repoPath, ".openclaw", "native.json")
+  const native = existsSync(policyPath)
+  // A native probe failure must stay visible; never substitute the retired queue.
+  const policy = native ? validateNativeAutonomyPolicy(JSON.parse(readFileSync(policyPath, "utf8"))) : undefined
+  const summary = policy
+    ? await collectNativeOperationalDigestSummary(
+        input.nativeGateway ?? new NativeCliGateway(process.env.OPENCLAW_COMMAND ?? "openclaw"),
+        {
+          boardId: policy.boardId,
+          repository: project.repoPath,
+          projectName: project.name,
+          windowHours: input.windowHours ?? (input.kind === "incident" ? 6 : 24)
+        }
+      )
+    : collectOperationalDigestSummary(input.store, input.projectRef, {
+        windowHours: input.windowHours ?? (input.kind === "incident" ? 6 : 24)
+      })
   const message = input.kind === "incident" ? formatIncidentTelegramDigest(summary) : formatDailyTelegramDigest(summary)
   const notification = resolveNotificationConfig(summary.repoPath, input.profile, input.kind)
 

@@ -27,7 +27,7 @@ import {
   registerNativeSkillEvaluation
 } from "./skills.js"
 import { NativeEvidenceStore } from "./store.js"
-import { deliverNativeIdeas, handleNativeIdeaCommand, sendNativeIdea } from "./telegram-ideas.js"
+import { deliverNativeIdeas, handleNativeIdeaCommand, nativeIdeaCommands, sendNativeIdea } from "./telegram-ideas.js"
 import { NativeWorkspaceGateway } from "./workspaces.js"
 
 // Tool catalogs can register the plugin again without starting another service.
@@ -186,17 +186,16 @@ export function registerNativeAutonomyPlugin(api: any): void {
   if ((api.pluginConfig?.humanInput ?? []).length) {
     if (typeof api.registerCommand !== "function")
       throw new Error("Telegram idea commands require the public command API")
-    for (const name of ["ideas", "idea"])
+    for (const { name, decide } of nativeIdeaCommands)
       api.registerCommand({
         name,
-        description:
-          name === "ideas"
-            ? "Show short decisions for high-impact coding ideas"
-            : "Approve or skip an exact coding idea",
+        description: decide
+          ? "Browse, inspect, approve or skip a coding idea"
+          : "Show pending decisions and recent coding ideas",
         channels: ["telegram"],
         acceptsArgs: true,
         requireAuth: true,
-        handler: (ctx: any) => handleNativeIdeaCommand([...instances.values()], ctx, name === "idea", invoke)
+        handler: (ctx: any) => handleNativeIdeaCommand([...instances.values()], ctx, decide, invoke)
       })
   }
   registerMethod(
@@ -591,7 +590,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     async ({ params, respond }: any) => {
       try {
         const r = runtime(params.boardId)
-        const control = r.control.change(true)
+        const control = r.control.change(true, params.expectedRevision)
         respond(true, { ...control, note: "No new dispatch or promotion; accepted native runs remain visible." })
       } catch (error) {
         respond(false, undefined, { code: "autocode_error", message: String(error) })
@@ -606,6 +605,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
         const r = runtime(params.boardId)
         if (!r.policy.enabled) throw new Error("Policy is disabled; enable the reviewed native policy before resuming")
         const revision = r.control.state.revision
+        if (params.expectedRevision !== undefined && params.expectedRevision !== revision)
+          throw new Error("Control changed since maintenance pause; preserving operator decision")
         assertNativeSkillBinding(r)
         const readiness = await nativeDoctor(r.policy, gateway)
         if (!readiness.ok) throw new Error(`Resume blocked: ${JSON.stringify(readiness.checks.filter((c) => !c.ok))}`)

@@ -5,10 +5,44 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { mergeAccounts, planOrders, readAccounts, synchronize } from "./native-codex-accounts.mjs"
+import { inspectNativePool, mergeAccounts, planOrders, readAccounts, synchronize } from "./native-codex-accounts.mjs"
 
 const now = 1_800_000_000_000
 const token = (claims) => `x.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.x`
+
+test("expired CLI copies preserve a current native pool using read-only stores and native eligibility", () => {
+  const id = "openai:codex-auth:fixture"
+  const store = {
+    profiles: { [id]: { provider: "openai", type: "oauth", access: "private", expires: now + 3600_000 } }
+  }
+  const before = JSON.stringify(store)
+  const input = {
+    agentIds: ["coder", "reviewer"],
+    entries: { reviewer: { agentDir: "/custom/reviewer" } },
+    stateDir: "/fixture",
+    config: {},
+    now,
+    sdk: {
+      ensureAuthProfileStore(dir, options) {
+        assert.ok(["/fixture/agents/coder/agent", "/custom/reviewer"].includes(dir))
+        assert.equal(options.readOnly, true)
+        assert.equal(options.syncExternalCli, false)
+        assert.deepEqual(options.externalCli, { mode: "none" })
+        return store
+      },
+      resolveAuthProfileOrder() {
+        return [id]
+      }
+    }
+  }
+  assert.deepEqual(inspectNativePool(input), { agents: 2, profiles: 1 })
+  assert.equal(JSON.stringify(store), before)
+  store.profiles[id].expires = now + 240_000
+  assert.throws(() => inspectNativePool(input), /No usable native/)
+  store.profiles[id].expires = now + 3600_000
+  input.sdk.resolveAuthProfileOrder = () => []
+  assert.throws(() => inspectNativePool(input), /No usable native/)
+})
 function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), "codex-pool-"))
   t.after(() => rmSync(dir, { recursive: true, force: true }))
@@ -52,6 +86,62 @@ test("imports all three identities including two users in one Business workspace
   const orders = planOrders(accounts, ["coder", "coder-2", "coder-3"])
   assert.equal(new Set(orders.map((o) => o.order[0])).size, 3)
   assert.ok(orders.every((o) => o.order.length === 3))
+})
+
+test("CLI succeeds without writes or reload when only native refreshed credentials remain", (t) => {
+  const { dir, accounts } = fixture(t)
+  for (const account of accounts) {
+    const path = join(dir, `${Buffer.from(account.account_key).toString("base64url")}.auth.json`)
+    const auth = JSON.parse(readFileSync(path, "utf8"))
+    auth.tokens.access_token = token({
+      exp: 1,
+      "https://api.openai.com/auth": {
+        chatgpt_user_id: account.chatgpt_user_id,
+        chatgpt_account_id: account.chatgpt_account_id
+      }
+    })
+    writeFileSync(path, JSON.stringify(auth))
+  }
+  const sdkDir = join(dir, "dist", "plugin-sdk")
+  mkdirSync(sdkDir, { recursive: true })
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "module" }))
+  writeFileSync(
+    join(sdkDir, "provider-auth.js"),
+    `export function ensureAuthProfileStore(dir, options) {
+       if (!options.readOnly || options.syncExternalCli !== false) throw new Error('write attempted');
+       return { profiles: { 'openai:codex-auth:fixture': {
+         type: 'oauth', provider: 'openai', access: 'never-print-this', expires: Date.now() + 3600000
+       } } };
+     }
+     export function resolveAuthProfileOrder() { return ['openai:codex-auth:fixture']; }
+     export function updateAuthProfileStoreWithLock() { throw new Error('write attempted'); }`
+  )
+  writeFileSync(
+    join(dir, "openclaw.json"),
+    JSON.stringify({ agents: { entries: { coder: { model: "openai/example" } } } })
+  )
+  const output = execFileSync(
+    process.execPath,
+    [fileURLToPath(new URL("./native-codex-accounts.mjs", import.meta.url)), "--apply", "--reload"],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        OPENCLAW_STATE_DIR: dir,
+        OPENCLAW_CONFIG_PATH: join(dir, "openclaw.json"),
+        OPENCLAW_CODEX_ACCOUNTS_DIR: dir,
+        OPENCLAW_PACKAGE_ROOT: dir,
+        OPENCLAW_COMMAND: "/not-invoked"
+      }
+    }
+  )
+  assert.deepEqual(JSON.parse(output), {
+    applied: false,
+    reloaded: false,
+    skipped: "native-pool-current-cli-expired",
+    nativePool: { agents: 1, profiles: 1 }
+  })
+  assert.doesNotMatch(output, /never-print-this|fixture-refresh/)
 })
 
 test("deprioritizes exhausted short OR weekly windows, recovers after reset, ignores stale usage", (t) => {

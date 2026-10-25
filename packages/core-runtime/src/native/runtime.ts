@@ -882,7 +882,8 @@ export class NativeAutonomyRuntime {
       workflows: this.store
         .list<NativeWorkflow>("workflow")
         .filter(({ value }) => !value.archivedAt)
-        .map(({ id, value }) => ({
+        .map(({ id, value, updatedAt }) => ({
+          updatedAt,
           lifecycle: value.lifecycle ?? upgradeNativeLifecycle(id, value),
           reservesScope: this.reservesScope(value),
           recovery: value.recovery ?? null,
@@ -902,6 +903,9 @@ export class NativeAutonomyRuntime {
           designApproved: this.quality.designApproved(value),
           blocker: value.blocker ?? null
         })),
+      activeLeases: this.store.db
+        .prepare("SELECT id,expires_at AS expiresAt FROM native_locks WHERE expires_at > ?")
+        .all(Date.now()),
       operations: this.store.list("operation")
     }
   }
