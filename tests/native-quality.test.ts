@@ -1520,7 +1520,7 @@ describe("native quality investigations", () => {
       expect(s.gateway.cards.filter((card) => card.title.startsWith("Design review:"))).toHaveLength(1)
     }
   })
-  it("delivers complete commit-bound design evidence for mapped UI queue identities", async () => {
+  it("delivers complete commit-bound design evidence for UI identities and keyboard attributes", async () => {
     const s = setup(fixtureSkill, undefined, true)
     const c = await prepare(s)
     const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
@@ -1540,6 +1540,8 @@ describe("native quality investigations", () => {
         "  return { queueKey, isSelected }",
         "}",
         "function getTimelineEventKey(event: any) { return event.id }",
+        'export const shortcut = <KeyboardShortcutHint keyLabel="Enter" ariaLabel="Enter" />',
+        'export const inputHint = <input enterKeyHint="done" />',
         ""
       ].join("\n")
     )
@@ -1565,6 +1567,8 @@ describe("native quality investigations", () => {
     })
     expect(notes.committedDiff.content).toContain("+  const queueKey = JSON.stringify(items.map((item) => [")
     expect(notes.committedDiff.content).toContain("+  const isSelected = eventKey === selectedEventId")
+    expect(notes.committedDiff.content).toContain('keyLabel="Enter"')
+    expect(notes.committedDiff.content).toContain('enterKeyHint="done"')
     expect(notes.reviewContract.executionEvidence).toBe("pending-independent-verification")
   })
   it("preserves a candidate and repair budget when committed design evidence is redacted", async () => {

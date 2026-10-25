@@ -30,6 +30,54 @@ describe("member references that resemble command JWTs", () => {
 
 describe("keyboard comparisons in committed diffs", () => {
   it.each([
+    "enter",
+    "done",
+    "go",
+    "next",
+    "previous",
+    "search",
+    "send"
+  ])("preserves the standard enterKeyHint value %s in a diff attribute", (value) => {
+    const source = `+    enterKeyHint="${value}"`
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+  })
+  it.each([
+    "←",
+    "→",
+    "↑",
+    "↓",
+    "PageUp",
+    "PageDown",
+    "Home",
+    "End",
+    "Enter",
+    "O",
+    "A",
+    "R",
+    "[",
+    "]",
+    "Escape",
+    "?",
+    "/"
+  ])("preserves a complete keyboard hint component with label %s", (label) => {
+    const source = `+ <KeyboardShortcutHint keyLabel="${label}" ariaLabel="Keyboard shortcut" />`
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+  })
+  it.each([
+    '+ enterKeyHint="credential123"',
+    '+ <KeyboardShortcutHint keyLabel="credential123" />',
+    '+ <OtherComponent keyLabel="Enter" />',
+    '+ <KeyboardShortcutHint keyLabel="Enter"',
+    '+ // enterKeyHint="done"',
+    "+ const sample = 'enterKeyHint=\"done\"';",
+    '+ <KeyboardShortcutHint keyLabel="Enter" API_KEY="credential123" />'
+  ])("retains credential filtering for unsupported keyboard attributes: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toBe(source)
+    expect(redactNativeSourceText(source)).not.toContain("credential123")
+  })
+  it.each([
     "       if (event.key === 'Escape') {",
     '+ if (event.key === "ArrowRight") focusNext();',
     '- if (e.key == "Enter") submit();'
