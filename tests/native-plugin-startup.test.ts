@@ -18,7 +18,7 @@ afterEach(async () => {
   vi.restoreAllMocks()
   vi.mocked(nativeDoctor).mockReset()
 })
-function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
+function setup(root = mkdtempSync(join(tmpdir(), "native-startup-")), humanInput: any[] = []) {
   const path = join(root, "policy.json")
   writeFileSync(
     path,
@@ -42,9 +42,11 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
   let service: any
   const methods = new Map<string, any>(),
     factories: any[] = [],
-    registrations: any[] = []
+    registrations: any[] = [],
+    commands = new Map<string, any>()
   registerNativeAutonomyPlugin({
-    pluginConfig: { projects: [path], openclawCommand: "/usr/bin/openclaw" },
+    pluginConfig: { projects: [path], openclawCommand: "/usr/bin/openclaw", humanInput },
+    registerCommand: (command: any) => commands.set(command.name, command),
     registerService: (s: any) => {
       service = s
     },
@@ -66,6 +68,7 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
     service,
     factories,
     registrations,
+    commands,
     call: async (name: string) => {
       let response: any
       await methods.get(name)({
@@ -78,6 +81,17 @@ function setup(root = mkdtempSync(join(tmpdir(), "native-startup-"))) {
     }
   }
 }
+it("registers singular and plural spelling aliases with the same private-owner checks", async () => {
+  const s = setup(undefined, [
+    { boardId: "app", telegramTarget: "12345", ownerIds: ["12345"], maxRoutineHours: 8, maxRoutineCostCents: 5000 }
+  ])
+  expect([...s.commands.keys()].sort()).toEqual(["idea", "idear", "idears", "ideas"])
+  for (const command of s.commands.values()) {
+    expect(command.requireAuth).toBe(true)
+    expect(command.channels).toEqual(["telegram"])
+    expect((await command.handler({ channel: "telegram", senderId: "999" })).text).toContain("private Telegram owner")
+  }
+})
 function report(ok: boolean) {
   return {
     ok,
