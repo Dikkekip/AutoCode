@@ -2046,3 +2046,19 @@ it("gives pre-implementation design review standing verification evidence withou
   expect(s.runtime.quality.designApproved(w)).toBe(false)
   expect(s.gateway.cards.find((card) => card.id === w.implementationCardId).status).toBe("blocked")
 })
+
+it("carries long-horizon investigation and selection requirements through created card contexts", async () => {
+  const s = setup()
+  await s.runtime.discover()
+  const notes = s.gateway.cards.map((card) => {
+    const pointer = JSON.parse(card.notes)
+    return pointer.contextId ? JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes) : pointer
+  })
+  const investigation = notes.find((value) => value.persona)
+  const planner = notes.find((value) => !value.persona && value.roundId)
+  expect(investigation.instructions.join("\n")).toContain("ordered milestones, dependencies, durable progress evidence")
+  expect(investigation.instructions.join("\n")).toContain("resume checks against the current revision")
+  expect(investigation.instructions.join("\n")).toContain("Milestones are progress, not separate proof of completion")
+  expect(planner.instructions.join("\n")).toContain("record the concrete dependency or admission reason")
+  expect(planner.instructions.join("\n")).toContain("existing scope, capacity and risk gates")
+})

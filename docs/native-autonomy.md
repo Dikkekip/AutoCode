@@ -579,3 +579,7 @@ under paused operator recovery after approval is installed. It retains the exact
 verified/reviewed attempt. Any existing push journal requires positive remote equality
 for its exact branch and commit; recovery never pushes or infers non-dispatch from an
 absent remote. Unknown PR, merge, or deployment operations remain blocked.
+
+## Work across multiple sessions
+
+Research and planning compare substantial user outcomes alongside short repairs. A long-horizon implementation plan records ordered milestones, dependencies, durable progress evidence, current-revision resume checks and final end-to-end acceptance. A milestone does not count as a completed outcome or release. Planners retain existing scope, resource and risk gates and explain a concrete blocker when deferring useful substantial work. Complexity routing remains evidence-based; neither release quotas nor invented large tasks establish value. These planning instructions do not extend execution budgets or automatically resume interrupted workers.
