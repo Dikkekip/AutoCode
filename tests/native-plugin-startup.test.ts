@@ -445,3 +445,13 @@ it("returns reviewer image content through the session-bound factory without JSO
     store.close()
   }
 })
+
+it("declares every native tool factory name in the plugin manifest contract", () => {
+  const s = setup()
+  const manifest = JSON.parse(
+    readFileSync(new URL("../plugins/autocode/openclaw.plugin.json", import.meta.url), "utf8")
+  )
+  const registered = s.registrations.flatMap(({ options }) => options.names)
+  expect(registered).toContain("autocode_review_image")
+  expect([...manifest.contracts.tools].sort()).toEqual([...registered].sort())
+})

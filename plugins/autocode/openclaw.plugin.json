@@ -77,6 +77,7 @@
       "autocode_admit",
       "autocode_submit",
       "autocode_review",
+      "autocode_review_image",
       "autocode_inspect",
       "autocode_investigation_finish",
       "autocode_defer",
