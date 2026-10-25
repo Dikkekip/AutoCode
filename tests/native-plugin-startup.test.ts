@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
 import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
+import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
 import * as reviewerImages from "../packages/core-runtime/src/native/reviewer-images.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
@@ -367,6 +368,53 @@ it("declares only versioned session-bound factory tools and rejects revoked host
     "Host invocation revoked"
   )
   expect(nativeDoctor).not.toHaveBeenCalled()
+})
+
+it("forwards optional literal navigation through the assigned native research tool factory", async () => {
+  const s = setup()
+  await s.service.start()
+  vi.mocked(nativeDoctor).mockResolvedValue(report(true))
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method) => {
+    if (method === "workboard.cards.list")
+      return {
+        cards: [
+          {
+            id: "search-card",
+            title: "Source navigation",
+            agentId: "research",
+            status: "running",
+            sessionKey: "search-session"
+          }
+        ]
+      } as any
+    throw new Error(`Unexpected RPC: ${method}`)
+  })
+  const store = new NativeEvidenceStore(join(s.root, ".openclaw/native-evidence.db"))
+  try {
+    store.put("investigation", "round:research", { cardId: "search-card", agentId: "research" })
+    const inspect = vi.spyOn(NativeQualityRuntime.prototype, "inspect").mockResolvedValue({
+      lineNumbers: [14001],
+      navigationOnly: true
+    } as any)
+    const tool = s.factories[0]({ agentId: "research", sessionKey: "search-session" }).find(
+      (tool: any) => tool.name === "autocode_inspect"
+    )
+    expect(tool.parameters.required).not.toContain("search")
+    expect(tool.parameters.properties.search).toMatchObject({ type: "string", minLength: 1, maxLength: 128 })
+    const result = await tool.execute("search", {
+      boardId: "app",
+      roundId: "round",
+      personaId: "research",
+      path: "src/view.ts",
+      search: "persist_detach"
+    })
+    expect(result.details).toMatchObject({ lineNumbers: [14001], navigationOnly: true })
+    expect(inspect).toHaveBeenCalledWith("research", "search-session", "round", "research", "src/view.ts", undefined, {
+      search: "persist_detach"
+    })
+  } finally {
+    store.close()
+  }
 })
 
 it("returns reviewer image content through the session-bound factory without JSON-wrapping its image block", async () => {

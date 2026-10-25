@@ -735,7 +735,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_inspect",
-      "Read committed files in your assigned persona scope. Empty path lists files. Pass a returned nextOffset as offset to continue a truncated file.",
+      "Read committed files in your assigned persona scope. Empty path lists files. Search locates up to 50 matching line numbers for a case-sensitive literal in one file; then read startLine/lineCount before citing evidence. Pass nextOffset as offset to continue a truncated file.",
       {
         roundId: field,
         personaId: field,
@@ -743,6 +743,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
         startLine: { type: "integer", minimum: 1 },
         lineCount: { type: "integer", minimum: 1, maximum: 1000 },
         contextPack: { type: "boolean", default: false },
+        search: { type: "string", minLength: 1, maxLength: 128 },
         offset: {
           type: "integer",
           minimum: 0,
@@ -753,9 +754,10 @@ export function registerNativeAutonomyPlugin(api: any): void {
         runtime(p.boardId).quality.inspect(ctx.agentId, ctx.sessionKey, p.roundId, p.personaId, p.path, p.offset, {
           ...(p.startLine === undefined ? {} : { startLine: p.startLine }),
           ...(p.lineCount === undefined ? {} : { lineCount: p.lineCount }),
-          ...(p.contextPack === undefined ? {} : { contextPack: p.contextPack })
+          ...(p.contextPack === undefined ? {} : { contextPack: p.contextPack }),
+          ...(p.search === undefined ? {} : { search: p.search })
         }),
-      ["offset", "startLine", "lineCount", "contextPack"]
+      ["offset", "startLine", "lineCount", "contextPack", "search"]
     ),
     tool(
       "autocode_investigation_finish",

@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
-import { buildNativeContextPack, readNativeExcerpt } from "../packages/core-runtime/src/native/context-pack.js"
+import {
+  buildNativeContextPack,
+  readNativeExcerpt,
+  searchNativeSource
+} from "../packages/core-runtime/src/native/context-pack.js"
 
 const roots: string[] = []
 afterEach(() => {
@@ -41,6 +45,58 @@ function extend(f: ReturnType<typeof fixture>, files: Record<string, string>) {
   return f
 }
 describe("revision-bound native context", () => {
+  it("locates a late literal symbol without returning source or crediting a full-file read", async () => {
+    const f = extend(fixture(), {
+      "src/large.py": "# introductory context\n".repeat(14000) + "def persist_detach():\n    return 42\n"
+    })
+    const first = await searchNativeSource(f, "src/large.py", "def persist_detach(")
+    writeFileSync(join(f.root, "src/large.py"), "untrusted dirty checkout\n")
+    expect(await searchNativeSource(f, "src/large.py", "def persist_detach(")).toEqual(first)
+    expect(first).toMatchObject({
+      revision: f.revision,
+      lineNumbers: [14001],
+      matchingLineCount: 1,
+      truncated: false,
+      navigationOnly: true,
+      blobId: expect.stringMatching(/^[a-f0-9]{40}$/),
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+    expect(first).not.toHaveProperty("content")
+    const excerpt = await readNativeExcerpt(f, "src/large.py", { startLine: first.lineNumbers[0], lineCount: 2 })
+    expect(excerpt.content).toContain("return 42")
+    expect(excerpt.sha256).toBe(first.sha256)
+    expect(excerpt.blobId).toBe(first.blobId)
+  })
+  it("treats patterns literally, distinguishes case and bounds matching line numbers", async () => {
+    const f = extend(fixture(), { "src/search.ts": "a.*b a.*b\n".repeat(70) + "AXXB\naZZb\n" })
+    const found = await searchNativeSource(f, "src/search.ts", "a.*b")
+    expect(found.lineNumbers).toEqual(Array.from({ length: 50 }, (_, i) => i + 1))
+    expect(found.matchingLineCount).toBe(70)
+    expect(found.truncated).toBe(true)
+    expect((await searchNativeSource(f, "src/search.ts", "A.*B")).matchingLineCount).toBe(0)
+  })
+  it("rejects unsafe queries and noncanonical or unreadable source", async () => {
+    const f = extend(fixture(), { "src/oversize.ts": "x".repeat(1024 * 1024 + 1) })
+    writeFileSync(join(f.root, "src/invalid-utf8"), Buffer.from([0xff, 0xfe]))
+    execFileSync("git", ["add", "."], { cwd: f.root })
+    execFileSync("git", ["commit", "-qm", "invalid utf8 fixture"], { cwd: f.root })
+    f.revision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: f.root, encoding: "utf8" }).trim()
+    for (const query of ["", "   ", "x\ny", "x\ry", "x\0y", "x".repeat(129), "\u00e9".repeat(65)])
+      await expect(searchNativeSource(f, "src/a.ts", query)).rejects.toThrow(/literal/)
+    for (const path of ["../outside", "src/link", "src/binary", "src/oversize.ts", "src/invalid-utf8", "src/missing"])
+      await expect(searchNativeSource(f, path, "x")).rejects.toThrow()
+    await expect(searchNativeSource({ ...f, allowedPaths: ["src/b.ts"] }, "src/a.ts", "x")).rejects.toThrow(/scope/)
+    await expect(searchNativeSource({ ...f, revision: "main" }, "src/a.ts", "x")).rejects.toThrow(/revision/)
+  })
+  it("ignores local replacement refs when binding search and excerpt to the assigned commit", async () => {
+    const f = fixture()
+    const original = f.revision
+    extend(f, { "src/b.ts": "export const replacement_only = 9\n" })
+    execFileSync("git", ["replace", original, f.revision], { cwd: f.root })
+    const source = { ...f, revision: original }
+    expect((await searchNativeSource(source, "src/b.ts", "replacement_only")).matchingLineCount).toBe(0)
+    expect((await readNativeExcerpt(source, "src/b.ts")).content).toBe("export const b = 1\n")
+  })
   it("reads later lines with stable content digest despite dirty checkout", async () => {
     const f = fixture()
     const first = await readNativeExcerpt(f, "src/a.ts", { startLine: 900, lineCount: 3 })

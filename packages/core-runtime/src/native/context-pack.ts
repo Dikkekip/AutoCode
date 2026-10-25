@@ -26,7 +26,56 @@ function validate(source: NativeContextSource, path?: string) {
 }
 async function git(source: NativeContextSource, args: string[], maxBuffer = 1024 * 1024) {
   validate(source)
-  return (await exec("git", args, { cwd: source.root, encoding: "buffer", timeout: 10000, maxBuffer })).stdout
+  return (
+    await exec("git", ["--no-replace-objects", ...args], {
+      cwd: source.root,
+      encoding: "buffer",
+      timeout: 10000,
+      maxBuffer
+    })
+  ).stdout
+}
+async function readNativeText(source: NativeContextSource, path: string) {
+  validate(source, path)
+  const tree = (await git(source, ["ls-tree", "-z", source.revision, "--", path])).toString("utf8")
+  const match = /^(100644|100755) blob ([a-f0-9]{40,64})\t([^\0]+)\0$/.exec(tree)
+  if (!match || match[3] !== path) throw new Error("Context requires a tracked regular file; links are not followed")
+  const bytes = await git(source, ["cat-file", "blob", match[2]!])
+  if (bytes.includes(0)) throw new Error("Context file is binary")
+  let content: string
+  try {
+    content = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
+  } catch {
+    throw new Error("Context file is not UTF-8 text")
+  }
+  return { content, blobId: match[2]!, sha256: hash(bytes), totalBytes: bytes.length }
+}
+/** Navigation only: callers must read the returned lines before claiming source inspection. */
+export async function searchNativeSource(source: NativeContextSource, path: string, search: string) {
+  if (typeof search !== "string" || !search.trim() || Buffer.byteLength(search) > 128 || /[\0\r\n]/.test(search))
+    throw new Error("Context search requires a single-line literal of 1-128 UTF-8 bytes")
+  const text = await readNativeText(source, path)
+  const lines = text.content.split("\n")
+  const lineNumbers: number[] = []
+  let matchingLineCount = 0
+  for (let index = 0; index < lines.length; index++) {
+    if (!lines[index]!.includes(search)) continue
+    matchingLineCount++
+    if (lineNumbers.length < 50) lineNumbers.push(index + 1)
+  }
+  return {
+    revision: source.revision,
+    path,
+    blobId: text.blobId,
+    sha256: text.sha256,
+    totalBytes: text.totalBytes,
+    totalLines: lines.length,
+    lineNumbers,
+    matchingLineCount,
+    truncated: matchingLineCount > lineNumbers.length,
+    navigationOnly: true as const,
+    untrustedContent: true as const
+  }
 }
 export async function readNativeExcerpt(
   source: NativeContextSource,
@@ -43,17 +92,7 @@ export async function readNativeExcerpt(
     maxBytes > 64000
   )
     throw new Error("Context range exceeds bounded line/byte limits")
-  const tree = (await git(source, ["ls-tree", "-z", source.revision, "--", path])).toString("utf8")
-  const match = /^(100644|100755) blob ([a-f0-9]{40,64})\t([^\0]+)\0$/.exec(tree)
-  if (!match || match[3] !== path) throw new Error("Context requires a tracked regular file; links are not followed")
-  const bytes = await git(source, ["cat-file", "blob", match[2]!])
-  if (bytes.includes(0)) throw new Error("Context file is binary")
-  let content: string
-  try {
-    content = new TextDecoder("utf-8", { fatal: true }).decode(bytes)
-  } catch {
-    throw new Error("Context file is not UTF-8 text")
-  }
+  const { content, blobId, sha256, totalBytes } = await readNativeText(source, path)
   const lines = content.split("\n")
   if (startLine > lines.length) throw new Error("Context start line exceeds committed content")
   const selected = lines.slice(startLine - 1, startLine - 1 + lineCount).join("\n")
@@ -70,13 +109,13 @@ export async function readNativeExcerpt(
   return {
     path,
     revision: source.revision,
-    blobId: match[2]!,
-    sha256: hash(bytes),
+    blobId,
+    sha256,
     startLine,
     endLine,
     content: excerpt,
     totalLines: lines.length,
-    totalBytes: bytes.length,
+    totalBytes,
     truncated,
     nextLine: truncated ? (excerpt.length < selected.length ? endLine : endLine + 1) : null,
     partialLastLine: excerpt.length < selected.length

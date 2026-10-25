@@ -1947,6 +1947,29 @@ it("counts a review card whose worker is still running toward discovery capacity
   expect(await s.runtime.discover()).toEqual({ created: [], reason: "downstream backpressure" })
 })
 
+it("keeps symbol navigation behind investigation scope and session gates without crediting inspection", async () => {
+  const s = setup()
+  await s.runtime.discover()
+  const ctx = s.start()
+  const inspect = (path: string, options: any, offset = 0, session = ctx.session) =>
+    s.runtime.quality.inspect(ctx.agent, session, ctx.roundId, ctx.personaId, path, offset, options)
+  const result = await inspect("src/view.ts", { search: "navigation" })
+  expect(result).toMatchObject({ lineNumbers: [1], matchingLineCount: 1, navigationOnly: true })
+  expect(s.store.get("inspection", `${ctx.roundId}:${ctx.personaId}:src/view.ts`)).toBeNull()
+  await expect(inspect("src/view.ts", { search: "navigation" }, 0, "stale")).rejects.toThrow(/session/)
+  await expect(inspect("outside.ts", { search: "navigation" })).rejects.toThrow(/scope/)
+  for (const options of [
+    { search: "navigation", startLine: 1 },
+    { search: "navigation", lineCount: 1 },
+    { search: "navigation", contextPack: true }
+  ])
+    await expect(inspect("src/view.ts", options)).rejects.toThrow(/cannot mix/)
+  await expect(inspect("src/view.ts", { search: "navigation" }, 1)).rejects.toThrow(/cannot mix/)
+  await expect(inspect("", { search: "navigation" })).rejects.toThrow(/one file/)
+  await inspect("src/view.ts", { startLine: 1, lineCount: 1 })
+  expect(s.store.get<any>("inspection", `${ctx.roundId}:${ctx.personaId}:src/view.ts`).lineRanges).toHaveLength(1)
+})
+
 it("journals revision-bound line excerpts and context packs behind the existing session gate", async () => {
   const s = setup()
   await s.runtime.discover()
