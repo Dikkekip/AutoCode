@@ -13,6 +13,7 @@ This note tracks Loop Engineering concepts that have been translated into OpenCl
 - **Token Cost Estimator**: `apps/dispatcher-cli/src/cost.ts` implements `pnpm dispatcher cost` to compute simulated daily and monthly token consumption and caps based on cadence and level blend ratios.
 - **Patterns Registry**: `packages/domain/src/patterns-registry.ts` houses structured JSON properties of standard loop patterns (PR Babysitter, Daily Triage, CI Sweeper, etc.).
 - **Installer Integration**: `apps/dispatcher-cli/src/install.ts` automatically seeds the new loop skills into target repositories under `.openclaw/skills/` during project setup.
+- **Native Goal Loop**: Admitted OpenClaw Workboard implementation, imported, and repair cards carry a bounded goal contract with outcome, acceptance evidence, scope, iteration, completion handoff, and blocked stop condition. Native verification and independent review remain the completion authority; see `docs/native-autonomy.md`.
 
 ## Candidate Follow-Ups
 

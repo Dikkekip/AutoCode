@@ -30,6 +30,7 @@ import { NativeBudgetLedger } from "./budget-ledger.js"
 import { assertConfiguredNativeCapabilities, configuredNativeModels } from "./capabilities.js"
 import { NativeControl, NativeControlRevoked } from "./control.js"
 import { type NativeCard, type NativeGateway, nativeCard, nativeCards } from "./gateway.js"
+import { nativeGoalLoopContract } from "./goal-loop.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
 import { nativeOutcomeReport } from "./outcomes.js"
@@ -887,6 +888,7 @@ export class NativeAutonomyRuntime {
         notes: JSON.stringify({
           workflowId: id,
           ...entry.proposal,
+          goalContract: nativeGoalLoopContract(entry.proposal),
           instructions: [
             "Implement this admitted scope in the managed worktree. The autocode_submit broker records the scoped commit; sandbox Git metadata is intentionally unavailable.",
             "Call autocode_submit(workflowId, worktreePath) before workboard_complete. Do not push, merge, release, or deploy.",
@@ -979,6 +981,7 @@ export class NativeAutonomyRuntime {
       notes: JSON.stringify({
         workflowId,
         proposal,
+        goalContract: nativeGoalLoopContract(proposal),
         preservedEvidence: original.evidence,
         instructions:
           "Recover useful preserved changes and implement the original acceptance criteria. Call autocode_submit(workflowId, worktreePath) to record the scoped commit, then workboard_complete. Do not merge or deploy."
@@ -1142,6 +1145,7 @@ export class NativeAutonomyRuntime {
       notes: JSON.stringify({
         workflowId: id,
         proposal: workflow.proposal,
+        goalContract: nativeGoalLoopContract(workflow.proposal),
         reason,
         candidate: workflow.candidate,
         verification: this.verificationForAgent(workflow.verification),
