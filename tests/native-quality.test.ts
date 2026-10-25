@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { afterEach, describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import { authorizeNativeTool } from "../packages/core-runtime/src/native/broker.js"
 import type { NativeGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { NativeHumanInput } from "../packages/core-runtime/src/native/human-input.js"
@@ -1720,6 +1720,61 @@ it("retires an unfinished terminal round without claiming completion and permits
   expect(s.store.get<Investigation>("investigation", `${ctx.roundId}:ux`)?.state).toBe("failed")
   expect(s.store.list("inspection")).toHaveLength(1)
   expect(s.store.get<any>("round", ctx.roundId)?.phase).toBe("failed")
+})
+
+it("reads investigation history a bounded number of times across historical rounds", async () => {
+  const s = setup()
+  await s.runtime.discover()
+  const round = s.store.list<any>("round")[0]!.value
+  const investigation = s.store.list<Investigation>("investigation")[0]!.value
+  const reads = vi.spyOn(s.store, "list")
+  await s.runtime.discover()
+  const baseline = reads.mock.calls.filter(([kind]) => kind === "investigation").length
+  for (let index = 0; index < 500; index++) {
+    const id = `historical-${index}`
+    s.store.put("round", id, { ...round, cards: [] })
+    s.store.put("investigation", `${id}:ux`, { ...investigation, roundId: id, state: "completed" })
+  }
+  reads.mockClear()
+  const result = await s.runtime.discover()
+  expect(result.created).toEqual([])
+  expect(reads.mock.calls.filter(([kind]) => kind === "investigation")).toHaveLength(baseline)
+  expect(s.store.list("round")).toHaveLength(501)
+  reads.mockRestore()
+})
+
+it("refreshes failed investigation rounds after awaited card holds", async () => {
+  const s = setup()
+  await s.runtime.discover()
+  const first = s.store.list<any>("round")[0]!
+  const entry = s.store.list<Investigation>("investigation")[0]!
+  s.store.put("investigation", entry.id, { ...entry.value, state: "failed" })
+  s.store.put("round", "later-round", { ...first.value, cards: ["later-card"] })
+  s.store.put("investigation", "later-round:ux", {
+    ...entry.value,
+    roundId: "later-round",
+    cardId: "later-card",
+    state: "completed"
+  })
+  s.gateway.cards.push({ ...s.gateway.cards[0], id: "later-card", status: "ready" })
+  const request = s.gateway.request.bind(s.gateway)
+  s.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.block" && params.id !== "later-card") {
+      // A worker can finish while discovery awaits the public hold acknowledgement.
+      await Promise.resolve()
+      s.store.put("investigation", "later-round:ux", {
+        ...entry.value,
+        roundId: "later-round",
+        cardId: "later-card",
+        state: "failed"
+      })
+    }
+    return request(method, params)
+  }
+  await s.runtime.discover()
+  expect(s.store.get<any>("round", first.id)?.phase).toBe("failed")
+  expect(s.store.get<any>("round", "later-round")?.phase).toBe("failed")
+  expect(s.gateway.cards.find((card) => card.id === "later-card")?.status).toBe("blocked")
 })
 
 it("does not retire a failed round while any worker still owns execution", async () => {

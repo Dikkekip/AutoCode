@@ -546,10 +546,17 @@ export class NativeQualityRuntime {
       if (!reconcileLease) return { created: [], reason: "reconciliation already running" }
       return this.store.withLease(reconcileLease, 120_000, async () => {
         let cards = await this.syncInvestigations()
+        const failedInvestigationRounds = () =>
+          new Set(
+            this.store
+              .list<Investigation>("investigation")
+              .filter((entry) => ["failed", "timed_out"].includes(entry.value.state))
+              .map((entry) => entry.value.roundId)
+          )
+        let failedRounds = failedInvestigationRounds()
         for (const round of this.store.list<QualityRound>("round")) {
           if (round.value.phase === "building" || round.value.phase === "failed") continue
-          const entries = this.store.list<Investigation>("investigation").filter((e) => e.value.roundId === round.id)
-          if (!entries.some((e) => ["failed", "timed_out"].includes(e.value.state))) continue
+          if (!failedRounds.has(round.id)) continue
           const owned = cards.filter((c) => round.value.cards.includes(c.id))
           // A live worker retains ownership even if another investigation failed.
           if (owned.some((c) => c.status === "running" || c.execution?.status === "running")) continue
@@ -560,6 +567,8 @@ export class NativeQualityRuntime {
           this.store.put("round", round.id, { ...round.value, phase: "failed" })
           this.store.event("round.failed", round.id, { reason })
           cards = await this.syncInvestigations()
+          // Awaited holds can overlap worker results; refresh before examining another round.
+          failedRounds = failedInvestigationRounds()
         }
 
         const rounds = this.store.list<QualityRound>("round")
