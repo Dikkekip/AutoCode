@@ -8,9 +8,15 @@ export interface NativePersonaGoal {
   goals: string[]
   successObservations: string[]
   allowedPaths: string[]
+  /** Additional committed source context for research only; never proposal write authority. */
+  inspectionPaths?: string[]
   weight: number
   ideationPrompt?: string
   investigationAgentId?: string
+}
+
+export function nativePersonaInspectionPaths(persona: NativePersonaGoal): string[] {
+  return [...new Set([...persona.allowedPaths, ...(persona.inspectionPaths ?? [])])]
 }
 
 export interface NativeCommand {
@@ -216,6 +222,9 @@ export function validateNativeAutonomyPolicy(value: unknown): NativeAutonomyPoli
       goals: strings(p.goals, "goals"),
       successObservations: strings(p.successObservations, "successObservations"),
       allowedPaths: strings(p.allowedPaths, "allowedPaths").map(nativeRelativePath),
+      ...(p.inspectionPaths !== undefined
+        ? { inspectionPaths: strings(p.inspectionPaths, "inspectionPaths").map(nativeRelativePath) }
+        : {}),
       ...(p.ideationPrompt ? { ideationPrompt: text(p.ideationPrompt, "ideationPrompt") } : {}),
       ...(p.investigationAgentId ? { investigationAgentId: text(p.investigationAgentId, "investigationAgentId") } : {}),
       weight: integer(p.weight, 1, 100)

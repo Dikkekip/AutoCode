@@ -68,6 +68,35 @@ function proposal() {
     implementationPrompt: "Implement citation navigation"
   }
 }
+
+it("validates optional inspection context without extending proposal change authority", () => {
+  const p = policy()
+  const persona = p.personas[0]!
+  expect(persona.inspectionPaths).toBeUndefined()
+  persona.inspectionPaths = ["tests/contracts", "docs/architecture.md"]
+  const parsed = validateNativeAutonomyPolicy(p)
+  expect(parsed.personas[0]!.inspectionPaths).toEqual(persona.inspectionPaths)
+  expect(
+    validateNativeProposal(
+      {
+        ...proposal(),
+        evidence: [{ path: "tests/contracts/example.py", observation: "Contract defines the caller behavior" }]
+      },
+      parsed
+    ).allowedPaths
+  ).toEqual(["src"])
+  expect(() => validateNativeProposal({ ...proposal(), allowedPaths: ["tests/contracts/example.py"] }, parsed)).toThrow(
+    "exceeds persona path authority"
+  )
+  for (const paths of [[], ["../outside"], ["/outside"], ["bad\0path"], [42], "tests"]) {
+    expect(() =>
+      validateNativeAutonomyPolicy({
+        ...p,
+        personas: [{ ...persona, inspectionPaths: paths }, ...p.personas.slice(1)]
+      })
+    ).toThrow()
+  }
+})
 class Gateway implements NativeGateway {
   cards: Array<NativeCard & Record<string, any>> = []
   calls: Array<{ method: string; params: Record<string, any> }> = []

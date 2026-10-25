@@ -1729,6 +1729,105 @@ it("reads every page from the pinned commit without splitting Unicode or extendi
   expect(s.store.get<any>("inspection", `${ctx.roundId}:ux:src/view.ts`).ranges).toHaveLength(2)
 })
 
+it("uses pinned read-only context as inspected evidence while refusing context-only implementation scope", async () => {
+  const s = setup()
+  mkdirSync(join(s.root, "contracts"))
+  writeFileSync(join(s.root, "contracts/navigation.test.ts"), "export const expected = 'source link'\n")
+  writeFileSync(join(s.root, "contracts/private.ts"), "export const outside = true\n")
+  s.git("add", "contracts")
+  s.git("commit", "-m", "caller contracts")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  s.policy.personas.find((p) => p.personaId === "ux")!.inspectionPaths = ["contracts/*.test.ts"]
+  await s.runtime.discover()
+  const ctx = s.start()
+  const inspect = (path: string, options = {}) =>
+    s.runtime.quality.inspect(ctx.agent, ctx.session, ctx.roundId, ctx.personaId, path, 0, options)
+  expect((await inspect("")).files).toEqual(["contracts/navigation.test.ts", "src/view.ts"])
+  writeFileSync(join(s.root, "contracts/navigation.test.ts"), "uncommitted replacement")
+  expect((await inspect("contracts/navigation.test.ts")).content).toContain("source link")
+  expect((await inspect("contracts/navigation.test.ts", { startLine: 1, lineCount: 1 })).content).toContain(
+    "source link"
+  )
+  const pack = (await inspect("contracts/navigation.test.ts", { contextPack: true })).contextPack!
+  expect(pack.excerpts.map((excerpt) => excerpt.path)).toContain("contracts/navigation.test.ts")
+  expect(pack.excerpts.every((excerpt) => ["src/view.ts", "contracts/navigation.test.ts"].includes(excerpt.path))).toBe(
+    true
+  )
+  await expect(inspect("contracts/private.ts")).rejects.toThrow("persona scope")
+  await inspect("src/view.ts")
+  const p = proposal()
+  p.evidence.push({ path: "contracts/navigation.test.ts", observation: "Caller contract requires source link" })
+  p.quality.hypothesis.baselineEvidence.push("contracts/navigation.test.ts")
+  await expect(
+    s.runtime.quality.propose(ctx.agent, ctx.session, ctx.roundId, {
+      ...p,
+      allowedPaths: ["contracts/navigation.test.ts"]
+    })
+  ).rejects.toThrow("exceeds persona path authority")
+  expect(s.store.list("proposal")).toHaveLength(0)
+  await s.runtime.quality.propose(ctx.agent, ctx.session, ctx.roundId, p)
+  const saved = s.store.list<any>("proposal")[0]!.value.proposal
+  expect(saved.allowedPaths).toEqual(["src/view.ts"])
+  expect(saved.quality.evidenceHashes["contracts/navigation.test.ts"]).toBeTruthy()
+})
+
+it("accepts operator context evidence only within configured inspection paths", async () => {
+  const s = setup()
+  mkdirSync(join(s.root, "contracts"))
+  writeFileSync(join(s.root, "contracts/navigation.test.ts"), "export const expected = true\n")
+  s.git("add", "contracts")
+  s.git("commit", "-m", "operator context")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  s.policy.personas.find((p) => p.personaId === "ux")!.inspectionPaths = ["contracts/navigation.test.ts"]
+  const raw = {
+    idempotencyKey: "context-request",
+    personaId: "ux",
+    title: "Inspect caller contract",
+    brief: "Inspect the contract before proposing changes within src only.",
+    expectedBaseSha: s.git("rev-parse", "HEAD"),
+    evidence: [{ path: "contracts/navigation.test.ts", observation: "Caller contract" }]
+  }
+  await expect(
+    createNativeOperatorRequest(
+      s.runtime,
+      {
+        ...raw,
+        evidence: [{ path: "contracts/other.ts", observation: "Unowned" }]
+      },
+      "operator"
+    )
+  ).rejects.toThrow("outside persona scope")
+  await createNativeOperatorRequest(s.runtime, raw, "operator")
+  expect((await s.runtime.discover()).created).toHaveLength(2)
+  expect(s.store.list<Investigation>("investigation")[0]!.value.personaId).toBe("ux")
+})
+
+it("revisits research when read-only context changes while deduping unrelated repository changes", async () => {
+  const s = setup()
+  mkdirSync(join(s.root, "contracts"))
+  writeFileSync(join(s.root, "contracts/navigation.test.ts"), "export const expected = false\n")
+  writeFileSync(join(s.root, "contracts/unrelated.ts"), "export const unrelated = false\n")
+  s.git("add", "contracts")
+  s.git("commit", "-m", "context baseline")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  s.policy.personas.find((p) => p.personaId === "ux")!.inspectionPaths = ["contracts/navigation.test.ts"]
+  await s.runtime.discover()
+  await finishRemaining(s)
+  s.gateway.cards.at(-1).status = "done"
+  expect((await s.runtime.discover()).reason).toMatch(/unchanged/)
+  writeFileSync(join(s.root, "contracts/unrelated.ts"), "export const unrelated = true\n")
+  s.git("add", "contracts")
+  s.git("commit", "-m", "unrelated change")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  expect((await s.runtime.discover()).reason).toMatch(/unchanged/)
+  writeFileSync(join(s.root, "contracts/navigation.test.ts"), "export const expected = true\n")
+  s.git("add", "contracts")
+  s.git("commit", "-m", "caller contract change")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  expect((await s.runtime.discover()).created).toHaveLength(2)
+  expect(s.store.list<Investigation>("investigation").filter((r) => r.value.personaId === "ux")).toHaveLength(2)
+})
+
 it("defers discovery when unfinished workflows fill admission capacity even without active cards", async () => {
   const s = setup()
   for (const id of ["one", "two"])
