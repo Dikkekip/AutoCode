@@ -30,6 +30,25 @@ describe("member references that resemble command JWTs", () => {
 
 describe("keyboard comparisons in committed diffs", () => {
   it.each([
+    "@@ -4,6 +4,14 @@ type TimelineKeyboardShortcutsProps = {",
+    "+ <KeyboardShortcutHint keyLabel={keyLabel} ariaLabel={ariaLabel} ctrl={ctrl} />",
+    '+ <AudibleKey keyLabel="←" ariaLabel="Left arrow" />',
+    '+ <AudibleKey keyLabel="Page Up" ariaLabel="Page Up" />',
+    '+ <AudibleKey keyLabel="Page Down" ariaLabel="Page Down" />'
+  ])("preserves bounded keyboard legend source: %s", (source) => {
+    expect(redactNativeSourceText(source)).toBe(source)
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+  })
+  it.each([
+    '+ <AudibleKey keyLabel="credential123" />',
+    '+ <AudibleKey keyLabel="Enter" API_KEY="credential123" />',
+    '+ <AudibleKey keyLabel="Page Up"',
+    '@@ -4,6 +4,14 @@ type KeyboardProps = "credential123"',
+    "+ <KeyboardShortcutHint keyLabel={credentials.secret} />"
+  ])("keeps credential masking around keyboard legend source: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+  it.each([
     "enter",
     "done",
     "go",

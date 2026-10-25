@@ -33,7 +33,7 @@ const KEY_IDENTIFIER_KEYBOARD_COMPARISON =
   /^key[ \t]*===[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
 const ENTER_KEY_HINT_LITERAL = /^(["'])(?:enter|done|go|next|previous|search|send)\1$/
 const SHORTCUT_LABEL_LITERAL =
-  /^(["'])(?:[A-Z0-9←→↑↓[\]?/]|Escape|Enter|Tab|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1$/
+  /^(["'])(?:[A-Z0-9←→↑↓[\]?/]|Escape|Enter|Tab|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|Page ?Up|Page ?Down|Backspace|Delete)\1$/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -147,7 +147,7 @@ function openingTag(source: string, start: number): { end: number; keys: number[
       if (name === "enterKeyHint" && ENTER_KEY_HINT_LITERAL.test(source.slice(valueStart, cursor)))
         syntheticKeys.push(nameStart + 5)
       if (
-        tagName === "KeyboardShortcutHint" &&
+        (tagName === "KeyboardShortcutHint" || tagName === "AudibleKey") &&
         name === "keyLabel" &&
         SHORTCUT_LABEL_LITERAL.test(source.slice(valueStart, cursor))
       )
@@ -177,6 +177,13 @@ function openingTag(source: string, start: number): { end: number; keys: number[
     if (name === "key" && referenceValue(source.slice(valueStart, cursor))) {
       keys.push(nameStart)
     }
+    if (
+      tagName === "KeyboardShortcutHint" &&
+      name === "keyLabel" &&
+      REFERENCE_EXPRESSION.test(source.slice(valueStart, cursor)) &&
+      !SENSITIVE_REFERENCE.test(source.slice(valueStart, cursor))
+    )
+      keys.push(nameStart)
   }
   return { end: Math.max(start + 1, cursor), keys: [], syntheticKeys: [] }
 }
@@ -251,6 +258,14 @@ function protectStructuralKeys(source: string, keyMarker: string, queryMarker: s
   for (let i = 0; i < lines.length; i++) {
     const prefix = /^([+\- ]?[ \t]*)(.*)$/.exec(lines[i]!)!
     const line = prefix[2]!
+    // Git's type-alias hunk context contains a declaration name, not a value.
+    // Shield only its CamelCase Key spelling and retain all RHS filtering.
+    const typeHunk =
+      /^(@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@[ \t]+(?:export[ \t]+)?type[ \t]+)([A-Za-z_$][\w$]*)([ \t]*=[ \t]*\{[ \t]*)$/.exec(
+        line
+      )
+    if (typeHunk && !SENSITIVE_REFERENCE.test(typeHunk[2]!))
+      lines[i] = prefix[1]! + typeHunk[1]! + typeHunk[2]!.replace(/Key/g, queryMarker) + typeHunk[3]!
     const selection = stateSelection.exec(line)
     if (selection && !SENSITIVE_REFERENCE.test(line)) {
       // All key-like identifiers are references in this restricted expression.
