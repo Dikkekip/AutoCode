@@ -523,7 +523,7 @@ export class NativeAutonomyRuntime {
     let releaseResumable = false
     let confirmedPush: { id: string; headSha: string } | undefined
     if (
-      action === "resume-release" &&
+      ["resume-release", "retry"].includes(action) &&
       workflow.blocker === "Error: Release mode requires current independent operator promotion approval" &&
       lifecycle.state === "blocked" &&
       !workflow.prNumber &&
@@ -546,7 +546,8 @@ export class NativeAutonomyRuntime {
           workflow.review.verificationDigest !== nativeVerificationDigest(workflow.verification!)
         )
           throw new Error("Review belongs to another verification attempt")
-        const pushId = `${workflowId}:push`
+        const scopedPushId = `${workflowId}:${lifecycle.attemptId}:push`
+        const pushId = this.store.get("operation", scopedPushId) ? scopedPushId : `${workflowId}:push`
         const push = this.store.get<{ state: string; headSha: string }>("operation", pushId)
         if (push) {
           const candidate = workflow.candidate!
@@ -576,7 +577,9 @@ export class NativeAutonomyRuntime {
         policyDigest: nativeRecoveryDigest(this.policy),
         lifecycle,
         ...(action === "resume-review" ? { reviewResumable } : {}),
-        ...(action === "resume-release" ? { releaseResumable, ...(confirmedPush ? { confirmedPush } : {}) } : {}),
+        ...(["resume-release", "retry"].includes(action)
+          ? { releaseResumable, ...(confirmedPush ? { confirmedPush } : {}) }
+          : {}),
         control: this.control.state,
         cards: cards
           .map((card) => ({
@@ -895,7 +898,7 @@ export class NativeAutonomyRuntime {
         const result = { applied: true, workflowId, action: plan.action }
         this.store.commit(
           [
-            ...(plan.action === "resume-release" && plan.snapshot.confirmedPush
+            ...(["resume-release", "retry"].includes(plan.action) && plan.snapshot.confirmedPush
               ? [
                   {
                     kind: "operation",

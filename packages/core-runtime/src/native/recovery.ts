@@ -74,7 +74,11 @@ export function planNativeRecovery(
     snapshot.operations.some((op) => {
       const value = op.value as { state?: string; supersessionClosed?: boolean; custodyHeld?: boolean }
       return (
-        !(action === "resume-release" && snapshot.releaseResumable === true && snapshot.confirmedPush?.id === op.id) &&
+        !(
+          ["resume-release", "retry"].includes(action) &&
+          snapshot.releaseResumable === true &&
+          snapshot.confirmedPush?.id === op.id
+        ) &&
         value?.state !== "confirmed" &&
         !(value?.state === "superseded" && value.supersessionClosed === true) &&
         !(value?.state === "pending" && value.custodyHeld === true)

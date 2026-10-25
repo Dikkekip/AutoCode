@@ -206,7 +206,13 @@ export async function releaseNativeWorkflow(
   if (!candidate.branch || candidate.branch === policy.baseBranch)
     throw new Error("Promotion requires a dedicated candidate branch")
   if (!w.prNumber) {
-    const pushKey = `${id}:push`
+    if ((await io.git(candidate.cwd, "rev-parse", `origin/${policy.baseBranch}`)) !== candidate.baseSha)
+      throw new Error("Base advanced; rebase and reverify before promotion")
+    const legacyPush = store.get<{ state: string; headSha: string }>("operation", `${id}:push`)
+    if (legacyPush && legacyPush.headSha !== candidate.headSha && legacyPush.state !== "confirmed")
+      throw new NativeReleasePending("Previous attempt push outcome unresolved; reconcile before new promotion")
+    const pushKey =
+      !legacyPush || legacyPush.headSha === candidate.headSha ? `${id}:push` : `${id}:${w.lifecycle!.attemptId}:push`
     const previousPush = store.get<{ headSha: string }>("operation", pushKey)
     if (previousPush) {
       const remote = await io.git(candidate.cwd, "ls-remote", "origin", `refs/heads/${candidate.branch}`)

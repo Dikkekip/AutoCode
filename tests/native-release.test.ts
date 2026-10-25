@@ -11,6 +11,7 @@ import {
   nativeVerificationDigest
 } from "../packages/core-runtime/src/native/provenance.js"
 import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
+import * as recoveryEvidenceModule from "../packages/core-runtime/src/native/recovery-evidence.js"
 import * as releaseModule from "../packages/core-runtime/src/native/release.js"
 import {
   type NativeReleaseIO,
@@ -331,7 +332,10 @@ function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow },
   w.review!.verificationDigest = nativeVerificationDigest(w.verification!)
 }
 describe("native release reconciliation", () => {
-  it("requires exact remote push truth before resuming a promotion-refused reviewed attempt", async () => {
+  it.each([
+    "resume-release",
+    "retry"
+  ] as const)("requires exact remote push truth before %s of a promotion-refused attempt", async (action) => {
     const s = setup()
     delete s.workflow.prNumber
     s.workflow.blocker = "Error: Release mode requires current independent operator promotion approval"
@@ -347,8 +351,13 @@ describe("native release reconciliation", () => {
       baseSha: s.workflow.candidate!.baseSha,
       diffDigest: s.workflow.verification!.provenance!.diffDigest
     } as any)
+    const sourceEvidence = vi.spyOn(recoveryEvidenceModule, "nativeRecoveryEvidence").mockResolvedValue({
+      complete: true,
+      content: "preserved source",
+      headSha: s.workflow.candidate!.headSha
+    } as any)
     const before = structuredClone(s.workflow)
-    const absent = await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reconcile promotion preflight")
+    const absent = await s.runtime.planWorkflowRecovery("workflow", action, "Reconcile promotion preflight")
     expect(absent.allowed).toBe(false)
     await expect(s.runtime.applyWorkflowRecovery(absent, "operator")).rejects.toThrow()
     expect(s.store.get("operation", "workflow:push")).toMatchObject({ state: "started" })
@@ -372,24 +381,39 @@ describe("native release reconciliation", () => {
       const invalid = Object.assign(s.runtime.requireWorkflow("workflow"), structuredClone(before))
       corrupt(invalid)
       s.store.put("workflow", "workflow", invalid)
-      const refused = await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reject altered evidence")
+      const refused = await s.runtime.planWorkflowRecovery("workflow", action, "Reject altered evidence")
       expect(refused.allowed).toBe(false)
     }
     s.store.put("workflow", "workflow", Object.assign(s.runtime.requireWorkflow("workflow"), structuredClone(before)))
     s.store.put("operation", "workflow:pr", { state: "started" })
-    expect(
-      (await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reject unknown PR effect")).allowed
-    ).toBe(false)
+    expect((await s.runtime.planWorkflowRecovery("workflow", action, "Reject unknown PR effect")).allowed).toBe(false)
     s.store.put("operation", "workflow:pr", { state: "confirmed" })
-    const plan = await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reconcile exact remote push")
+    const plan = await s.runtime.planWorkflowRecovery("workflow", action, "Reconcile exact remote push")
     expect(plan.blockers).toEqual([])
     expect(plan.allowed).toBe(true)
     await s.runtime.applyWorkflowRecovery(plan, "operator")
     const recovered = s.runtime.requireWorkflow("workflow")
-    expect(recovered.lifecycle).toMatchObject({ ...before.lifecycle, state: "release" })
-    expect(recovered.candidate).toEqual(before.candidate)
-    expect(recovered.verification).toEqual(before.verification)
-    expect(recovered.review).toEqual(before.review)
+    if (action === "resume-release") {
+      expect(recovered.lifecycle).toMatchObject({ ...before.lifecycle, state: "release" })
+      expect(recovered.candidate).toEqual(before.candidate)
+      expect(recovered.verification).toEqual(before.verification)
+      expect(recovered.review).toEqual(before.review)
+      expect(sourceEvidence).not.toHaveBeenCalled()
+    } else {
+      expect(recovered.lifecycle!.attempt).toBe(before.lifecycle!.attempt + 1)
+      expect(recovered.candidate).toBeUndefined()
+      expect(recovered.verification).toBeUndefined()
+      expect(recovered.review).toBeUndefined()
+      expect(s.store.list<any>("attempt-history")[0]!.value).toEqual(before)
+      expect(sourceEvidence).toHaveBeenCalledWith(
+        s.runtime.policy.repository,
+        before.proposal.allowedPaths,
+        expect.objectContaining({ candidate: before.candidate, attemptId: before.lifecycle!.attemptId })
+      )
+      const card = s.cards[recovered.implementationCardId]
+      expect(card.workspace.sourceBranch).toBe("origin/main")
+      expect(JSON.parse(card.notes).previousCandidate.content).toBe("preserved source")
+    }
     expect(recovered.blocker).toBeUndefined()
     expect(s.store.get("operation", "workflow:push")).toMatchObject({
       state: "confirmed",
@@ -397,6 +421,42 @@ describe("native release reconciliation", () => {
     })
     expect(s.io.git).not.toHaveBeenCalledWith(expect.anything(), "push", expect.anything(), expect.anything())
     expect(s.io.github).not.toHaveBeenCalled()
+  })
+
+  it("refuses an advanced base before pushing or creating a PR", async () => {
+    const s = setup()
+    delete s.workflow.prNumber
+    const git = s.io.git
+    s.io.git = vi.fn(async (...args) =>
+      args[1] === "rev-parse" && args[2] === "origin/main" ? "d".repeat(40) : git(...args)
+    )
+    await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow("Base advanced")
+    expect(s.store.get("operation", "workflow:push")).toBeNull()
+    expect(vi.mocked(s.io.git).mock.calls.some(([, command]) => command === "push")).toBe(false)
+    expect(s.io.github).not.toHaveBeenCalled()
+  })
+
+  it.each(["started", "confirmed"])("preserves a previous %s push when a new attempt promotes", async (state) => {
+    const s = setup()
+    delete s.workflow.prNumber
+    const old = { state, headSha: "d".repeat(40) }
+    s.store.put("operation", "workflow:push", old)
+    const key = `workflow:${s.workflow.lifecycle!.attemptId}:push`
+    if (state === "started") {
+      await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(
+        "Previous attempt push outcome unresolved"
+      )
+      expect(s.store.get("operation", key)).toBeNull()
+      expect(vi.mocked(s.io.git).mock.calls.some(([, command]) => command === "push")).toBe(false)
+    } else {
+      await releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)
+      expect(s.store.get("operation", key)).toMatchObject({
+        state: "confirmed",
+        headSha: s.workflow.candidate!.headSha
+      })
+      expect(vi.mocked(s.io.git).mock.calls.filter(([, command]) => command === "push")).toHaveLength(1)
+    }
+    expect(s.store.get("operation", "workflow:push")).toEqual(old)
   })
 
   it("refuses missing promotion before reserving or journaling a push", async () => {
