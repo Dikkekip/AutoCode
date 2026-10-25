@@ -77,6 +77,7 @@ import {
   commitNativeCandidate,
   containedDirectory,
   inspectNativeCandidate,
+  nativeGit,
   nativeVerificationCommands,
   verifyNativeCandidate
 } from "./verification.js"
@@ -2061,6 +2062,18 @@ export class NativeAutonomyRuntime {
         return advanced
       }
       if (!w.verification) {
+        // Promotion requires the candidate's exact base to remain current. Route
+        // known stale candidates through repair before spending a verification run.
+        const currentBase = await nativeGit(this.policy.repository, "rev-parse", `origin/${this.policy.baseBranch}`)
+        this.control.assert()
+        if (currentBase !== w.candidate.baseSha) {
+          await this.requestRepair(
+            id,
+            w,
+            `Base advanced from ${w.candidate.baseSha} to ${currentBase}; adapt the preserved candidate to the current base before verification`
+          )
+          return advanced + 1
+        }
         if (!w.submission)
           throw new Error(
             "Legacy candidate lacks authenticated submission identity; use an explicit retry recovery plan"

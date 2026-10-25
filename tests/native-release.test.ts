@@ -644,6 +644,7 @@ describe("native release reconciliation", () => {
 describe("native pause control", () => {
   it("allows evidence from accepted verification but revokes the next command authorization", async () => {
     const s = setup("verification")
+    vi.spyOn(verificationModule, "nativeGit").mockResolvedValue(s.workflow.candidate!.baseSha)
     delete s.workflow.verification
     delete s.workflow.review
     s.store.put("workflow", "workflow", s.workflow)

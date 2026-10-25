@@ -2,14 +2,16 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, expect, it, vi } from "vitest"
+import { NativeQualityRuntime } from "../packages/core-runtime/src/native/quality.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeStoragePending } from "../packages/core-runtime/src/native/storage-pressure.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
-import { verifyNativeCandidate } from "../packages/core-runtime/src/native/verification.js"
+import { nativeGit, verifyNativeCandidate } from "../packages/core-runtime/src/native/verification.js"
 import { validateNativeAutonomyPolicy } from "../packages/domain/src/native-autonomy.js"
 
 vi.mock("../packages/core-runtime/src/native/verification.js", async (original) => ({
   ...(await original<typeof import("../packages/core-runtime/src/native/verification.js")>()),
+  nativeGit: vi.fn(),
   verifyNativeCandidate: vi.fn()
 }))
 const cleanup: Array<() => void> = []
@@ -18,6 +20,7 @@ afterEach(() => {
   for (const fn of cleanup.splice(0).reverse()) fn()
 })
 function fixture(limit?: number) {
+  vi.mocked(nativeGit).mockResolvedValue("b".repeat(40))
   const root = mkdtempSync(join(tmpdir(), "native-verification-capacity-"))
   cleanup.push(() => rmSync(root, { recursive: true, force: true }))
   const stores = [
@@ -52,7 +55,7 @@ function fixture(limit?: number) {
   })
   const runtimes = stores.map((store) => {
     const runtime = new NativeAutonomyRuntime(policy, { request: async () => ({ cards: [] }) as any }, store)
-    vi.spyOn(runtime.quality, "ensureDesign").mockResolvedValue(true)
+    vi.spyOn(NativeQualityRuntime.prototype, "ensureDesign").mockResolvedValue(true)
     vi.spyOn(runtime, "stage").mockResolvedValue("verify-card")
     return runtime
   })
@@ -117,4 +120,47 @@ it("defers a prebuild storage race without blocking or consuming repair attempts
   expect(await s.runtimes[0]!.advanceWorkflow("first")).toBe(1)
   expect(verify).toHaveBeenCalledTimes(2)
   expect(s.stores[0]!.get<any>("workflow", "first").blocker).toBeUndefined()
+})
+
+it("repairs an advanced base before reserving or launching verification", async () => {
+  const s = fixture(1)
+  const runtime = s.runtimes[0]!
+  const repair = vi.spyOn(runtime, "requestRepair").mockResolvedValue(undefined)
+  const reserve = vi.spyOn(runtime, "reserveBudget")
+  const verify = vi.mocked(verifyNativeCandidate).mockReset()
+  vi.mocked(nativeGit).mockResolvedValue("c".repeat(40))
+
+  expect(await runtime.advanceWorkflow("first")).toBe(1)
+  expect(nativeGit).toHaveBeenCalledWith(runtime.policy.repository, "rev-parse", "origin/main")
+  expect(repair).toHaveBeenCalledWith(
+    "first",
+    expect.objectContaining({ candidate: expect.objectContaining({ baseSha: "b".repeat(40) }) }),
+    expect.stringContaining(`Base advanced from ${"b".repeat(40)} to ${"c".repeat(40)}`)
+  )
+  expect(reserve).not.toHaveBeenCalled()
+  expect(verify).not.toHaveBeenCalled()
+})
+
+it("waits for committed design approval before checking for base repair", async () => {
+  const s = fixture(1)
+  const runtime = s.runtimes[0]!
+  vi.mocked(nativeGit).mockClear()
+  vi.spyOn(NativeQualityRuntime.prototype, "ensureDesign").mockResolvedValue(false)
+  const repair = vi.spyOn(runtime, "requestRepair")
+
+  expect(await runtime.advanceWorkflow("first")).toBe(0)
+  expect(nativeGit).not.toHaveBeenCalled()
+  expect(repair).not.toHaveBeenCalled()
+})
+
+it("does not start stale-base repair while execution is paused", async () => {
+  const s = fixture(1)
+  const runtime = s.runtimes[0]!
+  vi.spyOn(runtime, "isPaused").mockReturnValue(true)
+  vi.mocked(nativeGit).mockClear()
+  const repair = vi.spyOn(runtime, "requestRepair")
+
+  expect(await runtime.advanceWorkflow("first")).toBe(0)
+  expect(nativeGit).not.toHaveBeenCalled()
+  expect(repair).not.toHaveBeenCalled()
 })
