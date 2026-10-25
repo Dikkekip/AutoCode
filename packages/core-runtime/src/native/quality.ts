@@ -78,12 +78,13 @@ export class NativeQualityRuntime {
     return this.runtime.gateway
   }
   designDigest(w: NativeWorkflow): string {
+    const { promotion: _promotion, ...designPolicy } = this.policy
     return hash({
       version: 1,
       attemptId: w.lifecycle?.attemptId ?? null,
       rules: nativeHighRiskPaths,
       proposal: w.proposal,
-      policy: this.policy,
+      policy: designPolicy,
       changes: w.riskAssessment?.changesDigest,
       implementationNotes: w.implementationNotes ?? null,
       reviewerEvidenceVersion: 7
