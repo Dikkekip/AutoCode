@@ -141,6 +141,34 @@ export class NativeWorkspaceGateway implements NativeGateway {
         throw new Error("Native retry accounting incomplete")
       return Boolean(maximum && failures > maximum)
     }
+    // A startup-admission refusal is safe to defer only if the owner still
+    // reports the exact unclaimed card, with no accepted or uncertain launch.
+    // Other start errors keep their existing failure and custody semantics.
+    const startCard = async (card: NativeCard): Promise<boolean> => {
+      const before = JSON.stringify(card)
+      try {
+        started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+        return true
+      } catch (error) {
+        if (String(error).includes(`Agent ${card.agentId} has not completed startup inspection and preparation.`)) {
+          const after = (await nativeCards(this.gateway, this.policy.boardId)).find((item) => item.id === card.id)
+          if (
+            after &&
+            after.status === "ready" &&
+            JSON.stringify(after) === before &&
+            !after.runId &&
+            !after.sessionKey &&
+            !after.execution &&
+            !after.metadata?.claim &&
+            !(after.metadata?.automation as any)?.launch
+          ) {
+            deferred.push({ cardId: card.id, reason: "workspace-unavailable" })
+            return false
+          }
+        }
+        throw error
+      }
+    }
     const maximum = Math.min(this.policy.workerConcurrency, Number(params.maxStarts) || 1)
     for (const card of cards) {
       if (started.length >= maximum) break
@@ -158,7 +186,7 @@ export class NativeWorkspaceGateway implements NativeGateway {
       }
       if (workspace?.kind === "scratch") {
         this.authorize()
-        started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+        if (!(await startCard(card))) continue
         startedCardIds.push(card.id)
         busy.add(card.agentId)
         continue
@@ -195,7 +223,7 @@ export class NativeWorkspaceGateway implements NativeGateway {
         previousSessionKey = card.sessionKey
       this.authorize()
       try {
-        started.push(await this.gateway.request("workboard.cards.start", { id: card.id }))
+        if (!(await startCard(card))) continue
       } catch (error) {
         if (
           workspace.kind !== "worktree" ||

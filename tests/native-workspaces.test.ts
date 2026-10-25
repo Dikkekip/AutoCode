@@ -596,3 +596,64 @@ it("defers low-storage starts without creating a run or consuming retry accounti
     startedCardIds: ["card"]
   })
 })
+
+it.each([
+  "scratch",
+  "dir",
+  "worktree"
+])("defers unchanged pending-startup %s cards and starts an admitted peer", async (kind) => {
+  const s = setup()
+  s.card.metadata.automation.workspace = { kind, path: s.root, sourcePath: s.root, sourceBranch: "origin/main" } as any
+  const healthy = {
+    ...s.card,
+    id: "healthy",
+    agentId: "reviewer",
+    metadata: { automation: { workspace: { kind: "scratch" } } }
+  }
+  const before = JSON.stringify(s.card)
+  s.gateway.request.mockImplementation(async (method, params) => {
+    s.calls.push([method, params])
+    if (method === "workboard.cards.list") return { cards: params.boardId ? [s.card, healthy] : [] } as any
+    if (method === "workboard.cards.start" && params.id === "card")
+      throw new Error(
+        "Agent coder has not completed startup inspection and preparation. The 5 second foreground startup budget elapsed; inspection continues."
+      )
+    if (method === "workboard.cards.start" && params.id === "healthy") return { started: true } as any
+    throw new Error("Unexpected call: " + method)
+  })
+  expect(await s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board", maxStarts: 1 })).toEqual({
+    started: [{ started: true }],
+    startedCardIds: ["healthy"],
+    deferred: [{ cardId: "card", reason: "workspace-unavailable" }]
+  })
+  expect(JSON.stringify(s.card)).toBe(before)
+})
+it.each([
+  "changed",
+  "missing",
+  "execution",
+  "claim",
+  "wrong-agent",
+  "transport"
+])("never treats %s startup outcomes as a safe deferral", async (outcome) => {
+  const s = setup()
+  s.card.metadata.automation.workspace = { kind: "scratch" } as any
+  let failed = false
+  s.gateway.request.mockImplementation(async (method, params) => {
+    if (method === "workboard.cards.list")
+      return { cards: params.boardId ? (failed && outcome === "missing" ? [] : [s.card]) : [] } as any
+    if (method === "workboard.cards.start") {
+      failed = true
+      if (outcome === "changed") s.card.status = "blocked"
+      if (outcome === "execution") Object.assign(s.card, { execution: { runId: "accepted" } })
+      if (outcome === "claim") Object.assign(s.card.metadata, { claim: { ownerId: "coder" } })
+      throw new Error(
+        outcome === "transport"
+          ? "Connection timed out"
+          : `Agent ${outcome === "wrong-agent" ? "other" : "coder"} has not completed startup inspection and preparation.`
+      )
+    }
+    throw new Error("Unexpected call: " + method)
+  })
+  await expect(s.adapter.request("workboard.cards.dispatchWithOptions", { boardId: "board" })).rejects.toThrow()
+})
