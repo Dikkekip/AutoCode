@@ -318,3 +318,56 @@ describe("structural disclosure keys in committed patches", () => {
     expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
   })
 })
+
+describe("mapped queue identities and selected event references", () => {
+  const declaration = [
+    "const queueKey = JSON.stringify(items.map((item) => [",
+    "  getTimelineEventKey(item.event),",
+    "  item.reason,",
+    "  item.blockers.map((blocker) => [blocker.kind, blocker.label, blocker.reason]),",
+    "]));"
+  ].join("\n")
+  it.each(["", "+", "-"])("preserves complete source references with diff prefix %s", (prefix) => {
+    const source = declaration
+      .split("\n")
+      .map((line) => `${prefix}    ${line}`)
+      .concat(`${prefix}    const isSelected = eventKey === selectedEventId`)
+      .join("\n")
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it.each([
+    declaration.replace("item.reason", '"credential123"'),
+    declaration.replace("item.reason", "item.secret"),
+    declaration.replace("item.reason", "credential123"),
+    declaration.replace("getTimelineEventKey(item.event)", "getCredentialKey(item.event)"),
+    declaration.replace("item.reason", "'literal-id'"),
+    declaration.replace("item.reason", "readValue(item)"),
+    declaration.replace("item.reason", "item.reason || fallback"),
+    declaration.replace("item.reason", "item.reason + suffix"),
+    declaration.replace("]));", "]))"),
+    `// ${declaration.split("\n").join(" ")}`,
+    `/* ${declaration} */`,
+    "const sample = `" + declaration + "`",
+    `const sample = ${JSON.stringify(declaration)}`,
+    "const isSelected = eventKey === credential123",
+    'const isSelected = eventKey === "credential123"',
+    "const isSelected = apiKey === selectedEventId",
+    "const isSelected = eventKey === auth.token",
+    "// const isSelected = eventKey === selectedEventId",
+    'const sample = "const isSelected = eventKey === selectedEventId"'
+  ])("does not exempt credentials, literals, comments or unsupported expressions: %s", (source) => {
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+  it("retains adjacent credential masking", () => {
+    for (const suffix of [' API_KEY="credential123"', '\nAPI_KEY="credential123"']) {
+      expect(redactNativeSourceText(`${declaration}${suffix}`)).not.toContain("credential123")
+      expect(redactNativeSourceText(`const isSelected = eventKey === selectedEventId${suffix}`)).not.toContain(
+        "credential123"
+      )
+    }
+  })
+  it("refuses a mapped declaration beyond the bounded statement limit", () => {
+    const source = declaration.replace("item.reason,", "item.reason,".repeat(1000))
+    expect(redactNativeSourceText(source)).not.toBe(source)
+  })
+})

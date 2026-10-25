@@ -1520,6 +1520,53 @@ describe("native quality investigations", () => {
       expect(s.gateway.cards.filter((card) => card.title.startsWith("Design review:"))).toHaveLength(1)
     }
   })
+  it("delivers complete commit-bound design evidence for mapped UI queue identities", async () => {
+    const s = setup(fixtureSkill, undefined, true)
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+    const w = s.runtime.requireWorkflow(workflowId)
+    const worktree = join(s.root, "candidate")
+    s.git("worktree", "add", "-b", "candidate", worktree)
+    writeFileSync(
+      join(worktree, "src/view.ts"),
+      [
+        "export function renderQueue(items: any[], eventKey: string, selectedEventId: string) {",
+        "  const queueKey = JSON.stringify(items.map((item) => [",
+        "    getTimelineEventKey(item.event),",
+        "    item.reason,",
+        "    item.blockers.map((blocker) => [blocker.kind, blocker.label, blocker.reason]),",
+        "  ]));",
+        "  const isSelected = eventKey === selectedEventId",
+        "  return { queueKey, isSelected }",
+        "}",
+        "function getTimelineEventKey(event: any) { return event.id }",
+        ""
+      ].join("\n")
+    )
+    const coder = s.gateway.cards.find((card) => card.id === w.implementationCardId)
+    coder.status = "running"
+    coder.sessionKey = "coder-session"
+    coder.metadata = { automation: { workspace: { path: worktree } } }
+    await s.runtime.submit("coder", coder.sessionKey, workflowId, worktree)
+    const submitted = s.runtime.requireWorkflow(workflowId)
+    expect(submitted.designEvidenceComplete).toBe(true)
+    expect(submitted.verification).toBeUndefined()
+    expect(submitted.lifecycle?.state).toBe("design_wait")
+    const design = s.gateway.cards.find((card) => card.id === submitted.designCardId)
+    const pointer = JSON.parse(design.notes)
+    const notes = JSON.parse(s.store.get<any>("card-context", pointer.contextId).notes)
+    expect(notes.committedDiff).toMatchObject({
+      baseSha: submitted.riskAssessment!.baseSha,
+      headSha: submitted.candidate!.headSha,
+      changesDigest: submitted.riskAssessment!.changesDigest,
+      complete: true,
+      redacted: false,
+      truncated: false
+    })
+    expect(notes.committedDiff.content).toContain("+  const queueKey = JSON.stringify(items.map((item) => [")
+    expect(notes.committedDiff.content).toContain("+  const isSelected = eventKey === selectedEventId")
+    expect(notes.reviewContract.executionEvidence).toBe("pending-independent-verification")
+  })
   it("preserves a candidate and repair budget when committed design evidence is redacted", async () => {
     const s = setup(fixtureSkill, undefined, true)
     const c = await prepare(s)

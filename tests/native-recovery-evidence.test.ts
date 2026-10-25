@@ -62,6 +62,34 @@ it("delivers exact committed scoped patch without old host paths or dirty worksp
   expect(evidence.patchSha256).toMatch(/^[a-f0-9]{64}$/)
 })
 it.each([
+  false,
+  true
+])("preserves queue references while retaining credential refusal=%s in recovery", async (secret) => {
+  const f = fixture(
+    [
+      "const queueKey = JSON.stringify(items.map((item) => [",
+      "  getTimelineEventKey(item.event),",
+      "  item.reason,",
+      "  item.blockers.map((blocker) => [blocker.kind, blocker.label, blocker.reason]),",
+      "]));",
+      "const isSelected = eventKey === selectedEventId",
+      secret ? "Authorization: Bearer fixture-secret-value" : "",
+      ""
+    ].join("\n")
+  )
+  const evidence = await nativeRecoveryEvidence(f.root, ["src"], f.source)
+  expect(evidence).toMatchObject({
+    baseSha: f.candidate.baseSha,
+    headSha: f.candidate.headSha,
+    complete: !secret,
+    redacted: secret,
+    truncated: false
+  })
+  expect(evidence.content).toContain("+const queueKey = JSON.stringify(items.map((item) => [")
+  expect(evidence.content).toContain("+const isSelected = eventKey === selectedEventId")
+  expect(evidence.content).not.toContain("fixture-secret-value")
+})
+it.each([
   "scope",
   "files",
   "short-sha",
