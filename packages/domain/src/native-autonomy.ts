@@ -727,7 +727,11 @@ export function validateNativeVerificationSandbox(value: unknown): NativeVerific
       throw new Error("Reviewed environment example requires root .env.example and exact Git blob")
     reviewedEnvExample = { blobSha, reviewedBy }
   }
-  if (inputFiles.some((p) => !(p === ".env.example" && reviewedEnvExample) && !nativeSandboxInputPathAllowed(p, reviewedSourceFiles)))
+  if (
+    inputFiles.some(
+      (p) => !(p === ".env.example" && reviewedEnvExample) && !nativeSandboxInputPathAllowed(p, reviewedSourceFiles)
+    )
+  )
     throw new Error("Sandbox inputs must be explicit source files, excluding credentials and policy files")
   const reviewed = {
     ...(reviewedSourceFiles.length ? { reviewedSourceFiles } : {}),

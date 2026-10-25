@@ -143,18 +143,10 @@ export async function snapshotNativeCommandInputs(
     check()
   }
   await assertSelection()
-  await snapshotNativeInputs(
-    root,
-    workspace,
-    sha,
-    config.inputFiles,
-    signal,
-    () => authority?.authorize(),
-    [
-      ...(config.reviewedSourceFiles ?? []),
-      ...(config.reviewedEnvExample ? [{ path: ".env.example", ...config.reviewedEnvExample }] : [])
-    ]
-  )
+  await snapshotNativeInputs(root, workspace, sha, config.inputFiles, signal, () => authority?.authorize(), [
+    ...(config.reviewedSourceFiles ?? []),
+    ...(config.reviewedEnvExample ? [{ path: ".env.example", ...config.reviewedEnvExample }] : [])
+  ])
   await assertSelection()
   if (selection) {
     const dir = resolve(workspace, ".openclaw-verification")

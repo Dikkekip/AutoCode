@@ -194,10 +194,9 @@ export function registerNativeAutonomyPlugin(api: any): void {
     for (const { name, decide } of nativeIdeaCommands)
       api.registerCommand({
         name,
-        description:
-          decide
-            ? "Browse, inspect, approve or skip a coding idea"
-            : "Show pending decisions and recent coding ideas",
+        description: decide
+          ? "Browse, inspect, approve or skip a coding idea"
+          : "Show pending decisions and recent coding ideas",
         channels: ["telegram"],
         acceptsArgs: true,
         requireAuth: true,

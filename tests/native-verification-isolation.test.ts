@@ -338,3 +338,25 @@ it("admits reviewed source modules by exact blob without allowing credential or 
     ).toThrow()
   expect(() => validateNativeVerificationSandbox({ ...policy, reviewedSourceFiles: [reviewed, reviewed] })).toThrow()
 })
+
+it("admits only a separately reviewed root environment example and keeps live environments excluded", () => {
+  const image = `sha256:${"a".repeat(64)}`
+  const reviewedEnvExample = { blobSha: "b".repeat(40), reviewedBy: "operator" }
+  const policy = { backend: "docker", image, inputFiles: [".env.example"], reviewedEnvExample }
+  expect(validateNativeVerificationSandbox(policy).reviewedEnvExample).toEqual(reviewedEnvExample)
+  expect(() => validateNativeVerificationSandbox({ ...policy, reviewedEnvExample: undefined })).toThrow()
+  for (const path of [
+    ".env",
+    ".env.local",
+    ".env.production",
+    "nested/.env.example",
+    ".ssh/key",
+    ".openclaw/native.json"
+  ])
+    expect(() => validateNativeVerificationSandbox({ ...policy, inputFiles: [".env.example", path] })).toThrow()
+  for (const patch of [{ blobSha: "main" }, { blobSha: "b".repeat(41) }, { reviewedBy: "" }])
+    expect(() =>
+      validateNativeVerificationSandbox({ ...policy, reviewedEnvExample: { ...reviewedEnvExample, ...patch } })
+    ).toThrow()
+  expect(() => validateNativeVerificationSandbox({ ...policy, inputFiles: ["src/a.ts"] })).toThrow()
+})

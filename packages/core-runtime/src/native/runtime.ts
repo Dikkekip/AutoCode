@@ -46,8 +46,8 @@ import {
   nativeCards,
   nativeObject
 } from "./gateway.js"
-import { nativeGoalLoopContract } from "./goal-loop.js"
 import { NativeGitStagePackets } from "./git-stage-packets.js"
+import { nativeGoalLoopContract } from "./goal-loop.js"
 import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
