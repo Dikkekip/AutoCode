@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from "vitest"
 import { nativeDoctor } from "../packages/core-runtime/src/native/doctor.js"
 import { NativeSdkGateway } from "../packages/core-runtime/src/native/gateway.js"
 import { registerNativeAutonomyPlugin } from "../packages/core-runtime/src/native/plugin.js"
+import * as reviewerImages from "../packages/core-runtime/src/native/reviewer-images.js"
 import { NativeAutonomyRuntime } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
 
@@ -366,4 +367,81 @@ it("declares only versioned session-bound factory tools and rejects revoked host
     "Host invocation revoked"
   )
   expect(nativeDoctor).not.toHaveBeenCalled()
+})
+
+it("returns reviewer image content through the session-bound factory without JSON-wrapping its image block", async () => {
+  const s = setup()
+  const policyPath = join(s.root, "policy.json")
+  const policy = JSON.parse(readFileSync(policyPath, "utf8"))
+  policy.mode = "implement-human-review"
+  writeFileSync(policyPath, JSON.stringify(policy))
+  await s.service.start()
+  vi.mocked(nativeDoctor).mockResolvedValue(report(true))
+  vi.spyOn(NativeSdkGateway.prototype, "request").mockImplementation(async (method) => {
+    if (method === "workboard.cards.list")
+      return {
+        cards: [
+          {
+            id: "design-card",
+            title: "Image design review",
+            agentId: "reviewer",
+            status: "running",
+            sessionKey: "review-session"
+          }
+        ]
+      } as any
+    throw new Error(`Unexpected RPC: ${method}`)
+  })
+  const store = new NativeEvidenceStore(join(s.root, ".openclaw/native-evidence.db"))
+  try {
+    store.put("workflow", "image-workflow", { designCardId: "design-card" })
+    const image = {
+      path: "src/view.png",
+      side: "head" as const,
+      revision: "a".repeat(40),
+      blobId: "b".repeat(40),
+      sha256: "c".repeat(64),
+      byteLength: 3,
+      width: 1,
+      height: 1,
+      mimeType: "image/png" as const
+    }
+    const response: reviewerImages.NativeReviewImageResult = {
+      content: [
+        { type: "text", text: "committed image metadata" },
+        { type: "image", data: "AQID", mimeType: "image/png" }
+      ],
+      details: {
+        digest: "d".repeat(64),
+        sessionKey: "review-session",
+        cardId: "design-card",
+        image,
+        stage: "design",
+        workflowId: "image-workflow"
+      }
+    }
+    const inspect = vi.spyOn(reviewerImages, "inspectNativeReviewerImage").mockResolvedValue(response)
+    const tools = s.factories[0]({ agentId: "reviewer", sessionKey: "review-session" })
+    const tool = tools.find((tool: any) => tool.name === "autocode_review_image")
+    expect(tool.parameters.additionalProperties).toBe(false)
+    expect(tool.parameters.required).toEqual(["boardId", "workflowId", "headSha", "stage", "path", "side"])
+    const args = {
+      boardId: "app",
+      workflowId: "image-workflow",
+      headSha: image.revision,
+      stage: "design",
+      path: image.path,
+      side: "head"
+    }
+    expect(await tool.execute("image-call", args)).toEqual(response)
+    expect(inspect).toHaveBeenCalledWith(expect.any(NativeAutonomyRuntime), "reviewer", "review-session", args)
+    expect(JSON.stringify(response.details)).not.toContain("AQID")
+    const coder = s.factories[0]({ agentId: "coder", sessionKey: "review-session" }).find(
+      (tool: any) => tool.name === "autocode_review_image"
+    )
+    await expect(coder.execute("forbidden", args)).rejects.toThrow(/assigned/)
+    expect(inspect).toHaveBeenCalledTimes(1)
+  } finally {
+    store.close()
+  }
 })

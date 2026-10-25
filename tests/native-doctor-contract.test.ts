@@ -273,3 +273,17 @@ it("requires every pooled coder to retain confined coding authority", () => {
   config.agents.entries["coder-2"]!.tools.exec.host = "gateway"
   expect(() => validateNativeRoleAuthority(pooled, config)).toThrow(/exec.host sandbox/)
 })
+
+it("allows reviewer image inspection only when explicitly granted and visible in its confined sandbox", () => {
+  const config = roles()
+  const reviewer = config.agents.entries.reviewer!
+  reviewer.tools.allow = [...reviewer.tools.allow, "autocode_review_image"]
+  expect(() => validateNativeRoleAuthority(policy, config)).toThrow(/sandbox tool policy hides autocode_review_image/)
+  reviewer.tools.sandbox.tools.allow = [...reviewer.tools.sandbox.tools.allow, "autocode_review_image"]
+  expect(() => validateNativeRoleAuthority(policy, config)).not.toThrow()
+})
+it.each(["coder", "planner"])("does not grant reviewer image inspection to %s", (role) => {
+  const config = roles()
+  config.agents.entries[role]!.tools.allow = [...config.agents.entries[role]!.tools.allow, "autocode_review_image"]
+  expect(() => validateNativeRoleAuthority(policy, config)).toThrow(/explicit narrow tools/)
+})

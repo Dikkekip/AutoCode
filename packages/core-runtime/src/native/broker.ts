@@ -37,7 +37,7 @@ export async function authorizeNativeTool(
   if (planning.has(name) && agentId !== policy.plannerAgentId) deny("assigned planner required")
   if (name === "autocode_submit" && !nativeCoderAgentIds(policy).includes(agentId)) deny("assigned coder required")
   if (
-    ["autocode_review", "autocode_design_review"].includes(name) &&
+    ["autocode_review", "autocode_design_review", "autocode_review_image"].includes(name) &&
     (agentId !== policy.reviewerAgentId || nativeCoderAgentIds(policy).includes(agentId))
   )
     deny("independent reviewer required")
@@ -50,7 +50,8 @@ export async function authorizeNativeTool(
       "autocode_context",
       "autocode_submit",
       "autocode_review",
-      "autocode_design_review"
+      "autocode_design_review",
+      "autocode_review_image"
     ].includes(name)
   )
     deny("tool is outside agent authority")
@@ -106,9 +107,11 @@ export async function authorizeNativeTool(
     targetCardId =
       name === "autocode_submit"
         ? workflow?.implementationCardId
-        : name === "autocode_review"
+        : name === "autocode_review" || (name === "autocode_review_image" && args.stage === "final")
           ? workflow?.reviewCardId
-          : workflow?.designCardId
+          : name !== "autocode_review_image" || args.stage === "design"
+            ? workflow?.designCardId
+            : undefined
   }
   if (!targetCardId || targetCardId !== card.id) deny("requested evidence or workflow is not assigned to this card")
 }

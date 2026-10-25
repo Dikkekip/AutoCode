@@ -7,6 +7,7 @@ import { assertNativeDeploymentPolicy } from "./deployment-health.js"
 import { assertNativeMode, assertNativePromotion } from "./promotion-mode.js"
 import { assertNativeProvenance, nativeContentDigest, nativeVerificationDigest } from "./provenance.js"
 import { assertNativeRequiredCi, NativeCiPending } from "./required-ci.js"
+import { assertNativeReviewImagesForRelease } from "./reviewer-images.js"
 import type { NativeAutonomyRuntime, NativeWorkflow } from "./runtime.js"
 import { nativePolicyTraceDigest, withNativeStageTrace } from "./telemetry.js"
 import {
@@ -187,6 +188,7 @@ export async function releaseNativeWorkflow(
     throw new NativeReleasePending(
       "High-risk release requires approved design review for current design, scope and policy"
     )
+  await assertNativeReviewImagesForRelease(runtime, id, w)
   const currentDiff = await io.git(
     candidate.cwd,
     "diff",

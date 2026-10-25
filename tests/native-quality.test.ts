@@ -14,6 +14,11 @@ import {
 import type { Investigation } from "../packages/core-runtime/src/native/quality.js"
 import { nativeRepairObservation, planNativeRepair } from "../packages/core-runtime/src/native/repair.js"
 import { createNativeOperatorRequest } from "../packages/core-runtime/src/native/requests.js"
+import {
+  assertNativeReviewImageInspections,
+  assertNativeReviewImagesForRelease,
+  inspectNativeReviewerImage
+} from "../packages/core-runtime/src/native/reviewer-images.js"
 import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 import {
   bootstrapNativeSkill,
@@ -2211,4 +2216,182 @@ it("carries long-horizon investigation and selection requirements through create
   expect(investigation.instructions.join("\n")).toContain("Milestones are progress, not separate proof of completion")
   expect(planner.instructions.join("\n")).toContain("record the concrete dependency or admission reason")
   expect(planner.instructions.join("\n")).toContain("existing scope, capacity and risk gates")
+})
+
+// Canonical design/final review tests use committed synthetic PNGs and synthetic
+// verification receipts. They do not claim live image inspection or execution.
+async function imageReviewFixture() {
+  const s = setup(fixtureSkill, ["src"], true, true)
+  const before = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGMQEREBAAB8AD2SgCfbAAAAAElFTkSuQmCC",
+    "base64"
+  )
+  const after = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNISUkBAAJcAS1bGyRYAAAAAElFTkSuQmCC",
+    "base64"
+  )
+  writeFileSync(join(s.root, "src/view.png"), before)
+  s.git("add", "src/view.png")
+  s.git("commit", "-m", "synthetic image baseline")
+  s.git("update-ref", "refs/remotes/origin/main", "HEAD")
+  const raw = proposal()
+  raw.allowedPaths = ["src"]
+  const c = await prepare(s, raw)
+  const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful")
+  const w = s.runtime.requireWorkflow(workflowId)
+  const baseSha = s.git("rev-parse", "HEAD")
+  writeFileSync(join(s.root, "src/view.png"), after)
+  s.git("add", "src/view.png")
+  s.git("commit", "-m", "synthetic image candidate")
+  const headSha = s.git("rev-parse", "HEAD")
+  w.candidate = { cwd: s.root, baseSha, headSha, files: ["src/view.png"], branch: "main" }
+  w.lifecycle!.headSha = headSha
+  await s.runtime.quality.classifyCandidate(workflowId, w, w.candidate, "submission")
+  await s.runtime.quality.ensureDesign(workflowId, w)
+  const card = s.gateway.cards.find((card) => card.id === w.designCardId)
+  card.status = "running"
+  card.sessionKey = "image-design-session"
+  const args = {
+    boardId: s.policy.boardId,
+    workflowId,
+    headSha,
+    stage: "design" as const,
+    path: "src/view.png",
+    side: "base" as const
+  }
+  const read = (side: "base" | "head", session = card.sessionKey) =>
+    inspectNativeReviewerImage(s.runtime, "reviewer", session, { ...args, side })
+  return { ...s, workflowId, args, card, before, after, read }
+}
+
+it("requires both immutable PNG sides in the exact design session before canonical approval", async () => {
+  const s = await imageReviewFixture()
+  const evidence = await s.runtime.quality.committedReviewEvidence(s.runtime.requireWorkflow(s.workflowId))
+  expect(evidence).toMatchObject({ complete: true, images: [{ side: "base" }, { side: "head" }] })
+  writeFileSync(join(s.root, "src/view.png"), "PRIVATE DIRTY WORKTREE")
+  const approve = () =>
+    s.runtime.quality.designReview(
+      "reviewer",
+      s.card.sessionKey,
+      s.workflowId,
+      "approved",
+      "Compared both committed images and static behavior",
+      assessment
+    )
+  await expect(approve()).rejects.toThrow(/Inspect committed base image/)
+  const result = await s.read("base")
+  expect(result.content[1]).toEqual({ type: "image", mimeType: "image/png", data: s.before.toString("base64") })
+  expect(JSON.stringify(result.details)).not.toContain(s.before.toString("base64"))
+  await expect(approve()).rejects.toThrow(/Inspect committed head image/)
+  await s.read("head")
+  s.card.sessionKey = "replacement-image-session"
+  await expect(approve()).rejects.toThrow(/Inspect committed base image/)
+  await s.read("base")
+  await s.read("head")
+  expect(await approve()).toEqual({ recorded: true })
+})
+
+it.each([
+  ["coder", { agent: "coder" }],
+  ["wrong session", { session: "unassigned" }],
+  ["wrong head", { headSha: "a".repeat(40) }],
+  ["other workflow", { workflowId: "unassigned-workflow" }],
+  ["unassigned final stage", { stage: "final" }],
+  ["invalid stage", { stage: "anything" }],
+  ["outside path", { path: "private.png" }],
+  ["invalid side", { side: "worktree" }]
+])("refuses %s image reads without journaling inspection", async (_name, overrides) => {
+  const s = await imageReviewFixture()
+  const { agent = "reviewer", session = s.card.sessionKey, ...changes } = overrides as any
+  await expect(inspectNativeReviewerImage(s.runtime, agent, session, { ...s.args, ...changes })).rejects.toThrow()
+  expect(s.store.list("review-image-inspection")).toHaveLength(0)
+})
+
+it("does not reuse image inspections across policy, attempt or design-card changes", async () => {
+  const s = await imageReviewFixture()
+  await s.read("base")
+  await s.read("head")
+  const w = s.runtime.requireWorkflow(s.workflowId)
+  const check = () => assertNativeReviewImageInspections(s.runtime, s.workflowId, w, "design", s.card.sessionKey)
+  await check()
+  s.policy.dedupeWindowHours += 1
+  w.designCardDigest = s.runtime.quality.designDigest(w)
+  await expect(check()).rejects.toThrow(/Inspect committed/)
+  s.policy.dedupeWindowHours -= 1
+  w.designCardDigest = s.runtime.quality.designDigest(w)
+  await check()
+  const previous = w.lifecycle!.attemptId
+  w.lifecycle!.attemptId = "different-attempt"
+  w.designCardDigest = s.runtime.quality.designDigest(w)
+  await expect(check()).rejects.toThrow(/Inspect committed/)
+  w.lifecycle!.attemptId = previous
+  w.designCardDigest = s.runtime.quality.designDigest(w)
+  w.designCardId = "replacement-design-card"
+  await expect(check()).rejects.toThrow(/Inspect committed/)
+})
+
+it("requires fresh final-stage PNG inspection and binds it to verification before approval", async () => {
+  const s = await imageReviewFixture()
+  await s.read("base")
+  await s.read("head")
+  await s.runtime.quality.designReview(
+    "reviewer",
+    s.card.sessionKey,
+    s.workflowId,
+    "approved",
+    "Static visual design covered",
+    assessment
+  )
+  s.card.status = "done"
+  const w = s.runtime.requireWorkflow(s.workflowId)
+  w.verification = fixtureVerification(s, w, s.workflowId, s.root)
+  s.runtime.transitionWorkflow(s.workflowId, w, "review")
+  w.reviewCardId = await s.runtime.stage(s.workflowId, w, "Review", "ready", JSON.stringify({ fixture: true }))
+  s.store.put("workflow", s.workflowId, w)
+  const card = s.gateway.cards.find((card) => card.id === w.reviewCardId)
+  card.status = "running"
+  card.sessionKey = "image-final-session"
+  const approve = () =>
+    s.runtime.review(
+      "reviewer",
+      card.sessionKey,
+      s.workflowId,
+      s.args.headSha,
+      "approved",
+      "Compared exact images against acceptance",
+      assessment
+    )
+  await expect(approve()).rejects.toThrow(/Inspect committed base image/)
+  for (const side of ["base", "head"] as const)
+    await inspectNativeReviewerImage(s.runtime, "reviewer", card.sessionKey, { ...s.args, stage: "final", side })
+  const changed = s.runtime.requireWorkflow(s.workflowId)
+  changed.verification!.provenance!.executionId = "second-synthetic-verifier"
+  const updatedProvenance = JSON.stringify(changed.verification!.provenance)
+  writeFileSync(changed.verification!.provenanceArtifact!.path, updatedProvenance)
+  changed.verification!.provenanceArtifact!.sha256 = nativeContentDigest(updatedProvenance)
+  s.store.put("workflow", s.workflowId, changed)
+  await expect(approve()).rejects.toThrow(/Inspect committed base image/)
+  for (const side of ["base", "head"] as const)
+    await inspectNativeReviewerImage(s.runtime, "reviewer", card.sessionKey, { ...s.args, stage: "final", side })
+  expect(await approve()).toEqual({ recorded: true })
+  card.status = "done"
+  const released = s.runtime.requireWorkflow(s.workflowId)
+  await assertNativeReviewImagesForRelease(s.runtime, s.workflowId, released)
+  for (const receipt of s.store.list<any>("review-image-inspection").filter((item) => item.value.stage === "final"))
+    s.store.put("review-image-inspection", receipt.id, { ...receipt.value, digest: "substituted" })
+  await expect(assertNativeReviewImagesForRelease(s.runtime, s.workflowId, released)).rejects.toThrow(
+    /Inspect committed/
+  )
+})
+
+it("refuses an image read when its assigned reviewer retires during the asynchronous read", async () => {
+  const s = await imageReviewFixture()
+  const original = s.gateway.request.bind(s.gateway)
+  let reads = 0
+  s.gateway.request = async (method, params) => {
+    if (method === "workboard.cards.list" && ++reads === 2) s.card.status = "done"
+    return original(method, params)
+  }
+  await expect(s.read("base")).rejects.toThrow(/active assigned card/)
+  expect(s.store.list("review-image-inspection")).toHaveLength(0)
 })

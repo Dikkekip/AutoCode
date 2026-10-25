@@ -18,6 +18,7 @@ import {
   NativeReleasePending,
   releaseNativeWorkflow
 } from "../packages/core-runtime/src/native/release.js"
+import * as reviewerImages from "../packages/core-runtime/src/native/reviewer-images.js"
 import { NativeAutonomyRuntime, type NativeWorkflow } from "../packages/core-runtime/src/native/runtime.js"
 import { NativeEvidenceStore } from "../packages/core-runtime/src/native/store.js"
 import * as verificationModule from "../packages/core-runtime/src/native/verification.js"
@@ -346,6 +347,8 @@ describe("native release reconciliation", () => {
     s.runtime.control.change(true)
     vi.spyOn(verificationModule, "nativeGit").mockImplementation(s.io.git)
     vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
+      images: [],
+      unavailableImages: [],
       complete: true,
       headSha: s.workflow.candidate!.headSha,
       baseSha: s.workflow.candidate!.baseSha,
@@ -1248,6 +1251,8 @@ describe("verification refresh after a policy change", () => {
       diffDigest: s.workflow.verification!.provenance!.diffDigest,
       patchSha256: nativeContentDigest("fixture"),
       content: "fixture",
+      images: [],
+      unavailableImages: [],
       complete: true,
       truncated: false,
       redacted: false,
@@ -1306,4 +1311,18 @@ it("retains an accepted workspace when its protected provenance would be removed
     reason: expect.stringContaining("provenance")
   })
   expect(request).not.toHaveBeenCalledWith("worktrees.remove", expect.anything())
+})
+
+it("checks committed image review receipts before any release effect", async () => {
+  const s = setup()
+  const gate = vi
+    .spyOn(reviewerImages, "assertNativeReviewImagesForRelease")
+    .mockRejectedValue(new Error("Missing independent image inspection"))
+  await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(
+    /Missing independent image inspection/
+  )
+  expect(gate).toHaveBeenCalledWith(s.runtime, "workflow", s.workflow)
+  expect(s.io.github).not.toHaveBeenCalled()
+  expect(s.io.command).not.toHaveBeenCalled()
+  expect(s.io.git.mock.calls.some(([, ...args]) => args.includes("push"))).toBe(false)
 })

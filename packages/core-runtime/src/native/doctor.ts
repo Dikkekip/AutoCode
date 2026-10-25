@@ -282,6 +282,7 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
     {
       id: policy.reviewerAgentId,
       tools: ["autocode_context", "autocode_review", "autocode_design_review", "read", ...completion],
+      optionalTools: ["autocode_review_image"],
       access: "ro"
     }
   ]
@@ -293,7 +294,7 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
     if (
       !Array.isArray(tools?.allow) ||
       !tools.allow.length ||
-      tools.allow.some((tool: unknown) => !role.tools.includes(String(tool))) ||
+      tools.allow.some((tool: unknown) => ![...role.tools, ...(role.optionalTools ?? [])].includes(String(tool))) ||
       tools.alsoAllow?.length ||
       tools.byProvider ||
       agent?.subagents?.allowAgents?.length ||
@@ -322,7 +323,10 @@ export function validateNativeRoleAuthority(policy: NativeAutonomyPolicy, value:
     for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || completion.includes(tool)))
       if (!tools.allow.includes(tool)) throw new Error(`Role ${role.id} is missing ${tool}`)
     const sandboxTools = tools.sandbox?.tools ?? config.tools?.sandbox?.tools
-    for (const tool of role.tools.filter((tool) => tool.startsWith("autocode_") || completion.includes(tool))) {
+    for (const tool of [
+      ...role.tools,
+      ...(role.optionalTools ?? []).filter((tool) => tools.allow.includes(tool))
+    ].filter((tool) => tool.startsWith("autocode_") || completion.includes(tool))) {
       const plugin = tool.startsWith("autocode_") ? "autocode" : "workboard"
       if (
         ![...(sandboxTools?.allow ?? []), ...(sandboxTools?.alsoAllow ?? [])].some((v) => v === tool || v === plugin) ||

@@ -17,6 +17,7 @@ import {
 import { assertNativeMode } from "./promotion-mode.js"
 import { applyNativeRequestDeferral, createNativeOperatorRequest, planNativeRequestDeferral } from "./requests.js"
 import { configureNativeRetainedSessionRoot, registerNativeRetainedSession } from "./retained-session-proof.js"
+import { inspectNativeReviewerImage } from "./reviewer-images.js"
 import { NativeAutonomyRuntime } from "./runtime.js"
 import { stopNativeRuntimeCalls, withNativeRuntimeCall, withNativeRuntimeRefresh } from "./runtime-lifetime.js"
 import { loadNativeSkillText } from "./skill-bundle.js"
@@ -700,7 +701,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
         r.policy,
         ["autocode_propose", "autocode_defer", "autocode_investigation_finish"].includes(name)
           ? "propose"
-          : ["autocode_review", "autocode_design_review"].includes(name)
+          : ["autocode_review", "autocode_design_review", "autocode_review_image"].includes(name)
             ? "review"
             : ["autocode_admit", "autocode_submit"].includes(name)
               ? "implement"
@@ -719,6 +720,19 @@ export function registerNativeAutonomyPlugin(api: any): void {
       (p, ctx) => runtime(p.boardId).readContext(ctx.agentId, ctx.sessionKey, p.contextId)
     ),
 
+    tool(
+      "autocode_review_image",
+      "Inspect an exact committed base/head PNG for your assigned independent design or final review. Returns image content; every manifest side must be inspected before approval.",
+      {
+        workflowId: field,
+        headSha: field,
+        stage: { type: "string", enum: ["design", "final"] },
+        path: field,
+        side: { type: "string", enum: ["base", "head"] }
+      },
+      (p, ctx) => inspectNativeReviewerImage(runtime(p.boardId), ctx.agentId, ctx.sessionKey, p),
+      []
+    ),
     tool(
       "autocode_inspect",
       "Read committed files in your assigned persona scope. Empty path lists files. Pass a returned nextOffset as offset to continue a truncated file.",
@@ -964,6 +978,8 @@ export function registerNativeAutonomyPlugin(api: any): void {
                 }
                 ctx.assertInvocationCurrent()
                 const result = await definition.execute(params, ctx)
+                ctx.assertInvocationCurrent()
+                if (definition.name === "autocode_review_image") return result
                 return { content: [{ type: "text", text: JSON.stringify(result) }], details: result }
               })
             )

@@ -100,7 +100,7 @@ For each persona, register the dedicated investigationAgentId from the policy. F
 
 Set the sandbox image to your reviewed immutable image digest, and use the runtime user's numeric UID/GID. An existing confined read-only reviewer sandbox can supply these settings. Do not add host mounts, shell, editing, spawning, alsoAllow, or provider-specific overrides. Research runs in scratch workspaces and reads committed files through the inspection tool. The tool allowlist does not enable a sandbox. Readiness checks verify the effective read-only session sandbox as well as the seven tools; Workboard independently enforces confinement at dispatch.
 
-The planner needs proposal, admission, and deferral tools. The coder needs autocode_submit. The reviewer needs autocode_design_review and autocode_review. All worker roles need native completion/heartbeat tools. See the [native tool reference](native-autonomy.md#plugin-and-native-scheduling).
+The planner needs proposal, admission, and deferral tools. The coder needs autocode_submit. The reviewer needs autocode_design_review and autocode_review. To review committed PNG changes, also grant autocode_review_image to the reviewer and expose it in the reviewer sandbox tool policy. All worker roles need native completion/heartbeat tools. See the [native tool reference](native-autonomy.md#plugin-and-native-scheduling).
 
 After reviewing the plugin source and host access, install from the stable checkout:
 
