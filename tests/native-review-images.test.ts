@@ -97,6 +97,15 @@ it.each([
       return bytes
     }
   ],
+  [
+    "high-bit chunk name",
+    () => {
+      const bytes = png()
+      bytes[12] = bytes[12]! | 0x80
+      bytes.writeUInt32BE(crc32(bytes.subarray(12, 29)), 29)
+      return bytes
+    }
+  ],
   ["truncated chunk", () => png().subarray(0, -1)],
   ["trailing bytes", () => Buffer.concat([png(), Buffer.from("unreviewed")])],
   ["zero width", () => png({ width: 0 })],

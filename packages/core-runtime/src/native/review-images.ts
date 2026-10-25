@@ -49,7 +49,7 @@ export function inspectNativeReviewPng(bytes: Buffer): { width: number; height: 
     if (bytes.length - offset < 12) throw new Error("Truncated review PNG chunk")
     const length = bytes.readUInt32BE(offset)
     if (length > bytes.length - offset - 12) throw new Error("Truncated review PNG payload")
-    const type = bytes.toString("ascii", offset + 4, offset + 8)
+    const type = bytes.toString("latin1", offset + 4, offset + 8)
     const data = bytes.subarray(offset + 8, offset + 8 + length)
     if (
       !/^[A-Za-z]{2}[A-Z][A-Za-z]$/.test(type) ||
