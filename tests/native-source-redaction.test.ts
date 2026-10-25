@@ -290,3 +290,31 @@ describe("complete query factory references", () => {
     expect(redactNativeSourceText(long)).not.toBe(long)
   }, 5000)
 })
+
+describe("structural disclosure keys in committed patches", () => {
+  const source = [
+    "+  const datasetKey = JSON.stringify({",
+    "+    bundleId: bundle.bundle_id,",
+    "+    incidents: incidents.map(({ incident_id, title }) => [incident_id, title]),",
+    "+    groups: summary.groups.map(({ key, incidentLabels }) => [key, incidentLabels]),",
+    "+  });",
+    "+  const expandedKeys = disclosure.datasetKey === datasetKey ? disclosure.expandedKeys : [];",
+    "     group.key === 'select-incidents' || group.key === 'attach-evidence',",
+    '+ <Badge key={`${group.key}-${index}-${label}`} variant="outline">'
+  ].join("\n")
+  it("preserves serialization, state selection, discriminant unions and JSX reference templates", () => {
+    expect(redactNativeSourceText(source)).toBe(source)
+  })
+  it.each([
+    'const datasetKey = JSON.stringify({ value: "credential123" });',
+    "const datasetKey = JSON.stringify({ value: credential123 });",
+    "const expandedKeys = auth.token === datasetKey ? credential123 : [];",
+    "<Badge key={`${credential123}-${index}`} />",
+    "<Badge key={`credential123-${index}`} />"
+  ])("retains credential masking for %s", (value) => {
+    expect(redactNativeSourceText(value)).not.toContain("credential123")
+  })
+  it("keeps adjacent credentials masked", () => {
+    expect(redactNativeSourceText(`${source}\n+ API_KEY="credential123"`)).not.toContain("credential123")
+  })
+})
