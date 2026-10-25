@@ -31,6 +31,9 @@ const KEYBOARD_CALLBACK =
 const KEY_IDENTIFIER_COMPARISON = /^key[ \t]*===[ \t]*[A-Za-z_$][\w$]*/
 const KEY_IDENTIFIER_KEYBOARD_COMPARISON =
   /^key[ \t]*===[ \t]*(["'])(?:Escape|Enter|Tab| |ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1/
+const ENTER_KEY_HINT_LITERAL = /^(["'])(?:enter|done|go|next|previous|search|send)\1$/
+const SHORTCUT_LABEL_LITERAL =
+  /^(["'])(?:[A-Z0-9←→↑↓[\]?/]|Escape|Enter|Tab|Space|ArrowUp|ArrowDown|ArrowLeft|ArrowRight|Home|End|PageUp|PageDown|Backspace|Delete)\1$/
 
 function quotedEnd(source: string, start: number, limit: number): number {
   const quote = source[start]
@@ -61,6 +64,23 @@ function protectKeyboardSyntax(source: string, keyMarker: string, handlerMarker:
     } else if (source.slice(cursor, cursor + 2) === "/*") {
       const end = source.indexOf("*/", cursor + 2)
       cursor = end < 0 ? source.length : end + 2
+    } else if (source.startsWith("enterKeyHint", cursor)) {
+      // A diff hunk may omit the opening input tag. Accept only a whole
+      // attribute line with one standard HTML enum value, never arbitrary text.
+      const attribute = /^enterKeyHint[ \t]*=[ \t]*(["'][^\r\n]*["'])[ \t]*\r?(?:\n|$)/.exec(
+        source.slice(cursor, cursor + 128)
+      )
+      const value = attribute?.[1]
+      if (
+        value &&
+        ENTER_KEY_HINT_LITERAL.test(value) &&
+        (attribute[0].endsWith("\n") || cursor + attribute[0].length === source.length) &&
+        /^[+\- ]?[ \t]*$/.test(source.slice(source.lastIndexOf("\n", cursor - 1) + 1, cursor))
+      ) {
+        chunks.push(source.slice(copied, cursor + 5), handlerMarker)
+        copied = cursor + 8
+        cursor += attribute[0].length
+      } else cursor++
     } else if (
       (source.startsWith("onKeyDown", cursor) || source.startsWith("handleKeyDown", cursor)) &&
       /[\s<]/.test(source[cursor - 1] ?? "") &&
@@ -92,6 +112,7 @@ function openingTag(source: string, start: number): { end: number; keys: number[
   const keys: number[] = []
   const syntheticKeys: number[] = []
   while (cursor < limit && /[\w.:-]/.test(source[cursor]!)) cursor++
+  const tagName = source.slice(start + 1, cursor)
   while (cursor < limit) {
     const beforeSpace = cursor
     while (cursor < limit && /\s/.test(source[cursor]!)) cursor++
@@ -123,6 +144,14 @@ function openingTag(source: string, start: number): { end: number; keys: number[
       // the exemption on the JSX attribute name; other quoted keys are masked.
       if (name === "actingKey" && /^(["'])matter:MATTER-[0-9]{3}:document\1$/.test(source.slice(valueStart, cursor)))
         syntheticKeys.push(nameStart + 6)
+      if (name === "enterKeyHint" && ENTER_KEY_HINT_LITERAL.test(source.slice(valueStart, cursor)))
+        syntheticKeys.push(nameStart + 5)
+      if (
+        tagName === "KeyboardShortcutHint" &&
+        name === "keyLabel" &&
+        SHORTCUT_LABEL_LITERAL.test(source.slice(valueStart, cursor))
+      )
+        keys.push(nameStart)
       continue
     }
     if (source[cursor] !== "{") break

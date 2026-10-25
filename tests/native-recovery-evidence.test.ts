@@ -73,6 +73,8 @@ it.each([
       "  item.blockers.map((blocker) => [blocker.kind, blocker.label, blocker.reason]),",
       "]));",
       "const isSelected = eventKey === selectedEventId",
+      '<KeyboardShortcutHint keyLabel="Enter" ariaLabel="Enter" />',
+      '<input enterKeyHint="done" />',
       secret ? "Authorization: Bearer fixture-secret-value" : "",
       ""
     ].join("\n")
@@ -87,6 +89,8 @@ it.each([
   })
   expect(evidence.content).toContain("+const queueKey = JSON.stringify(items.map((item) => [")
   expect(evidence.content).toContain("+const isSelected = eventKey === selectedEventId")
+  expect(evidence.content).toContain('keyLabel="Enter"')
+  expect(evidence.content).toContain('enterKeyHint="done"')
   expect(evidence.content).not.toContain("fixture-secret-value")
 })
 it.each([
