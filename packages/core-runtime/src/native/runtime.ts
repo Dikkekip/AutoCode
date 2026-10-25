@@ -46,6 +46,7 @@ import {
   nativeCards,
   nativeObject
 } from "./gateway.js"
+import { nativeGoalLoopContract } from "./goal-loop.js"
 import { NativeGitStagePackets } from "./git-stage-packets.js"
 import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
@@ -1318,6 +1319,7 @@ export class NativeAutonomyRuntime {
         notes: JSON.stringify({
           workflowId: id,
           ...entry.proposal,
+          goalContract: nativeGoalLoopContract(entry.proposal),
           instructions: [
             "Implement this admitted scope in the managed worktree. The autocode_submit broker records the scoped commit; sandbox Git metadata is intentionally unavailable.",
             "Follow the approved implementationPrompt plan. At a decision point, compare the recorded alternatives against current repository evidence; do not broaden scope or create unbounded fan-out.",
@@ -1437,6 +1439,7 @@ export class NativeAutonomyRuntime {
       notes: JSON.stringify({
         workflowId,
         proposal,
+        goalContract: nativeGoalLoopContract(proposal),
         preservedEvidence: original.evidence,
         instructions:
           "Recover useful preserved changes and implement the original acceptance criteria. Call autocode_submit(workflowId, worktreePath) to record the scoped commit, then workboard_complete. Do not merge or deploy."
@@ -1717,6 +1720,7 @@ export class NativeAutonomyRuntime {
       notes: JSON.stringify({
         workflowId: id,
         proposal: workflow.proposal,
+        goalContract: nativeGoalLoopContract(workflow.proposal),
         reason,
         candidate: workflow.candidate,
         verification: this.verificationForAgent(workflow.verification),

@@ -2370,3 +2370,25 @@ it("carries long-horizon investigation and selection requirements through create
   expect(planner.instructions.join("\n")).toContain("record the concrete dependency or admission reason")
   expect(planner.instructions.join("\n")).toContain("existing scope, capacity and risk gates")
 })
+
+  it("attaches a bounded goal and verification loop to native coding cards", async () => {
+    const s = setup()
+    const c = await prepare(s)
+    const { workflowId } = await s.runtime.admit("planner", c.proposalId, "Useful scoped change")
+    const workflow = s.runtime.requireWorkflow(workflowId)
+    const card = s.gateway.cards.find((item) => item.id === workflow.implementationCardId)
+    const envelope = JSON.parse(card.notes)
+    const notes = envelope.contextId
+      ? JSON.parse(s.store.get<{ notes: string }>("card-context", envelope.contextId)!.notes)
+      : envelope
+
+    expect(notes.goalContract.outcome).toBe("Open source from citation")
+    expect(notes.goalContract.verification).toEqual([
+      { criterion: "User opens source", method: "Navigation behavior test" }
+    ])
+    expect(notes.goalContract.boundaries).toEqual(["src/view.ts"])
+    expect(notes.goalContract.iteration).toContain("repair failures")
+    expect(notes.goalContract.budget).toContain("not evidence of completion")
+    expect(notes.goalContract.completion).toContain("autocode_submit")
+    expect(notes.goalContract.blocked).toContain("input needed")
+  })
