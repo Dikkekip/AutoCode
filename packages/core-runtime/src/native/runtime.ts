@@ -1720,7 +1720,6 @@ export class NativeAutonomyRuntime {
       notes: JSON.stringify({
         workflowId: id,
         proposal: workflow.proposal,
-        goalContract: nativeGoalLoopContract(workflow.proposal),
         reason,
         candidate: workflow.candidate,
         verification: this.verificationForAgent(workflow.verification),
@@ -1754,6 +1753,7 @@ export class NativeAutonomyRuntime {
       },
       notes: JSON.stringify({
         ...JSON.parse(legacyInput.notes),
+        goalContract: nativeGoalLoopContract(workflow.proposal),
         previousCandidate,
         failureEvidence,
         instructions:
