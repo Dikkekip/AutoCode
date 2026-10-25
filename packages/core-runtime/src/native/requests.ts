@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto"
-import { nativeCoderAgentIds, nativePathAllowed } from "@openclaw/domain"
+import { nativeCoderAgentIds, nativePathAllowed, nativePersonaInspectionPaths } from "@openclaw/domain"
 import { type NativeHumanAuthority, requireNativeHuman } from "./governance.js"
 import { nativeLoadedPolicyDigest } from "./policy-refresh.js"
 import type { NativeAutonomyRuntime } from "./runtime.js"
@@ -142,7 +142,7 @@ export async function createNativeOperatorRequest(runtime: NativeAutonomyRuntime
       path.startsWith("/") ||
       path.includes("\\") ||
       path.split("/").some((p) => !p || p === "." || p === "..") ||
-      !persona.allowedPaths.some((root) => nativePathAllowed(path, root))
+      !nativePersonaInspectionPaths(persona).some((root) => nativePathAllowed(path, root))
     )
       throw new Error("Request evidence outside persona scope")
     return { path, observation: text(entry.observation, "observation", 2000) }
