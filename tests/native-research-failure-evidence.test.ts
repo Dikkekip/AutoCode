@@ -205,6 +205,7 @@ it("caps projection at one recent failed candidate and never includes successful
   f.records.push({ ...f.records[0]!, updatedAt: 9 })
   expect(await f.read()).toHaveLength(1)
   f.evidence.checks[0]!.exitCode = 0
+  Object.assign(f.evidence.checks[0]!, { outcome: "success" })
   expect(await f.read()).toEqual([])
 })
 

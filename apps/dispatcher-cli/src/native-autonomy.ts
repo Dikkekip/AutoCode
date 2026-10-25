@@ -164,7 +164,7 @@ export function registerNativeAutonomyCommands(program: Command, io: { stdout: (
     .command("recover")
     .option("--id <workflowId>", "Workflow identity for planning")
     .option("--plan", "Prepare a read-only recovery plan")
-    .option("--action <action>", "retry, cancel, supersede, abandon or archive", "retry")
+    .option("--action <action>", "resume-review, resume-release, retry, cancel, supersede, abandon or archive", "retry")
     .option("--reason <reason>", "Operator recovery rationale")
     .option("--successor <workflowId>", "Existing successor for supersession")
     .option("--out <file>", "Save the exact plan to a new file")

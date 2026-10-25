@@ -37,6 +37,12 @@ Completed investigations, including `no_op`, suppress unchanged research for `de
 
 An implementation card blocked by a startup failure without an execution is recorded as a blocked native workflow on reconciliation. This makes allocation failures visible in `autocode.status` and workflow explanations instead of showing an implementation that silently makes no progress. Preserve the card and diagnostics, resolve capacity or startup configuration, then use scoped operator recovery; reconciliation does not replay failed or uncertain execution.
 
+### Goal and loop contract for native coding
+
+Each admitted implementation Workboard card carries a `goalContract` derived from its reviewed proposal. It names the outcome, acceptance criteria and verification methods, allowed paths, constraints, an iteration rule, native budget limits, a completion handoff, and a blocked stop condition. Repair cards carry the same contract alongside the prior failed verification and review evidence. The worker should plan a small change, edit, run a focused check, inspect the result, repair failures, and record the next action until the in-scope outcome is ready or a concrete blocker remains.
+
+This applies the practices described in [OpenAI's Codex `/goal` guidance](https://developers.openai.com/cookbook/examples/codex/using_goals_in_codex) to OpenClaw native sessions. It does not invoke the interactive `/goal` command: Workboard owns the durable card and session, while `autocode_submit`, native verification receipts, and independent review decide whether the workflow can advance. A card being done, an agent saying “complete”, or a retry budget expiring does not by itself prove the outcome. Native pause, retry, recovery, and budget controls remain authoritative.
+
 Implementation, verification, review, merge, and deployment are separate cards. The workflow card remains blocked until deployment has an exact-revision receipt. A worker's `workboard_complete` is not a release authorization. Managed implementation worktrees start from `origin/<baseBranch>`, preserving a stale or dirty local branch. The coder must call `autocode_submit` from its assigned card session with its managed worktree; the host broker records any scoped source edits as a commit without exposing shared Git metadata to the sandbox; the reviewer must call `autocode_review` from the separate assigned review session. Structured host-executed checks, independent review, and GitHub CI must all pass for the submitted head.
 
 Sandboxed roles need Autocode and Workboard tools allowed in both the role tool policy and `tools.sandbox.tools`. Configure Workboard `worktreeSources` with the native board, an existing registered project ID, and the exact `origin/<baseBranch>` source ref. The native adapter validates the policy source and starts the unchanged Workboard card. Workboard prepares its canonical project session and isolated worker projection through the host SDK; it never changes the role workspace or exposes source-checkout Git metadata. Hosts without session preparation reject the launch. Scratch research cards retain their native workspace behavior.
@@ -401,6 +407,10 @@ and review a mode explicitly before resuming. The code enforces these permission
 
 Release modes require reviewed budgets and an independent `promotion` approval:
 `{approvedBy, approvedAt, policyDigest, canaryArtifact: {path, sha256}}`.
+Verification and promotion digests exclude only the promotion approval field, so
+publishing operator approval does not invalidate already completed checks. Full
+governance and recovery digests still bind that approval, and each new external
+effect validates the exact canary bytes and current approval before journaling intent.
 `nativePromotionDigest` computes the policy digest excluding its approval field;
 `nativeCanaryScopeDigest` binds the application scope, required checks and artifact.
 A changed policy, replaced report, broadened scope, agent acting as its own operator,
@@ -569,3 +579,19 @@ versions without `--slurp`. Branch-protection requirements are still mandatory;
 an unavailable branch-protection API does not silently authorize a release.
 
 Committed sandbox inputs are capped at 10,000 files and 256 MiB in total before any blob is read or copied. Source-only changes without a colocated test remain subject to build, type, boundary, browser and independent review checks; the focused test rule applies when a changed test is selected.
+
+A workflow blocked specifically by missing promotion approval can use `resume-release`
+under paused operator recovery after approval is installed. It retains the exact
+verified/reviewed attempt. Any existing push journal requires positive remote equality
+for its exact branch and commit; recovery never pushes or infers non-dispatch from an
+absent remote. Unknown PR, merge, or deployment operations remain blocked.
+
+## Work across multiple sessions
+
+Research and planning compare substantial user outcomes alongside short repairs. A long-horizon implementation plan records ordered milestones, dependencies, durable progress evidence, current-revision resume checks and final end-to-end acceptance. A milestone does not count as a completed outcome or release. Planners retain existing scope, resource and risk gates and explain a concrete blocker when deferring useful substantial work. Complexity routing remains evidence-based; neither release quotas nor invented large tasks establish value. These planning instructions do not extend execution budgets or automatically resume interrupted workers.
+
+### Public environment template verification
+
+Some parity checks read the repository's public `.env.example`. It remains excluded by default. After separately reviewing its complete committed contents as a public template containing placeholders, the operator may add the exact root `.env.example` to `inputFiles` and configure `reviewedEnvExample: {blobSha: "<full Git blob ID>", reviewedBy: "<operator identity>"}`. The pinned blob is checked before materialization. Changed template bytes require fresh review; dirty working-tree values are never copied.
+
+This option does not admit `.env`, `.env.local`, `.env.production`, nested environment templates, hidden runtime state, or credential data. It grants no host environment access and does not execute or source the template. Existing source-only approvals do not imply approval of this separate template option.

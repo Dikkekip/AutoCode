@@ -28,7 +28,7 @@ import {
   registerNativeSkillEvaluation
 } from "./skills.js"
 import { NativeEvidenceStore } from "./store.js"
-import { deliverNativeIdeas, handleNativeIdeaCommand, sendNativeIdea } from "./telegram-ideas.js"
+import { deliverNativeIdeas, handleNativeIdeaCommand, nativeIdeaCommands, sendNativeIdea } from "./telegram-ideas.js"
 import { NativeWorkspaceGateway } from "./workspaces.js"
 
 // Tool catalogs can register the plugin again without starting another service.
@@ -191,17 +191,16 @@ export function registerNativeAutonomyPlugin(api: any): void {
   if ((api.pluginConfig?.humanInput ?? []).length) {
     if (typeof api.registerCommand !== "function")
       throw new Error("Telegram idea commands require the public command API")
-    for (const name of ["ideas", "idea"])
+    for (const { name, decide } of nativeIdeaCommands)
       api.registerCommand({
         name,
-        description:
-          name === "ideas"
-            ? "Show short decisions for high-impact coding ideas"
-            : "Approve or skip an exact coding idea",
+        description: decide
+          ? "Browse, inspect, approve or skip a coding idea"
+          : "Show pending decisions and recent coding ideas",
         channels: ["telegram"],
         acceptsArgs: true,
         requireAuth: true,
-        handler: (ctx: any) => handleNativeIdeaCommand([...instances.values()], ctx, name === "idea", invoke)
+        handler: (ctx: any) => handleNativeIdeaCommand([...instances.values()], ctx, decide, invoke)
       })
   }
   registerMethod(

@@ -4,6 +4,12 @@ import { formatNativeIdea, type NativeIdeaDecision } from "./human-input.js"
 import type { NativeAutonomyRuntime } from "./runtime.js"
 
 const exec = promisify(execFile)
+export const nativeIdeaCommands = [
+  { name: "ideas", decide: false },
+  { name: "idears", decide: false },
+  { name: "idea", decide: true },
+  { name: "idear", decide: true }
+] as const
 export async function sendNativeIdea(command: string, runtime: NativeAutonomyRuntime, message: string) {
   const config = runtime.humanInput!.config
   if (config.telegramDelivery !== true) throw new Error("Telegram delivery is not enabled")
@@ -78,28 +84,45 @@ export async function handleNativeIdeaCommand(
     return await invoke(runtime, () =>
       runtime.withOwnership(async () => {
         authorize()
-        if (!decide) {
-          const pending = input
-            .list()
-            .filter((item) => item.state === "pending")
-            .slice(0, 4)
+        const args = String(ctx.args ?? "").trim()
+        const ideas = input.list().sort((a, b) => b.createdAt - a.createdAt)
+        if (!decide || !args) {
+          const pending = ideas.filter((item) => item.state === "pending")
+          const recent = ideas.filter((item) => item.state !== "pending").slice(0, 3)
+          const paused = runtime.isPaused()
+          const status = paused
+            ? "AutoCode is paused. Product decisions do not resume execution."
+            : "AutoCode is enabled. Routine work still requires scope, evidence and technical checks."
           return {
-            text: pending.length
-              ? pending.map(formatNativeIdea).join("\n\n")
-              : "No high-impact ideas await your decision. Routine work continues automatically; technical checks still apply."
+            text: [
+              pending.length
+                ? `${pending.length} idea${pending.length === 1 ? "" : "s"} awaiting your decision:\n\n${pending.slice(0, 4).map(formatNativeIdea).join("\n\n")}`
+                : "No ideas currently await your approval.",
+              !pending.length && recent.length
+                ? `Recent ideas:\n${recent.map((idea) => `${idea.id}: ${idea.title.replace(/[\r\n]+/g, " ").slice(0, 180)} (${idea.state})`).join("\n")}\nUse /idea ID for details.`
+                : "",
+              pending.length > 4 ? "Use /idea ID to inspect a specific idea." : "",
+              status
+            ]
+              .filter(Boolean)
+              .join("\n\n")
           }
         }
-        const parts = String(ctx.args ?? "")
-          .trim()
-          .split(/\s+/)
+        const parts = args.split(/\s+/)
+        if (parts.length === 1 && /^[a-f0-9]{16}$/.test(parts[0]!)) {
+          const idea = ideas.find((item) => item.id === parts[0])
+          return { text: idea ? formatNativeIdea(idea) : "Unknown or stale idea; use /ideas for current ideas." }
+        }
         if (parts.length !== 2 || !["approve", "skip"].includes(parts[0]!) || !/^[a-f0-9]{16}$/.test(parts[1]!))
-          return { text: "Use /ideas, then /idea approve ID or /idea skip ID." }
+          return {
+            text: "Use /ideas to browse, /idea ID for details, then /idea approve ID or /idea skip ID for a pending decision."
+          }
         const idea = input.decide(parts[1]!, parts[0] as "approve" | "skip", sender, authorize)
         return {
           text:
             idea.state === "approved"
               ? `Approved direction: ${idea.title}. The planner will recheck current scope and evidence. Tests and agent review remain required.`
-              : `Skipped: ${idea.title}. Routine work continues.`
+              : `Skipped: ${idea.title}. ${runtime.isPaused() ? "AutoCode remains paused." : "Other eligible work can continue."}`
         }
       })
     )

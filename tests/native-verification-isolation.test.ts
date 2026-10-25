@@ -170,6 +170,10 @@ integration("Kernel verification isolation", () => {
     writeFileSync(join(repo, "source.txt"), "source")
     git("add", "source.txt")
     git("commit", "-m", "source")
+    const baseSha = git("rev-parse", "HEAD")
+    writeFileSync(join(repo, "source.txt"), "candidate source")
+    git("add", "source.txt")
+    git("commit", "-m", "candidate")
     const headSha = git("rev-parse", "HEAD")
     const result = await runNativeCommand(
       {
@@ -181,7 +185,7 @@ integration("Kernel verification isolation", () => {
       sandbox,
       undefined,
       undefined,
-      { headSha, changedFiles: ["source.txt"] }
+      { headSha, baseSha, changedFiles: ["source.txt"] }
     )
     expect(result.exitCode).toBe(0)
     expect(JSON.parse(result.stdout)).toEqual({ version: 1, headSha, changedFiles: ["source.txt"] })
@@ -226,6 +230,30 @@ integration("Kernel verification isolation", () => {
       if (oldCI === undefined) delete process.env.CI
       else process.env.CI = oldCI
     }
+  })
+  it("copies only the reviewed committed environment example, excluding live and dirty values", async () => {
+    const repo = temp(),
+      evidence = temp()
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" }).trim()
+    git("init")
+    git("config", "commit.gpgsign", "false")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Test")
+    writeFileSync(join(repo, ".env.example"), "SERVICE_MODE=example\n")
+    writeFileSync(join(repo, ".env"), "API_TOKEN=synthetic-live-value\n")
+    git("add", ".env.example", ".env")
+    git("commit", "-m", "synthetic environment fixtures")
+    const reviewedEnvExample = { blobSha: git("rev-parse", "HEAD:.env.example"), reviewedBy: "operator" }
+    const config = { ...sandbox, inputFiles: [".env.example"], reviewedEnvExample }
+    writeFileSync(join(repo, ".env.example"), "API_TOKEN=synthetic-dirty-value\n")
+    const check = { ...command, argv: ["/bin/sh", "-c", "test ! -e /work/.env && cat /work/.env.example"] }
+    const result = await runNativeCommand(check, repo, join(evidence, "reviewed.json"), config)
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain("SERVICE_MODE=example")
+    expect(result.stdout).not.toContain("synthetic-")
+    git("add", ".env.example")
+    git("commit", "-m", "changed template needs fresh review")
+    await expect(runNativeCommand(check, repo, join(evidence, "changed.json"), config)).rejects.toThrow(/blob changed/)
   })
   it("cancels the verifier and its surviving children", async () => {
     const options = { rootFilesystem: rootFilesystem!, workspace: temp(), cwd: "/work", timeoutMs: 5000 }
@@ -309,4 +337,26 @@ it("admits reviewed source modules by exact blob without allowing credential or 
       validateNativeVerificationSandbox({ ...policy, reviewedSourceFiles: [{ ...reviewed, ...patch }] })
     ).toThrow()
   expect(() => validateNativeVerificationSandbox({ ...policy, reviewedSourceFiles: [reviewed, reviewed] })).toThrow()
+})
+
+it("admits only a separately reviewed root environment example and keeps live environments excluded", () => {
+  const image = `sha256:${"a".repeat(64)}`
+  const reviewedEnvExample = { blobSha: "b".repeat(40), reviewedBy: "operator" }
+  const policy = { backend: "docker", image, inputFiles: [".env.example"], reviewedEnvExample }
+  expect(validateNativeVerificationSandbox(policy).reviewedEnvExample).toEqual(reviewedEnvExample)
+  expect(() => validateNativeVerificationSandbox({ ...policy, reviewedEnvExample: undefined })).toThrow()
+  for (const path of [
+    ".env",
+    ".env.local",
+    ".env.production",
+    "nested/.env.example",
+    ".ssh/key",
+    ".openclaw/native.json"
+  ])
+    expect(() => validateNativeVerificationSandbox({ ...policy, inputFiles: [".env.example", path] })).toThrow()
+  for (const patch of [{ blobSha: "main" }, { blobSha: "b".repeat(41) }, { reviewedBy: "" }])
+    expect(() =>
+      validateNativeVerificationSandbox({ ...policy, reviewedEnvExample: { ...reviewedEnvExample, ...patch } })
+    ).toThrow()
+  expect(() => validateNativeVerificationSandbox({ ...policy, inputFiles: ["src/a.ts"] })).toThrow()
 })

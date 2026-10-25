@@ -35,21 +35,139 @@ import {
   validateNativeAutonomyPolicy,
   validateNativeVerificationSandbox
 } from "@openclaw/domain"
-
 import {
   allowlistedEnvironment,
   BUILD_ENVIRONMENT_ALLOWLIST,
+  type DockerSandboxObserver,
+  type DockerSandboxReceipt,
   executeCommandAsync,
   executeDockerSandboxedCommand,
   executeSandboxedCommand
 } from "@openclaw/os-adapters"
-
 import { nativeContentDigest, nativeRepositoryIdentity } from "./provenance.js"
 import { snapshotNativeInputs } from "./snapshot.js"
+import { requireNativeStorage } from "./storage-pressure.js"
 
 export interface NativeVerificationAuthority {
   authorize(): void
   mutate(action: () => void): void
+}
+
+/** Supplied by the trusted evidence owner, never by a candidate or policy JSON.
+ * captureWorkspace must settle within the owner's reserved capture/cleanup budget.
+ * It receives the complete disposable workspace, including partial failed output.
+ */
+export interface NativeCommandObserver {
+  captureWorkspace(event: {
+    workspace: string
+    prepared: boolean
+    result: Awaited<ReturnType<typeof recordCommand>> | undefined
+    error: unknown
+    executionError?: unknown
+    persistenceError?: unknown
+  }): Promise<void>
+  docker?: DockerSandboxObserver
+  cleanupTimeoutMs?: number
+}
+
+export interface NativeCandidateSelection {
+  headSha: string
+  baseSha: string
+  changedFiles: string[]
+}
+
+/** Canonical reusable producer for positive inputs and subsequently mutated negatives.
+ * The root owns base selection/admission. Paths are verified against committed Git
+ * output, never accepted as an invented positive selector. Caller owns a fresh empty
+ * private workspace and its deletion. This does not grant policy/review authority.
+ */
+export async function snapshotNativeCommandInputs(
+  root: string,
+  workspace: string,
+  sandbox: NativeVerificationSandbox,
+  signal?: AbortSignal,
+  authority?: NativeVerificationAuthority,
+  candidateSelection?: NativeCandidateSelection
+) {
+  const config = validateNativeVerificationSandbox(sandbox)
+  const selection = candidateSelection ? structuredClone(candidateSelection) : undefined
+  const check = () => {
+    signal?.throwIfAborted()
+    authority?.authorize()
+  }
+  check()
+  const sha = await nativeGit(root, "--no-replace-objects", "rev-parse", "HEAD")
+  const assertSelection = async () => {
+    check()
+    if (!selection) return
+    if (
+      !/^[a-f0-9]{40,64}$/.test(selection.baseSha) ||
+      selection.headSha !== sha ||
+      !selection.changedFiles.length ||
+      new Set(selection.changedFiles).size !== selection.changedFiles.length ||
+      selection.changedFiles.some(
+        (file) =>
+          typeof file !== "string" ||
+          !file ||
+          file.includes("\0") ||
+          isAbsolute(file) ||
+          relative(workspace, resolve(workspace, file)) !== file
+      )
+    )
+      throw new Error("Changed-file manifest must match the exact candidate")
+    if (
+      (await nativeGit(root, "--no-replace-objects", "rev-parse", "HEAD")) !== sha ||
+      (await candidateChanges(root)).length
+    )
+      throw new Error("Candidate changed during manifest production")
+    await nativeGit(root, "--no-replace-objects", "merge-base", "--is-ancestor", selection.baseSha, sha)
+    const files = (
+      await nativeGit(
+        root,
+        "--no-replace-objects",
+        "-c",
+        "core.fsmonitor=false",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--name-only",
+        "--no-renames",
+        "-z",
+        `${selection.baseSha}...${sha}`
+      )
+    )
+      .split("\0")
+      .filter(Boolean)
+    if (JSON.stringify(files) !== JSON.stringify(selection.changedFiles))
+      throw new Error("Changed-file selection differs from the canonical candidate diff")
+    check()
+  }
+  await assertSelection()
+  await snapshotNativeInputs(root, workspace, sha, config.inputFiles, signal, () => authority?.authorize(), [
+    ...(config.reviewedSourceFiles ?? []),
+    ...(config.reviewedEnvExample ? [{ path: ".env.example", ...config.reviewedEnvExample }] : [])
+  ])
+  await assertSelection()
+  if (selection) {
+    const dir = resolve(workspace, ".openclaw-verification")
+    const writeManifest = () => {
+      check()
+      mkdirSync(dir, { mode: 0o700 })
+      writeFileSync(
+        resolve(dir, "changed-files.json"),
+        JSON.stringify({
+          version: 1,
+          headSha: sha,
+          changedFiles: selection.changedFiles
+        }),
+        { mode: 0o600, flag: "wx" }
+      )
+    }
+    if (authority) authority.mutate(writeManifest)
+    else writeManifest()
+  }
+  check()
+  return { headSha: sha, ...(selection ? { baseSha: selection.baseSha, changedFiles: selection.changedFiles } : {}) }
 }
 
 const exec = promisify(execFile)
@@ -287,10 +405,13 @@ async function recordCommand(
   command: NativeCommand,
   cwd: string,
   artifact: string,
-  execute: () => Promise<{ stdout: string; stderr: string }>,
+  execute: () => Promise<{ stdout: string; stderr: string; dockerReceipt?: DockerSandboxReceipt }>,
   authority?: NativeVerificationAuthority
 ) {
   const startedAt = new Date().toISOString()
+  let executionError: unknown
+  let clientExitCode: number | null | undefined
+  let dockerReceipt: DockerSandboxReceipt | undefined
   let stdout = "",
     stderr = "",
     exitCode: number | null = null,
@@ -299,42 +420,33 @@ async function recordCommand(
   requireNewCommandArtifact(artifact)
   try {
     const result = await execute()
+    dockerReceipt = result.dockerReceipt
     stdout = result.stdout
     stderr = result.stderr
     exitCode = 0
   } catch (error) {
-    const e = error as { stdout?: string; stderr?: string; code?: number; message?: string; outcome?: string }
+    executionError = error
+    const e = error as {
+      clientExitCode?: number | null
+      stdout?: string
+      stderr?: string
+      code?: number
+      message?: string
+      outcome?: string
+      dockerReceipt?: DockerSandboxReceipt
+    }
+    dockerReceipt = e.dockerReceipt
     stdout = e.stdout ?? ""
     stderr = e.stderr || e.message || "Command failed"
-    exitCode = typeof e.code === "number" ? e.code : null
-    outcome = e.outcome ?? (exitCode === null ? "unknown" : "nonzero")
+    // A thrown failure can never receive successful verification credit.
+    // Docker control-client codes remain diagnostics, not container exit status.
+    clientExitCode = e.clientExitCode === undefined && e.code === 0 ? 0 : e.clientExitCode
+    exitCode = typeof e.code === "number" && Number.isInteger(e.code) && e.code !== 0 ? e.code : null
+    outcome = e.outcome && e.outcome !== "success" ? e.outcome : exitCode === null ? "unknown" : "nonzero"
   }
   const finishedAt = new Date().toISOString()
-  const persist = () => {
-    mkdirSync(dirname(artifact), { recursive: true })
-    // Refuse existing files and symlinks; only the privileged parent creates receipts.
-    writeFileSync(
-      artifact,
-      JSON.stringify(
-        {
-          argv: command.argv.map((arg, index) => (index === 0 ? redactLogText(arg) : "[REDACTED ARGUMENT]")),
-          cwd,
-          startedAt,
-          finishedAt,
-          exitCode,
-          outcome,
-          stdout: redactLogText(stdout),
-          stderr: redactLogText(stderr)
-        },
-        null,
-        2
-      ),
-      { mode: 0o600, flag: "wx" }
-    )
-  }
-  if (authority) authority.mutate(persist)
-  else persist()
-  return {
+  // Construct completed evidence before any receipt/authority mutation can fail.
+  const completedResult = {
     argv: command.argv.map((arg, index) => (index === 0 ? redactLogText(arg) : "[REDACTED ARGUMENT]")),
     cwd,
     startedAt,
@@ -342,8 +454,41 @@ async function recordCommand(
     exitCode,
     outcome,
     artifact,
-    stdout
+    ...(clientExitCode === undefined ? {} : { clientExitCode }),
+    ...(dockerReceipt ? { dockerReceipt } : {}),
+    stdout,
+    stderr
   }
+  const persist = () => {
+    mkdirSync(dirname(artifact), { recursive: true })
+    // Exclusive creation preserves the competing owner's receipt, even after execution.
+    writeFileSync(
+      artifact,
+      JSON.stringify({ ...completedResult, stdout: redactLogText(stdout), stderr: redactLogText(stderr) }, null, 2),
+      { mode: 0o600, flag: "wx" }
+    )
+  }
+  try {
+    if (authority) authority.mutate(persist)
+    else persist()
+  } catch (persistenceError) {
+    // Keep authority/EEXIST identity and code for existing callers. Completed
+    // command evidence and the original execution failure remain distinct.
+    // Rethrow the authority/IO error itself: callers rely on NativeLeaseLost
+    // and other control exception identities. Do not add a self-referencing
+    // persistenceError property; capture receives this exact secondary error.
+    throw Object.assign(
+      persistenceError instanceof Error
+        ? persistenceError
+        : new Error("Command evidence persistence failed", { cause: persistenceError }),
+      {
+        completedResult,
+        executionError,
+        dockerReceipt
+      }
+    )
+  }
+  return completedResult
 }
 
 /** Privileged host execution is only available to explicitly authorized deployment policy. */
@@ -402,7 +547,8 @@ export async function runNativeCommand(
   sandbox?: NativeVerificationSandbox,
   signal?: AbortSignal,
   authority?: NativeVerificationAuthority,
-  candidateSelection?: { headSha: string; changedFiles: string[] }
+  candidateSelection?: NativeCandidateSelection,
+  observer?: NativeCommandObserver
 ) {
   authority?.authorize()
   if (!sandbox) throw new Error("Required verification sandbox is not configured")
@@ -415,46 +561,22 @@ export async function runNativeCommand(
   }
   const cwd = containedDirectory(root, command.cwd)
   requireNewCommandArtifact(artifact)
+  requireNativeStorage(tmpdir())
+  requireNativeStorage("/")
   const workspace = mkdtempSync(resolve(tmpdir(), "native-verification-"))
+  let prepared = false
+  let result: Awaited<ReturnType<typeof recordCommand>> | undefined
+  let primaryError: unknown
+  let failed = false
   try {
     // Read committed blobs, never candidate symlinks, untracked secrets or host git metadata.
-    const sha = await nativeGit(root, "rev-parse", "HEAD")
-    await snapshotNativeInputs(
-      root,
-      workspace,
-      sha,
-      config.inputFiles,
-      signal,
-      () => authority?.authorize(),
-      config.reviewedSourceFiles
-    )
-    if (candidateSelection) {
-      if (candidateSelection.headSha !== sha || !candidateSelection.changedFiles.length)
-        throw new Error("Changed-file manifest must match the exact candidate")
-      const changedFiles = [...new Set(candidateSelection.changedFiles)]
-      if (
-        changedFiles.length !== candidateSelection.changedFiles.length ||
-        changedFiles.some(
-          (file) =>
-            !file || file.includes("\0") || isAbsolute(file) || relative(workspace, resolve(workspace, file)) !== file
-        )
-      )
-        throw new Error("Changed-file manifest contains an unsafe path")
-      const dir = resolve(workspace, ".openclaw-verification")
-      const writeManifest = () => {
-        // This directory is reserved for the host, never copied from Git.
-        mkdirSync(dir)
-        writeFileSync(resolve(dir, "changed-files.json"), JSON.stringify({ version: 1, headSha: sha, changedFiles }), {
-          mode: 0o600,
-          flag: "wx"
-        })
-      }
-      if (authority) authority.mutate(writeManifest)
-      else writeManifest()
-    }
+    await snapshotNativeCommandInputs(root, workspace, config, signal, authority, candidateSelection)
+    prepared = true
+    requireNativeStorage(workspace)
+    requireNativeStorage("/")
     const sandboxCwd = resolve("/work", relative(realpathSync(root), cwd))
     mkdirSync(resolve(workspace, relative(realpathSync(root), cwd)), { recursive: true })
-    return await recordCommand(
+    result = await recordCommand(
       command,
       cwd,
       artifact,
@@ -471,6 +593,8 @@ export async function runNativeCommand(
           ? executeDockerSandboxedCommand(command.argv, {
               ...options,
               image: config.image,
+              ...(observer?.docker ? { observer: observer.docker } : {}),
+              ...(observer?.cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs: observer.cleanupTimeoutMs }),
               ...(config.pidsLimit === undefined ? {} : { pidsLimit: config.pidsLimit }),
               ...(config.memoryMb === undefined ? {} : { memoryMb: config.memoryMb }),
               ...(config.cpus === undefined ? {} : { cpus: config.cpus })
@@ -479,9 +603,42 @@ export async function runNativeCommand(
       },
       authority
     )
-  } finally {
-    rmSync(workspace, { recursive: true, force: true })
+  } catch (error) {
+    failed = true
+    primaryError = error
+    result = (error as { completedResult?: Awaited<ReturnType<typeof recordCommand>> })?.completedResult
   }
+  {
+    const finalizationErrors: unknown[] = []
+    try {
+      await observer?.captureWorkspace({
+        workspace,
+        prepared,
+        result,
+        error: primaryError,
+        executionError: (primaryError as { executionError?: unknown } | undefined)?.executionError,
+        persistenceError: result ? primaryError : undefined
+      })
+    } catch (error) {
+      finalizationErrors.push(error)
+    }
+    try {
+      rmSync(workspace, { recursive: true, force: true })
+    } catch (error) {
+      finalizationErrors.push(error)
+    }
+    if (finalizationErrors.length) {
+      const finalizationError = Object.assign(
+        new AggregateError(finalizationErrors, "Command workspace capture failed or deletion incomplete"),
+        { result }
+      )
+      // Keep the primary failure and all additional capture/deletion failures.
+      if (primaryError instanceof Error) Object.assign(primaryError, { finalizationError })
+      else throw Object.assign(finalizationError, { primaryError })
+    }
+  }
+  if (failed) throw primaryError
+  return result!
 }
 export function planNativeVerification(policy: NativeAutonomyPolicy, files: string[]): NativeVerificationCoveragePlan {
   const validated = validateNativeAutonomyPolicy(policy)
@@ -557,7 +714,8 @@ export async function verifyNativeCandidate(
   authority?: NativeVerificationAuthority,
   acceptance: string[] = [],
   context?: NativeVerificationContext,
-  candidateReview?: NativeCandidateReview
+  candidateReview?: NativeCandidateReview,
+  observer?: NativeCommandObserver
 ): Promise<NativeVerificationEvidence> {
   policy = structuredClone(policy)
   const plan = planNativeVerification(policy, candidate.files)
@@ -584,14 +742,19 @@ export async function verifyNativeCandidate(
   for (const [i, command] of commands.entries()) {
     if ((await nativeGit(candidate.cwd, "rev-parse", "HEAD")) !== candidate.headSha)
       throw new Error("Candidate changed during verification")
-    const { stdout: _stdout, ...check } = await runNativeCommand(
+    const {
+      stdout: _stdout,
+      stderr: _stderr,
+      ...check
+    } = await runNativeCommand(
       command,
       candidate.cwd,
       resolve(artifactRoot, `${i}-${randomUUID()}.json`),
       sandbox,
       signal,
       authority,
-      { headSha: candidate.headSha, changedFiles: candidate.files }
+      { headSha: candidate.headSha, baseSha: candidate.baseSha, changedFiles: candidate.files },
+      observer
     )
     checks.push({
       ...check,
@@ -599,7 +762,7 @@ export async function verifyNativeCandidate(
       artifactSha256: createHash("sha256").update(readFileSync(check.artifact)).digest("hex")
     })
     persist()
-    if (check.exitCode !== 0) break
+    if (check.outcome !== "success" || check.exitCode !== 0) break
   }
   if (
     (await nativeGit(candidate.cwd, "rev-parse", "HEAD")) !== candidate.headSha ||
@@ -704,7 +867,7 @@ export function assertNativeVerificationEvidence(
     throw new Error("Verification acceptance bindings changed")
   for (const id of plan.ruleIds) {
     const checks = evidence.checks.filter((check) => check.ruleId === id)
-    if (checks.length !== 1 || checks[0]!.exitCode !== 0)
+    if (checks.length !== 1 || checks[0]!.outcome !== "success" || checks[0]!.exitCode !== 0)
       throw new Error("Missing or ambiguous required verification check")
     const check = checks[0]!
     if (
@@ -713,7 +876,12 @@ export function assertNativeVerificationEvidence(
     )
       throw new Error("Verification artifact integrity check failed")
     const receipt = JSON.parse(readFileSync(check.artifact, "utf8"))
-    if (receipt.exitCode !== 0 || receipt.startedAt !== check.startedAt || receipt.finishedAt !== check.finishedAt)
+    if (
+      receipt.outcome !== "success" ||
+      receipt.exitCode !== 0 ||
+      receipt.startedAt !== check.startedAt ||
+      receipt.finishedAt !== check.finishedAt
+    )
       throw new Error("Verification artifact does not match trusted result")
   }
 }

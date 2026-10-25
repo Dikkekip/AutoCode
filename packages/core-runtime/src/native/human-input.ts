@@ -189,8 +189,14 @@ export function formatNativeIdea(idea: NativeIdeaDecision): string {
     `Benefit: ${line(idea.benefit, 260)}`,
     `Estimate: ${idea.effortHours ?? "unknown"}h; additional cost ${idea.costCents ?? "unknown"} cents (estimate).`,
     `Why ask: ${line(idea.reasons.join("; "), 300)}`,
-    `/idea approve ${idea.id}`,
-    `/idea skip ${idea.id}`,
-    "Waiting for your direction. Routine work continues. This does not waive tests or agent review."
+    ...(idea.state === "pending"
+      ? [
+          `/idea approve ${idea.id}`,
+          `/idea skip ${idea.id}`,
+          "Waiting for your direction. This does not waive tests or agent review."
+        ]
+      : [
+          `State: ${idea.state}. ${idea.state === "routine" ? "No product approval required; normal admission and technical checks still apply." : "This decision does not waive tests or agent review."}`
+        ])
   ].join("\n")
 }

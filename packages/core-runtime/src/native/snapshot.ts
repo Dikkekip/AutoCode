@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process"
 import { mkdirSync, writeFileSync } from "node:fs"
 import { dirname, isAbsolute, relative, resolve } from "node:path"
+import { requireNativeStorage } from "./storage-pressure.js"
 
 const MAX_FILES = 10_000
 const MAX_TOTAL_BYTES = 256 * 1024 * 1024
@@ -72,6 +73,7 @@ export async function snapshotNativeInputs(
       throw new Error(`Reviewed sandbox source blob changed: ${reviewed.path}`)
   }
 
+  requireNativeStorage(workspace, totalBytes)
   const files = inputFiles.map((file) => entries.get(file)!)
   let index = 0
   while (index < files.length) {
