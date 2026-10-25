@@ -49,7 +49,7 @@ import { NativeHumanInput, type NativeHumanInputConfig } from "./human-input.js"
 import { exportNativeLessons, type NativeMemoryConfig } from "./memory.js"
 import { reconcileNativeNotifications } from "./notifications.js"
 import { nativeOutcomeReport } from "./outcomes.js"
-import { assertNativeMode, nativeModeAllows } from "./promotion-mode.js"
+import { assertNativeMode, assertNativePromotion, nativeModeAllows } from "./promotion-mode.js"
 import {
   assertNativeProvenance,
   nativeContentDigest,
@@ -520,6 +520,53 @@ export class NativeAutonomyRuntime {
         // An exact successful receipt and current complete source are mandatory.
       }
     }
+    let releaseResumable = false
+    let confirmedPush: { id: string; headSha: string } | undefined
+    if (
+      action === "resume-release" &&
+      workflow.blocker === "Error: Release mode requires current independent operator promotion approval" &&
+      lifecycle.state === "blocked" &&
+      !workflow.prNumber &&
+      !workflow.mergedSha &&
+      !workflow.deployedSha
+    ) {
+      try {
+        assertNativePromotion(this.policy)
+        await this.assertCommittedReviewEvidence(workflowId, workflow)
+        assertNativeReleaseGate({
+          headSha: workflow.candidate!.headSha,
+          authorAgentId: workflow.submission?.agentId ?? this.policy.coderAgentId,
+          reviewerAgentId: this.policy.reviewerAgentId,
+          verification: workflow.verification!,
+          review: workflow.review ?? null
+        })
+        if (
+          workflow.review?.receiptVersion !== 1 ||
+          workflow.review.attemptId !== lifecycle.attemptId ||
+          workflow.review.verificationDigest !== nativeVerificationDigest(workflow.verification!)
+        )
+          throw new Error("Review belongs to another verification attempt")
+        const pushId = `${workflowId}:push`
+        const push = this.store.get<{ state: string; headSha: string }>("operation", pushId)
+        if (push) {
+          const candidate = workflow.candidate!
+          if (
+            !["started", "confirmed"].includes(push.state) ||
+            push.headSha !== candidate.headSha ||
+            !candidate.branch ||
+            candidate.branch === this.policy.baseBranch
+          )
+            throw new Error("Push binding changed")
+          const remote = await nativeGit(candidate.cwd, "ls-remote", "origin", `refs/heads/${candidate.branch}`)
+          if (remote !== `${candidate.headSha}\trefs/heads/${candidate.branch}`)
+            throw new Error("Remote push unconfirmed")
+          confirmedPush = { id: pushId, headSha: candidate.headSha }
+        }
+        releaseResumable = true
+      } catch {
+        // Never infer absence of effects: an existing push needs positive remote equality.
+      }
+    }
     return planNativeRecovery(
       {
         boardId: this.policy.boardId,
@@ -529,6 +576,7 @@ export class NativeAutonomyRuntime {
         policyDigest: nativeRecoveryDigest(this.policy),
         lifecycle,
         ...(action === "resume-review" ? { reviewResumable } : {}),
+        ...(action === "resume-release" ? { releaseResumable, ...(confirmedPush ? { confirmedPush } : {}) } : {}),
         control: this.control.state,
         cards: cards
           .map((card) => ({
@@ -832,7 +880,7 @@ export class NativeAutonomyRuntime {
             workflow.implementationCardId = card.id
             workflow.stageCards = {}
           } else {
-            if (plan.action === "resume-review") delete workflow.blocker
+            if (["resume-review", "resume-release"].includes(plan.action)) delete workflow.blocker
             workflow.lifecycle = recoverNativeLifecycle(previous, workflow)
           }
         }
@@ -847,6 +895,21 @@ export class NativeAutonomyRuntime {
         const result = { applied: true, workflowId, action: plan.action }
         this.store.commit(
           [
+            ...(plan.action === "resume-release" && plan.snapshot.confirmedPush
+              ? [
+                  {
+                    kind: "operation",
+                    id: plan.snapshot.confirmedPush.id,
+                    value: {
+                      state: "confirmed",
+                      headSha: plan.snapshot.confirmedPush.headSha,
+                      recoveryPlanDigest: plan.digest
+                    },
+                    expectedVersion: plan.snapshot.operations.find((op) => op.id === plan.snapshot.confirmedPush!.id)!
+                      .version
+                  }
+                ]
+              : []),
             ...(intentReconciliation?.writes ?? []),
             {
               kind: "attempt-history",

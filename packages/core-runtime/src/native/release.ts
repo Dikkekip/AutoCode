@@ -213,6 +213,7 @@ export async function releaseNativeWorkflow(
       if (previousPush.headSha !== candidate.headSha || remote.split(/\s+/)[0] !== candidate.headSha)
         throw new NativeReleasePending("Push outcome unresolved; inspect remote branch before retry")
     } else {
+      assertNativePromotion(policy)
       runtime.control.assert()
       runtime.reserveBudget(id, w.lifecycle!.attemptId, "release", pushKey)
       store.put("operation", pushKey, { state: "started", headSha: candidate.headSha })
@@ -236,6 +237,7 @@ export async function releaseNativeWorkflow(
       const key = `${id}:pr`
       if (store.get("operation", key))
         throw new NativeReleasePending("PR creation outcome unresolved; inspect GitHub before retry")
+      assertNativePromotion(policy)
       runtime.control.assert()
       runtime.reserveBudget(id, w.lifecycle!.attemptId, "release", key)
       store.put("operation", key, { state: "started", headSha: candidate.headSha })
@@ -293,6 +295,7 @@ export async function releaseNativeWorkflow(
       if (error instanceof NativeCiPending) throw new NativeReleasePending(error.message)
       throw error
     }
+    assertNativePromotion(policy)
     runtime.control.assert()
     runtime.reserveBudget(id, w.lifecycle!.attemptId, "release", key)
     store.put("operation", key, { state: "started", headSha: candidate.headSha, prNumber: w.prNumber })

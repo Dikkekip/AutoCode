@@ -248,7 +248,7 @@ function setup(mode: "release" | "verification" | "implementation" = "release") 
   store.put("workflow", "workflow", workflow)
   return { runtime, store, workflow, io, cards, mergedSha }
 }
-function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow }) {
+function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow }, approved = true) {
   const { policy } = s.runtime,
     w = s.workflow
   w.lifecycle ??= {
@@ -296,6 +296,7 @@ function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow })
     policyDigest: nativePromotionDigest(policy),
     canaryArtifact: { path: canaryPath, sha256: nativeContentDigest(canaryRaw) }
   }
+  if (!approved) delete policy.promotion
   w.verification!.plan = planNativeVerification(policy, w.candidate!.files)
   w.verification!.provenance = {
     version: 1,
@@ -330,6 +331,86 @@ function reseal(s: { runtime: NativeAutonomyRuntime; workflow: NativeWorkflow })
   w.review!.verificationDigest = nativeVerificationDigest(w.verification!)
 }
 describe("native release reconciliation", () => {
+  it("requires exact remote push truth before resuming a promotion-refused reviewed attempt", async () => {
+    const s = setup()
+    delete s.workflow.prNumber
+    s.workflow.blocker = "Error: Release mode requires current independent operator promotion approval"
+    s.workflow.lifecycle!.state = "blocked"
+    s.store.put("workflow", "workflow", s.workflow)
+    s.store.put("operation", "workflow:push", { state: "started", headSha: s.workflow.candidate!.headSha })
+    s.cards.implementation = { id: "implementation", title: "Implementation", status: "done" }
+    s.runtime.control.change(true)
+    vi.spyOn(verificationModule, "nativeGit").mockImplementation(s.io.git)
+    vi.spyOn(NativeQualityRuntime.prototype, "committedReviewEvidence").mockResolvedValue({
+      complete: true,
+      headSha: s.workflow.candidate!.headSha,
+      baseSha: s.workflow.candidate!.baseSha,
+      diffDigest: s.workflow.verification!.provenance!.diffDigest
+    } as any)
+    const before = structuredClone(s.workflow)
+    const absent = await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reconcile promotion preflight")
+    expect(absent.allowed).toBe(false)
+    await expect(s.runtime.applyWorkflowRecovery(absent, "operator")).rejects.toThrow()
+    expect(s.store.get("operation", "workflow:push")).toMatchObject({ state: "started" })
+    // Simulate independently completed push; recovery itself must never issue it.
+    await s.io.git(s.workflow.candidate!.cwd, "push", "origin", "candidate")
+    vi.mocked(s.io.git).mockClear()
+    for (const corrupt of [
+      (w: NativeWorkflow) => {
+        w.blocker = "Unrelated failure"
+      },
+      (w: NativeWorkflow) => {
+        w.review!.verificationDigest = "0".repeat(64)
+      },
+      (w: NativeWorkflow) => {
+        w.review!.verdict = "rejected"
+      },
+      (w: NativeWorkflow) => {
+        w.verification!.checks[0]!.exitCode = 1
+      }
+    ]) {
+      const invalid = Object.assign(s.runtime.requireWorkflow("workflow"), structuredClone(before))
+      corrupt(invalid)
+      s.store.put("workflow", "workflow", invalid)
+      const refused = await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reject altered evidence")
+      expect(refused.allowed).toBe(false)
+    }
+    s.store.put("workflow", "workflow", Object.assign(s.runtime.requireWorkflow("workflow"), structuredClone(before)))
+    s.store.put("operation", "workflow:pr", { state: "started" })
+    expect(
+      (await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reject unknown PR effect")).allowed
+    ).toBe(false)
+    s.store.put("operation", "workflow:pr", { state: "confirmed" })
+    const plan = await s.runtime.planWorkflowRecovery("workflow", "resume-release", "Reconcile exact remote push")
+    expect(plan.blockers).toEqual([])
+    expect(plan.allowed).toBe(true)
+    await s.runtime.applyWorkflowRecovery(plan, "operator")
+    const recovered = s.runtime.requireWorkflow("workflow")
+    expect(recovered.lifecycle).toMatchObject({ ...before.lifecycle, state: "release" })
+    expect(recovered.candidate).toEqual(before.candidate)
+    expect(recovered.verification).toEqual(before.verification)
+    expect(recovered.review).toEqual(before.review)
+    expect(recovered.blocker).toBeUndefined()
+    expect(s.store.get("operation", "workflow:push")).toMatchObject({
+      state: "confirmed",
+      recoveryPlanDigest: plan.digest
+    })
+    expect(s.io.git).not.toHaveBeenCalledWith(expect.anything(), "push", expect.anything(), expect.anything())
+    expect(s.io.github).not.toHaveBeenCalled()
+  })
+
+  it("refuses missing promotion before reserving or journaling a push", async () => {
+    const s = setup()
+    delete s.workflow.prNumber
+    reseal(s, false)
+    await expect(releaseNativeWorkflow(s.runtime, "workflow", s.workflow, s.io)).rejects.toThrow(
+      "current independent operator promotion approval"
+    )
+    expect(s.store.get("operation", "workflow:push")).toBeNull()
+    expect(s.io.git).not.toHaveBeenCalledWith(expect.anything(), "push", expect.anything(), expect.anything())
+    expect(s.io.github).not.toHaveBeenCalled()
+  })
+
   it.each(["push", "pr"])("reconciles an accepted %s after a lost response instead of replaying it", async (effect) => {
     const s = setup()
     delete s.workflow.prNumber

@@ -535,8 +535,11 @@ function canonical(value: unknown): unknown {
   return value
 }
 export function nativePolicyDigest(policy: NativeAutonomyPolicy): string {
+  // Promotion authorizes later effects; it does not change executed verification inputs.
+  // Full governance/recovery digests still bind the approval, and each effect validates it.
+  const { promotion: _promotion, ...executionPolicy } = policy
   return createHash("sha256")
-    .update(JSON.stringify(canonical(policy)))
+    .update(JSON.stringify(canonical(executionPolicy)))
     .digest("hex")
 }
 export function nativeVerificationRuleId(command: NativeCommand): string {
