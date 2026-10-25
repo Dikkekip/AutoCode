@@ -174,6 +174,43 @@ function derivedKeyDeclaration(source: string, start: number): { key: number; na
   return { key: start + match[0].indexOf(match[1]!), name: match[1]!, end: start + line.length }
 }
 
+const SOURCE_REFERENCE = "[A-Za-z_$][\\w$]*(?:\\.[A-Za-z_$][\\w$]*)*"
+const KEY_REFERENCE_CALL = `[A-Za-z_$][\\w$]*Key\\(\\s*${SOURCE_REFERENCE}\\s*\\)`
+const mappedTuple = (element: string) =>
+  `${SOURCE_REFERENCE}\\.map\\(\\s*\\(\\s*[A-Za-z_$][\\w$]*\\s*\\)\\s*=>\\s*\\[\\s*${element}(?:\\s*,\\s*${element})*\\s*,?\\s*\\]\\s*\\)`
+const TUPLE_REFERENCE = `(?:${SOURCE_REFERENCE}|${KEY_REFERENCE_CALL})`
+const MAPPED_QUEUE_DECLARATION = new RegExp(
+  `^const[ \\t]+([A-Za-z_$][\\w$]*Key)[ \\t]*=[ \\t]*JSON\\.stringify\\(\\s*${mappedTuple(`(?:${TUPLE_REFERENCE}|${mappedTuple(TUPLE_REFERENCE)})`)}\\s*\\);$`
+)
+
+// Complete mapped tuples containing only references, key-reference helpers and
+// one nested map. No literals, callbacks with bodies, or arbitrary calls qualify.
+function mappedKeyDeclaration(source: string, start: number) {
+  const statement = source.slice(start, start + 4096)
+  const end = statement.indexOf(";")
+  if (end < 0) return undefined
+  const declaration = statement.slice(0, end + 1).replace(/\n[+\- ]?[ \t]*/g, "\n")
+  if (SENSITIVE_REFERENCE.test(declaration)) return undefined
+  const match = MAPPED_QUEUE_DECLARATION.exec(declaration)
+  if (!match) return undefined
+  return { key: start + declaration.indexOf(match[1]!), name: match[1]!, end: start + end + 1 }
+}
+
+const SELECTED_KEY_COMPARISON = new RegExp(
+  `^([A-Za-z_$][\\w$]*Key)[ \\t]*===[ \\t]*${SOURCE_REFERENCE}[ \\t]*;?[ \\t]*\\r?$`
+)
+function selectedKeyComparison(source: string, start: number) {
+  if (/[\w$.]/.test(source[start - 1] ?? "") || !/^[A-Za-z_$][\w$]*Key[ \t]*===/.test(source.slice(start, start + 160)))
+    return undefined
+  const lineStart = source.lastIndexOf("\n", start - 1) + 1
+  if (!/^[+\- ]?[ \t]*(?:const[ \t]+[A-Za-z_$][\w$]*[ \t]*=[ \t]*)?$/.test(source.slice(lineStart, start)))
+    return undefined
+  const lineEnd = source.indexOf("\n", start)
+  const line = source.slice(start, lineEnd < 0 ? source.length : lineEnd)
+  if (line.length > 4096 || SENSITIVE_REFERENCE.test(line)) return undefined
+  return SELECTED_KEY_COMPARISON.exec(line)?.[1]
+}
+
 // Bounded structural source expressions, not shell assignments. Shield only
 // identifier spelling; credential scanning still visits the complete RHS.
 function protectStructuralKeys(source: string, keyMarker: string, queryMarker: string): string {
@@ -310,7 +347,7 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
         copied = query.key + 3
         cursor = query.end
       } else {
-        const derived = derivedKeyDeclaration(source, cursor)
+        const derived = derivedKeyDeclaration(source, cursor) ?? mappedKeyDeclaration(source, cursor)
         if (derived) {
           const suffix = derived.name === "key" ? marker : queryMarker
           const at = derived.name === "key" ? derived.key : derived.key + derived.name.length - 3
@@ -349,8 +386,14 @@ function protectReferenceNames(source: string, marker: string, queryMarker: stri
         cursor += 3
       } else cursor++
     } else if (/[A-Za-z_$]/.test(char ?? "")) {
-      const reference = memberReference(source, cursor)
-      if (reference) {
+      const comparison = selectedKeyComparison(source, cursor)
+      const reference = comparison ? undefined : memberReference(source, cursor)
+      if (comparison) {
+        const at = cursor + comparison.length - 3
+        chunks.push(source.slice(copied, at), queryMarker)
+        copied = at + 3
+        cursor = copied
+      } else if (reference) {
         chunks.push(source.slice(copied, cursor), reference.split(".").join(dotMarker))
         copied = cursor + reference.length
         cursor = copied
