@@ -6,6 +6,7 @@ import { resolve } from "node:path"
 import { authorizeNativeTool } from "../packages/core-runtime/dist/native/broker.js"
 import { nativeGovernanceDigest } from "../packages/core-runtime/dist/native/governance.js"
 import { NativeQualityRuntime } from "../packages/core-runtime/dist/native/quality.js"
+import { loadNativeSkillText } from "../packages/core-runtime/dist/native/skill-bundle.js"
 import { nativeSkillPolicyDigest } from "../packages/core-runtime/dist/native/skills.js"
 import {
   assertNativeVerificationAuthority,
@@ -19,8 +20,8 @@ const baseline = validateNativeAutonomyPolicy(JSON.parse(readFileSync(baselinePa
 const candidate = validateNativeAutonomyPolicy(JSON.parse(readFileSync(candidatePath, "utf8")))
 if (!candidate.verificationAuthority?.independentCandidateReview)
   throw new Error("Candidate must enable independent review")
-const skill = readFileSync(candidate.quality.skillPath, "utf8")
-if (skill !== readFileSync(baseline.quality.skillPath, "utf8"))
+const skill = loadNativeSkillText(candidate.quality.skillPath)
+if (skill !== loadNativeSkillText(baseline.quality.skillPath))
   throw new Error("This evaluation only covers an unchanged skill")
 const headSha = "a".repeat(40)
 const blob = "b".repeat(40)
