@@ -439,12 +439,17 @@ export class NativeQualityRuntime {
         const current = await nativeCardById(this.gateway, this.policy.boardId, card.id)
         if (!current || current.sessionKey !== sessionKey || current.runId !== runId)
           throw new Error("Investigation cancellation ownership changed after abort")
-        if (current.status === "running") {
+        if (current.status === "running" || (current.status === "blocked" && current.execution?.status === "running")) {
           if (!current.updatedAt) throw new Error("Investigation cancellation requires card revision")
           await this.gateway.request("workboard.cards.update", {
             id: card.id,
             expectedUpdatedAt: current.updatedAt,
-            patch: { status: "blocked" }
+            patch: {
+              status: "blocked",
+              ...(current.execution?.status === "running"
+                ? { execution: { ...current.execution, status: "blocked", updatedAt: Date.now() } }
+                : {})
+            }
           })
         }
         this.store.put("investigation", item.id, { ...timedOut, closed: true, cancellation: { status: "terminal" } })

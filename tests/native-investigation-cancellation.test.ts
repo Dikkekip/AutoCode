@@ -201,7 +201,7 @@ function budgetFixture() {
   f.gateway.request = async (method, params) => {
     if (method === "workboard.cards.update") {
       update(params)
-      f.card.status = "blocked"
+      Object.assign(f.card, params.patch)
       return {} as any
     }
     return request(method, params)
@@ -223,7 +223,29 @@ describe("budget cancellation evidence", () => {
     expect(f.update).not.toHaveBeenCalled()
     await f.runtime.enforceBudgets()
     expect(f.entry).toMatchObject({ closed: true, cancellation: { status: "terminal" } })
-    expect(f.update).toHaveBeenCalledWith({ id: "card", expectedUpdatedAt: 12, patch: { status: "blocked" } })
+    expect(f.update).toHaveBeenCalledWith({
+      id: "card",
+      expectedUpdatedAt: 12,
+      patch: {
+        status: "blocked",
+        execution: { ...f.card.execution, status: "blocked", updatedAt: expect.any(Number) }
+      }
+    })
+    expect(f.card.execution.status).toBe("blocked")
+  })
+  it("settles a blocked card whose exact cancelled execution still appears running", async () => {
+    const f = budgetFixture()
+    f.card.status = "blocked"
+    f.session.status = "killed"
+    f.session.hasActiveRun = false
+    f.session.hasActiveSubagentRun = false
+    f.entry.cancellation = { status: "pending" }
+    await f.runtime.enforceBudgets()
+    expect(f.abort).not.toHaveBeenCalled()
+    expect(f.card.status).toBe("blocked")
+    expect(f.card.execution.status).toBe("blocked")
+    expect(f.card.runId).toBe(owned.runId)
+    expect(f.entry).toMatchObject({ closed: true, cancellation: { status: "terminal" } })
   })
   it("does not overwrite natural completion while abort drains", async () => {
     const f = budgetFixture()
@@ -358,6 +380,9 @@ it("continues independent cancellations before reporting an aggregate failure", 
   expect(update).toHaveBeenCalledExactlyOnceWith({
     id: "second-card",
     expectedUpdatedAt: 12,
-    patch: { status: "blocked" }
+    patch: {
+      status: "blocked",
+      execution: { ...second.card.execution, status: "blocked", updatedAt: expect.any(Number) }
+    }
   })
 })
