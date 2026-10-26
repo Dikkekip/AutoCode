@@ -735,7 +735,7 @@ export function registerNativeAutonomyPlugin(api: any): void {
     ),
     tool(
       "autocode_inspect",
-      "Read committed files in your assigned persona scope. Empty path lists files. Search locates up to 50 matching line numbers for a case-sensitive literal in one file; then read startLine/lineCount before citing evidence. Pass nextOffset as offset to continue a truncated file.",
+      "Read committed files in your assigned persona scope. Empty path lists files. Search locates up to 50 matching line numbers for a case-sensitive literal in one file. A search call must omit startLine, lineCount, offset and contextPack. Then make a separate read without search using startLine/lineCount before citing evidence. Pass nextOffset as offset to continue a truncated file.",
       {
         roundId: field,
         personaId: field,
@@ -743,7 +743,13 @@ export function registerNativeAutonomyPlugin(api: any): void {
         startLine: { type: "integer", minimum: 1 },
         lineCount: { type: "integer", minimum: 1, maximum: 1000 },
         contextPack: { type: "boolean", default: false },
-        search: { type: "string", minLength: 1, maxLength: 128 },
+        search: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          description:
+            "Literal symbol lookup only. Omit startLine, lineCount, offset and contextPack; read matching lines in a separate call without search."
+        },
         offset: {
           type: "integer",
           minimum: 0,
