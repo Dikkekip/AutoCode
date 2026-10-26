@@ -1,9 +1,11 @@
 import importlib.util
 import os
+import re
+import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 spec = importlib.util.spec_from_file_location("adapter", Path(__file__).with_name("native-release-adapter.py"))
 adapter = importlib.util.module_from_spec(spec)
@@ -22,6 +24,88 @@ class ReleaseAdapterTests(unittest.TestCase):
         instance.load = Mock(return_value=manifest)
         instance.assert_running_images = Mock()
         return instance, manifest
+
+    def prepare_fixture(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        instance = adapter.Adapter.__new__(adapter.Adapter)
+        instance.root = Path(directory.name) / "state"
+        instance.root.mkdir()
+        instance.source = Path(directory.name)
+        instance.c = {"targetId": "isolated-test", "minimumBuildFreeGiB": 1}
+        instance.legacy = Mock()
+        instance.legacy.ROOT = Path(directory.name)
+        instance.legacy.REPO = "example/project"
+        instance.legacy.SEMVER = re.compile(r"v(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?")
+        instance.legacy.git.return_value = ""
+        instance.legacy.live_revision.return_value = {"sha": "b" * 40}
+        instance.stage = Mock()
+        instance.manifest = Mock(side_effect=lambda sha, tag: {"revision": sha, "tag": tag, "images": {}})
+        return instance
+
+    def test_prepare_preserves_unpublished_local_staging_tag_and_stages_next_patch(self):
+        instance = self.prepare_fixture()
+        commands = []
+        def command(argv, **kwargs):
+            commands.append(argv)
+            if argv[:3] == ["gh", "release", "list"]:
+                return json.dumps([{"tagName": "v3.0.26", "isDraft": False, "isPrerelease": False}])
+            if argv[:3] == ["docker", "image", "ls"]:
+                return "lawyerrag/backend:v3.0.27\nlawyerrag/reports-ui:v3.0.27"
+            return ""
+        with patch.object(adapter, "run", side_effect=command), \
+             patch.object(adapter.shutil, "disk_usage", return_value=Mock(free=2*1024**3)), \
+             patch.object(adapter.subprocess, "run", return_value=Mock(returncode=1)):
+            result = instance.prepare("a" * 40)
+        self.assertTrue(result["staged"])
+        self.assertEqual(instance.stage.call_args.args[0]["tag"], "v3.0.28")
+        tags = [argv for argv in commands if argv[:2] == ["docker", "tag"]]
+        self.assertEqual([argv[-1] for argv in tags], ["lawyerrag/backend:v3.0.28", "lawyerrag/reports-ui:v3.0.28"])
+        self.assertEqual(json.loads((instance.root / "manifests" / ("a"*40 + ".json")).read_text())["tag"], "v3.0.28")
+        self.assertFalse(any("v3.0.27" in str(argv) for argv in tags))
+
+    def test_prepare_accounts_for_partial_reservation_and_ignores_other_repositories(self):
+        instance = self.prepare_fixture()
+        def command(argv, **kwargs):
+            if argv[:3] == ["gh", "release", "list"]:
+                return json.dumps([{"tagName": "v3.0.26", "isDraft": False, "isPrerelease": False}])
+            if argv[:3] == ["docker", "image", "ls"]:
+                return "lawyerrag/reports-ui:v3.0.28\nother/backend:v3.0.999\nlawyerrag/backend:v4.0.999\nlawyerrag/backend:<none>"
+            return ""
+        with patch.object(adapter, "run", side_effect=command), \
+             patch.object(adapter.shutil, "disk_usage", return_value=Mock(free=2*1024**3)), \
+             patch.object(adapter.subprocess, "run", return_value=Mock(returncode=1)):
+            instance.prepare("a" * 40)
+        self.assertEqual(instance.stage.call_args.args[0]["tag"], "v3.0.29")
+
+    def test_prepare_requires_local_reservation_inventory_before_build(self):
+        instance = self.prepare_fixture()
+        def command(argv, **kwargs):
+            if argv[:3] == ["gh", "release", "list"]:
+                return json.dumps([{"tagName": "v3.0.26", "isDraft": False, "isPrerelease": False}])
+            raise RuntimeError("Docker inventory unavailable")
+        with patch.object(adapter, "run", side_effect=command) as run, \
+             patch.object(adapter.shutil, "disk_usage", return_value=Mock(free=2*1024**3)):
+            with self.assertRaisesRegex(RuntimeError, "inventory unavailable"):
+                instance.prepare("a" * 40)
+        instance.stage.assert_not_called()
+        instance.manifest.assert_not_called()
+        self.assertFalse(any(call.args[0][:2] == ["docker", "compose"] for call in run.call_args_list))
+
+    def test_prepare_refuses_racing_tag_without_manifest_or_staging(self):
+        instance = self.prepare_fixture()
+        def command(argv, **kwargs):
+            if argv[:3] == ["gh", "release", "list"]:
+                return json.dumps([{"tagName": "v3.0.26", "isDraft": False, "isPrerelease": False}])
+            return ""
+        with patch.object(adapter, "run", side_effect=command) as run, \
+             patch.object(adapter.shutil, "disk_usage", return_value=Mock(free=2*1024**3)), \
+             patch.object(adapter.subprocess, "run", return_value=Mock(returncode=0)):
+            with self.assertRaisesRegex(RuntimeError, "refusing overwrite"):
+                instance.prepare("a" * 40)
+        instance.stage.assert_not_called()
+        self.assertFalse((instance.root / "manifests" / ("a"*40 + ".json")).exists())
+        self.assertFalse(any(call.args[0][:2] == ["docker", "tag"] for call in run.call_args_list))
 
     def test_settled_workflow_regression_is_negative_health_not_unknown_success(self):
         instance, manifest = self.fixture()

@@ -203,7 +203,19 @@ print('authenticated-matter-list, readiness, frontend-shell: passed')
             releases = json.loads(run(["gh","release","list","--repo",self.legacy.REPO,"--limit","100","--json","tagName,isDraft,isPrerelease"]))
             versions = [tuple(map(int,self.legacy.SEMVER.fullmatch(r["tagName"]).groups(default="0")))
                         for r in releases if not r["isDraft"] and not r["isPrerelease"] and self.legacy.SEMVER.fullmatch(r["tagName"])]
-            v=max(versions); tag=f"v{v[0]}.{v[1]}.{v[2]+1}"
+            v=max(versions)
+            # Isolated staging can reserve an unpublished tag in the same Docker
+            # daemon. Keep those immutable references and allocate after them.
+            references = run(["docker", "image", "ls", "--format", "{{.Repository}}:{{.Tag}}"])
+            reserved_patches = [v[2]]
+            for reference in references.splitlines():
+                repository, separator, local_tag = reference.rpartition(":")
+                match = self.legacy.SEMVER.fullmatch(local_tag)
+                if separator and repository in ("lawyerrag/backend", "lawyerrag/reports-ui") and match:
+                    local = tuple(map(int, match.groups(default="0")))
+                    if local[:2] == v[:2]:
+                        reserved_patches.append(local[2])
+            tag=f"v{v[0]}.{v[1]}.{max(reserved_patches)+1}"
             if self.legacy.git("status","--porcelain","--untracked-files=no"):
                 raise RuntimeError("Release checkout has local changes")
             self.legacy.git("checkout","--detach",sha)

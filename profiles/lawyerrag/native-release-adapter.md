@@ -30,6 +30,11 @@ The initial manifest is recorded only after current production navigation,
 rollouts, image identities and Dapr sidecar readiness pass. Subsequent manifests
 are created after a successful build. Existing manifests and image identities
 are checked on every reuse. Production publication occurs only after staging.
+Preparation allocates the next patch after both published stable releases and
+local backend/frontend image reservations on that release line. This preserves
+unpublished isolated staging images, including a partially tagged build. Local
+inventory must succeed before building, and each destination tag is checked
+again before tagging; a concurrent reservation is refused rather than replaced.
 Unknown target identity never becomes a negative-health rollback authorization.
 A settled, exact-identity application regression produces a negative receipt so
 the runtime can invoke its independently verified known-good rollback.
