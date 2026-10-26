@@ -44,7 +44,8 @@ function fixture() {
     agentId: owned.agentId,
     status: "running",
     hasActiveRun: true,
-    hasActiveSubagentRun: true,
+    hasActiveSubagentRun: true as boolean | undefined,
+    lastRunId: owned.runId as string | undefined,
     activeRunIds: [] as string[],
     endedAt: 2
   }
@@ -149,6 +150,29 @@ describe("owned investigation administrative abort", () => {
     if (kind === "active IDs") f.session.activeRunIds = ["another-live-run"]
     if (kind === "missing end") f.session.endedAt = Number.NaN
     if (kind === "older end") f.session.endedAt = 0
+    f.abort.mockResolvedValue({ ok: true, status: "no-active-run", abortedRunId: null })
+    await expect(f.gateway.abortOwnedInvestigation(owned)).resolves.toEqual({ status: "pending" })
+  })
+  it("recognizes the public terminal projection without a retained subagent flag for the exact run", async () => {
+    const f = fixture()
+    f.session.status = "killed"
+    f.session.hasActiveRun = false
+    f.session.hasActiveSubagentRun = undefined
+    await expect(f.gateway.abortOwnedInvestigation(owned)).resolves.toEqual({ status: "terminal" })
+    expect(f.loader).not.toHaveBeenCalled()
+    expect(f.abort).not.toHaveBeenCalled()
+  })
+  it.each([
+    "missing run",
+    "replacement run",
+    "active descendant"
+  ])("keeps terminal projection pending for %s", async (kind) => {
+    const f = fixture()
+    f.session.status = "killed"
+    f.session.hasActiveRun = false
+    f.session.hasActiveSubagentRun = kind === "active descendant" ? true : undefined
+    if (kind === "missing run") f.session.lastRunId = undefined
+    if (kind === "replacement run") f.session.lastRunId = "replacement"
     f.abort.mockResolvedValue({ ok: true, status: "no-active-run", abortedRunId: null })
     await expect(f.gateway.abortOwnedInvestigation(owned)).resolves.toEqual({ status: "pending" })
   })

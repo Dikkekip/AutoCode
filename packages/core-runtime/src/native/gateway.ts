@@ -125,7 +125,10 @@ export class NativeCliGateway implements NativeGateway {
       return Boolean(
         session &&
           session.hasActiveRun === false &&
-          session.hasActiveSubagentRun === false &&
+          // The public projection omits an inactive subagent flag when no retained spawn exists.
+          // Accept that shape only with positive evidence for this exact terminal run.
+          (session.hasActiveSubagentRun === false ||
+            (session.hasActiveSubagentRun === undefined && session.lastRunId === input.runId)) &&
           Array.isArray(session.activeRunIds) &&
           session.activeRunIds.length === 0 &&
           Number.isFinite(session.endedAt) &&
