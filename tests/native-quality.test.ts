@@ -106,7 +106,8 @@ function setup(
   skill = fixtureSkill,
   highRiskPaths?: string[],
   independentCandidateReview = false,
-  bindFixtureAcceptance = false
+  bindFixtureAcceptance = false,
+  configure?: (policy: ReturnType<typeof validateNativeAutonomyPolicy>) => void
 ) {
   const root = mkdtempSync(join(tmpdir(), "native-quality-"))
   cleanups.push(() => rmSync(root, { recursive: true, force: true }))
@@ -170,6 +171,7 @@ function setup(
       : {}),
     deployment: null
   })
+  configure?.(policy)
   const gateway = new Gateway(),
     store = new NativeEvidenceStore(join(root, "evidence.db"))
   cleanups.push(() => store.close())
@@ -805,6 +807,43 @@ describe("native quality investigations", () => {
     await expect(authorizeNativeTool(s.runtime, "autocode_context", args, context)).rejects.toThrow(/not assigned/)
     await expect(s.runtime.readContext(context.agentId, context.sessionKey, contextId)).rejects.toThrow()
   })
+  it("delivers trusted standing verifier definitions to the assigned researcher without candidate or execution claims", async () => {
+    const toolchain = mkdtempSync(join(tmpdir(), "research-verifier-"))
+    cleanups.push(() => rmSync(toolchain, { recursive: true, force: true }))
+    mkdirSync(join(toolchain, "checks"))
+    const source = "#!/bin/sh\nexec standing-parent-check --include-mounted-router\n"
+    writeFileSync(join(toolchain, "checks/parent"), source)
+    const s = setup(fixtureSkill, [], true, false, (policy) => {
+      policy.verificationSandbox = { backend: "bubblewrap", rootFilesystem: toolchain, inputFiles: ["src"] }
+      policy.verification = [
+        { id: "parent", argv: ["/checks/parent"], cwd: ".", timeoutSeconds: 10, paths: ["src/**"] },
+        { id: "missing", argv: ["/checks/unavailable"], cwd: ".", timeoutSeconds: 20, paths: ["other/**"] }
+      ]
+    })
+    // Candidate source is never a substitute for the operator-owned definition.
+    mkdirSync(join(s.root, "checks"))
+    writeFileSync(join(s.root, "checks/parent"), "candidate-controlled test waiver")
+    await s.runtime.discover()
+    const assigned = s.start()
+    const { contextId } = JSON.parse(assigned.card.notes)
+    const context = JSON.parse((await s.runtime.readContext(assigned.agent, assigned.session, contextId)).notes)
+    expect(context.plannedVerification).toMatchObject({
+      selectionBasis: "standing-policy-before-candidate",
+      candidateSelectionPending: true,
+      authority: s.policy.verificationAuthority,
+      executionEvidence: "not-executed",
+      imageReview: { tool: "autocode_review_image", stages: ["design", "final"] }
+    })
+    expect(context.plannedVerification.policyDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(context.plannedVerification.commands).toHaveLength(2)
+    expect(context.plannedVerification.commands[0]).toMatchObject({
+      ruleId: "parent",
+      paths: ["src/**"],
+      definition: { content: source, sha256: nativeContentDigest(source), complete: true }
+    })
+    expect(context.plannedVerification.commands[1].definition).toMatchObject({ complete: false })
+    expect(JSON.stringify(context)).not.toContain("candidate-controlled test waiver")
+  })
   it("replays identical context after a lost creation response even when new failure evidence arrives", async () => {
     const s = setup(fixtureSkill, [], true, true)
     await createNativeOperatorRequest(s.runtime, operatorBrief(s), "authenticated operator.admin")
@@ -815,6 +854,7 @@ describe("native quality investigations", () => {
     const entry = s.store.list<Investigation>("investigation").find(({ value }) => value.personaId === "ux")!
     const notes = entry.value.cardNotes
     expect(JSON.parse(notes!).nativeVerificationFailures).toEqual([])
+    const originalVerification = JSON.parse(notes!).plannedVerification
     const revision = s.git("rev-parse", "HEAD")
     const prior = {
       proposal: proposal(),
@@ -834,6 +874,9 @@ describe("native quality investigations", () => {
     expect(s.gateway.cards[0].id).toBe(first.id)
     expect(s.gateway.cards[0].notes).toBe(pointer)
     expect(s.store.get<Investigation>("investigation", entry.id)!.cardNotes).toBe(notes)
+    expect(JSON.parse(s.store.get<Investigation>("investigation", entry.id)!.cardNotes!).plannedVerification).toEqual(
+      originalVerification
+    )
     expect(s.runtime.quality.feedback("ux").workflows[0]!.verificationArtifactSha256).not.toBeNull()
   })
   it("resumes partial discovery with the same round and no duplicate completed cards", async () => {

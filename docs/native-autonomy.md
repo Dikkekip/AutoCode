@@ -24,6 +24,8 @@ An investigation is a real turn by a named persona. Weighted rotation chooses th
 
 Quality policy can set `planReview` to `"all"` to require an independent design-review verdict before every implementation starts; the default `"high-risk"` preserves risk-based review. Investigation `implementationPrompt` values are ordered plans covering architecture, steps, expected files, risks, and verification. The planner admits a plan, the coder executes it within the admitted scope, and the independent reviewer remains the final commit-bound judge. Persona exploration stays read-only and sequential, while repeated repair can route to the reviewed very-complex coder tier; neither behavior creates unrestricted agent fan-out.
 
+Research context includes a frozen `plannedVerification` snapshot of every standing rule, its path selectors, bounded operator-toolchain executable definition and authority bindings. Before a candidate exists this is policy context, not a selected plan or an execution receipt. Incomplete or historical definitions retain their explicit limits. Researchers must establish whether unchanged parent checks and real mounted journeys cover the proposal; unsupported coverage remains a concrete dependency. The snapshot also explains the later assigned design/final reviewers' exact base/head PNG inspection requirement. Research reads and local checks cannot satisfy those image-review receipts. Lost card-creation responses replay the original snapshot rather than rebuilding its authority or evidence.
+
 The reviewed prompt skill may be a native skill bundle. The
 `skills/autocode-persona-loop` bundle keeps discovery persona-led and composes
 error recovery, attempt reflection, minimal-fix, and proof-closure guidance.
