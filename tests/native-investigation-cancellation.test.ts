@@ -142,7 +142,12 @@ describe("owned investigation administrative abort", () => {
     await expect(f.gateway.abortOwnedInvestigation(owned)).rejects.toThrow("unauthorized")
     expect(f.session.hasActiveRun).toBe(true)
   })
-  it.each(["active IDs", "missing end", "older end"])("rejects contradictory terminal evidence: %s", async (kind) => {
+  it.each([
+    "active IDs",
+    "missing end",
+    "older end",
+    "replacement run"
+  ])("rejects contradictory terminal evidence: %s", async (kind) => {
     const f = fixture()
     f.session.status = "done"
     f.session.hasActiveRun = false
@@ -150,6 +155,7 @@ describe("owned investigation administrative abort", () => {
     if (kind === "active IDs") f.session.activeRunIds = ["another-live-run"]
     if (kind === "missing end") f.session.endedAt = Number.NaN
     if (kind === "older end") f.session.endedAt = 0
+    if (kind === "replacement run") f.session.lastRunId = "replacement"
     f.abort.mockResolvedValue({ ok: true, status: "no-active-run", abortedRunId: null })
     await expect(f.gateway.abortOwnedInvestigation(owned)).resolves.toEqual({ status: "pending" })
   })
@@ -339,6 +345,7 @@ it("continues independent cancellations before reporting an aggregate failure", 
   second.card.id = "second-card"
   second.card.runId = "second-run"
   second.card.sessionKey = "second-session"
+  second.session.lastRunId = second.card.runId
   second.entry.cardId = "second-card"
   second.entry.runId = "second-run"
   second.entry.sessionKey = "second-session"
