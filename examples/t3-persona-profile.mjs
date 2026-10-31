@@ -10,12 +10,14 @@ profile.personas.push(
   {
     id: "t3-security-researcher",
     extends: "security-engineer",
+    allowedLanes: ["app-core"],
     responsibilities: ["Investigate authorization boundaries from committed source"],
     requiredReading: ["AGENTS.md", "SECURITY.md"]
   },
   {
     id: "t3-performance-researcher",
     extends: "backend-engineer",
+    allowedLanes: ["app-core"],
     responsibilities: ["Find measured or source-supported latency and resource bottlenecks"],
     requiredReading: ["AGENTS.md", "docs/architecture.md"]
   }

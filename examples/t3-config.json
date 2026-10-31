@@ -33,7 +33,7 @@
       "research": ["t3-security-researcher", "t3-performance-researcher"],
       "planner": ["planner"],
       "design": ["cto-system-architect"],
-      "implementation": ["backend-engineer"],
+      "implementation": ["minimal-runtime-engineer"],
       "verification": ["qa-engineer"],
       "review": ["code-reviewer"],
       "release": ["release-manager"]

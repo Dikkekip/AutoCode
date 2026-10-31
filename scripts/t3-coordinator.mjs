@@ -9,6 +9,7 @@ import {
   T3Host,
   T3Journal,
   T3McpHttpTransport,
+  T3StdioTransport,
   T3WorkflowEngine,
   verifyT3Candidate
 } from "../packages/t3-runtime/dist/index.js"
@@ -41,8 +42,12 @@ function readBounded(path, maxBytes) {
   return readFileSync(path, "utf8")
 }
 const config = JSON.parse(readBounded(configPath, 1024 * 1024))
-for (const key of ["repository", "journalPath", "skillFile", "tokenFile", "privateVerifierRoot"])
+for (const key of ["repository", "journalPath", "skillFile", "privateVerifierRoot"])
   if (typeof config[key] !== "string" || !isAbsolute(config[key])) throw new Error(`Absolute ${key} required`)
+if (config.transport !== undefined && !["http", "stdio"].includes(config.transport))
+  throw new Error("Unsupported T3 transport")
+if (config.transport !== "stdio" && (typeof config.tokenFile !== "string" || !isAbsolute(config.tokenFile)))
+  throw new Error("Absolute tokenFile required for HTTP transport")
 const repository = realpathSync(config.repository)
 const stateRoot = dirname(config.journalPath)
 for (const directory of [stateRoot, config.privateVerifierRoot]) {
@@ -65,32 +70,36 @@ const profile = config.profilePath
 const journal = new T3Journal(config.journalPath)
 const engine = new T3WorkflowEngine(journal, config.policy, resolveT3Personas(profile))
 const host = new T3Host(
-  new T3McpHttpTransport({
-    endpoint: config.endpoint,
-    bearerToken: async () => {
-      // Explicit operator-delivered credential only. Never inspect another session's config, environment or database.
-      const descriptor = openSync(config.tokenFile, constants.O_RDONLY | constants.O_NOFOLLOW)
-      try {
-        const metadata = fstatSync(descriptor)
-        if (
-          !metadata.isFile() ||
-          metadata.uid !== process.getuid?.() ||
-          (metadata.mode & 0o077) !== 0 ||
-          metadata.size < 1 ||
-          metadata.size > 8192
-        )
-          throw new Error("MCP token file must be a small regular private file owned by this user")
-        return readFileSync(descriptor, "utf8").trim()
-      } finally {
-        closeSync(descriptor)
-      }
-    }
-  })
+  config.transport === "stdio"
+    ? new T3StdioTransport(process.stdin, process.stdout)
+    : new T3McpHttpTransport({
+        endpoint: config.endpoint,
+        bearerToken: async () => {
+          // Explicit operator-delivered credential only. Never inspect another session's config, environment or database.
+          const descriptor = openSync(config.tokenFile, constants.O_RDONLY | constants.O_NOFOLLOW)
+          try {
+            const metadata = fstatSync(descriptor)
+            if (
+              !metadata.isFile() ||
+              metadata.uid !== process.getuid?.() ||
+              (metadata.mode & 0o077) !== 0 ||
+              metadata.size < 1 ||
+              metadata.size > 8192
+            )
+              throw new Error("MCP token file must be a small regular private file owned by this user")
+            return readFileSync(descriptor, "utf8").trim()
+          } finally {
+            closeSync(descriptor)
+          }
+        }
+      })
 )
 const coordinator = new T3Coordinator(engine, host, config.coordinator)
 const output = (value) => console.log(JSON.stringify(value, null, 2))
 let lease
 try {
+  // PTY canonical mode truncates large JSON replies; raw mode also prevents echoing tool payloads.
+  if (config.transport === "stdio" && process.stdin.isTTY) process.stdin.setRawMode(true)
   if (command === "status") output(coordinator.recoveryReport(config.projectKey))
   else if (command === "goal")
     output({
@@ -203,4 +212,8 @@ try {
     }
   }
   journal.close()
+  if (config.transport === "stdio") {
+    if (process.stdin.isTTY) process.stdin.setRawMode(false)
+    process.stdin.destroy()
+  }
 }

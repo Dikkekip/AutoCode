@@ -32,6 +32,10 @@ The summary explicitly records `published=false`, `merged=false`, `deployed=fals
 
 ## CLI smoke and remaining qualification
 
+Startup follow-up added an authenticated agent-owned stdio relay, avoiding a separate HTTP credential when an owning T3 agent forwards its advertised tools. Eight relay tests cover chunked/correlated responses, tool restrictions, concurrent calls, timeout, malformed/mismatched/oversized replies, closure and lost-effect handling. The executable launch regression exercises the generated profile through admission/implementation and forwards scripted host replies through the actual CLI. It verifies exit while the parent's stdin remains attached. This caught and fixed a pipe lifetime bug. These are host fixtures, not live T3 delegation.
+
+The follow-up also corrected the shipped example's lane mismatch: custom research personas explicitly allow `app-core`, and implementation uses the minimal profile's `minimal-runtime-engineer`. A status-only smoke did not expose the original mismatch; the regression now checks the actual proposal and implementation path.
+
 The profile generator and example configuration were exercised together using a private fixture. Local `status`, `goal`, `pause`, persisted paused `status`, and `resume` succeeded without a token file or host calls. The generated custom research managers use the minimal profile's existing `app-core` lane and retain distinct missions and quota weights.
 
 Live T3 delegation remains unperformed. The current chat project is not bound to the AutoCode checkout. A real run requires an operator-owned correctly bound parent, explicitly scoped MCP credentials, advertised provider/model mappings and a qualified protected image. The audited T3 0.1.5 contract cannot enforce a research tool allowlist: the default refuses dispatch; accepting prompt-only restrictions requires explicit configuration. Source inspection establishes the advertised contract, not live interoperability or model quality.
