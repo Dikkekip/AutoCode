@@ -6,20 +6,28 @@ const output = process.argv[2]
 if (!output || !isAbsolute(output))
   throw new Error("Usage: node examples/t3-persona-profile.mjs /absolute/private/profile.json")
 const profile = loadProjectProfile("minimal-repo")
+// These roles run against this AutoCode source checkout, without an installed
+// OpenClaw project's generated .openclaw tree.
+for (const id of ["planner", "minimal-runtime-engineer", "qa-engineer", "code-reviewer", "release-manager"]) {
+  const existing = profile.personas.find((persona) => persona.id === id)
+  const reading = ["AGENTS.md", "docs/t3-autonomy.md", "docs/t3-role-contract.md", "docs/t3-validation.md"]
+  if (existing) existing.requiredReading = reading
+  else profile.personas.push({ id, requiredReading: reading })
+}
 profile.personas.push(
   {
     id: "t3-security-researcher",
     extends: "security-engineer",
     allowedLanes: ["app-core"],
     responsibilities: ["Investigate authorization boundaries from committed source"],
-    requiredReading: ["AGENTS.md", "SECURITY.md"]
+    requiredReading: ["AGENTS.md", "docs/t3-autonomy.md", "packages/t3-runtime/src/journal.ts"]
   },
   {
     id: "t3-performance-researcher",
     extends: "backend-engineer",
     allowedLanes: ["app-core"],
     responsibilities: ["Find measured or source-supported latency and resource bottlenecks"],
-    requiredReading: ["AGENTS.md", "docs/architecture.md"]
+    requiredReading: ["AGENTS.md", "docs/t3-autonomy.md", "packages/t3-runtime/src/workflow.ts"]
   }
 )
 for (const [id, focus, ideationPrompt, weight] of [

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process"
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import {
@@ -21,6 +21,11 @@ it("launches the shipped profile through admission and a lane-authorized impleme
     execFileSync(process.execPath, [resolve("examples/t3-persona-profile.mjs"), profilePath])
     const profile = validateProjectProfile(JSON.parse(readFileSync(profilePath, "utf8")))
     const config = JSON.parse(readFileSync(resolve("examples/t3-config.json"), "utf8"))
+    const resolved = resolveT3Personas(profile)
+    for (const id of Object.values(config.policy.rolePersonas).flat() as string[]) {
+      for (const path of resolved.find((persona) => persona.definition.id === id)!.definition.requiredReading)
+        expect(existsSync(resolve(path)), `${id}: ${path}`).toBe(true)
+    }
     const repository = join(directory, "repo")
     execFileSync("git", ["init", "--quiet", repository])
     writeFileSync(join(repository, "source.ts"), "export const value = 1\n")

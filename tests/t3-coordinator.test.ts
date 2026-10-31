@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   captureT3Source,
   resolveT3Personas,
+  retainT3DispatchBrief,
   T3CallbackTransport,
   T3Coordinator,
   T3Host,
@@ -173,8 +174,13 @@ describe("event-driven T3 coordinator", () => {
       mode: "async",
       target: { providerInstanceId: "codex-instance", options: { effort: "medium" } }
     })
-    expect(delegate.args.task).toContain("Backend Engineer")
-    expect(delegate.args.task).toContain("accept-prompt-only")
+    const launch = String(delegate.args.task)
+    expect(launch.length).toBeLessThan(3000)
+    const brief = readFileSync(JSON.parse(launch.match(/Brief: (.+)/)![1]!), "utf8")
+    expect(brief).toContain("Backend Engineer")
+    expect(brief).toContain("accept-prompt-only")
+    expect(brief).toContain('"governance"')
+    expect(launch).toContain(createHash("sha256").update(brief).digest("hex"))
     const restarted = new T3Coordinator(f.engine, f.host, f.config)
     expect((await restarted.dispatch(f.lease, "research-one", f.skill, 100)).taskId).toBe(result.taskId)
     expect(f.calls.filter((call) => call.name === "delegate_task")).toHaveLength(1)
@@ -356,4 +362,23 @@ describe("event-driven T3 coordinator", () => {
     expect(coordinator.researchTick(f.lease, f.source, f.skill.digest)[0]?.id).not.toBe(first.id)
     expect(() => changed.assertPolicy(first)).toThrow("policy")
   })
+})
+
+it("retains long briefs intact across retries and rejects substituted files or unsafe directories", () => {
+  const dir = mkdtempSync(join(tmpdir(), "autocode-t3-brief-"))
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }))
+  const path = join(dir, "journal.sqlite")
+  const id = "a".repeat(64)
+  const content = "complete proposal and persona ".repeat(2000)
+  const first = retainT3DispatchBrief(path, id, content, { assignmentId: id })
+  expect(retainT3DispatchBrief(path, id, content, { assignmentId: id })).toBe(first)
+  expect(first.length).toBeLessThan(3000)
+  const brief = join(dir, "briefs", `${id}.txt`)
+  expect(readFileSync(brief, "utf8")).toBe(content)
+  expect(() => retainT3DispatchBrief(path, id, "different", {})).toThrow("changed")
+  rmSync(brief)
+  symlinkSync(path, brief)
+  expect(() => retainT3DispatchBrief(path, id, content, {})).toThrow()
+  chmodSync(dir, 0o755)
+  expect(() => retainT3DispatchBrief(path, "b".repeat(64), content, {})).toThrow("private")
 })
