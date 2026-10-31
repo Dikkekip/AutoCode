@@ -297,18 +297,20 @@ describe("T3 persona policy workflow", () => {
       findings: [finding],
       criteria: [{ criterion: "Expected behavior is verified", passed: false, evidence: "Cross-process lock probe" }]
     }
+    const before = f.engine.get("fixture", "one")
     for (const invalid of [
       null,
       {},
       "",
       { ...finding, path: "../escape" },
+      { ...finding, path: "src/\0file.ts" },
       { ...finding, lines: [146, 104] },
       { ...finding, severity: "unknown" }
     ]) {
       expect(() =>
         f.engine.recordReview(f.lease, "one", reviewer, { ...result, findings: [invalid] } as never)
       ).toThrow("cannot be approved")
-      expect(f.engine.get("fixture", "one").value.phase).toBe("review")
+      expect(f.engine.get("fixture", "one")).toEqual(before)
     }
     expect(() => f.engine.recordReview(f.lease, "one", reviewer, { ...result, accepted: true })).toThrow(
       "cannot be approved"

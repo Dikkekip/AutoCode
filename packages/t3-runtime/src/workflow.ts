@@ -68,6 +68,7 @@ function validReviewFinding(value: unknown): value is string | T3ReviewFinding {
     ["P0", "P1", "P2", "P3"].includes(finding.severity) &&
     typeof finding.path === "string" &&
     !!finding.path.trim() &&
+    !finding.path.includes("\0") &&
     !finding.path.includes("\\") &&
     !finding.path.includes(":") &&
     finding.path.split("/").every((part) => !!part && part !== "." && part !== "..") &&
