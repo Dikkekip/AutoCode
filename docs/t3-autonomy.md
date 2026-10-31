@@ -130,3 +130,178 @@ The host tool catalogue is negotiated once per coordinator instance/thread. The 
 5. Roll back by freezing T3, observing cancellation and reconciling uncertain effects, preserving its journal/candidates, then explicitly transferring ownership back. Do not reset budgets or throw away evidence to make a blocked run appear healthy.
 
 See [the validation record](t3-validation.md) for observed results and remaining qualification boundaries.
+
+## Fenced port prerelease publication (owner API)
+
+The port uses `scripts/t3-port-release.mjs`, independently of the existing stable
+release helper. The reviewed policy is `T3_PORT_POLICY` in `publication.ts`:
+`Dikkekip/AutoCode`, delivery branch `port/t3-personas-20261031`, full 40-character
+candidate SHA, tags `v0.2.0-t3.1` through `v0.2.0-t3.4`, prerelease true and latest
+false. Prepublication requires the unique **AutoCode CI** check from app 15368,
+completed successfully on that SHA within 86400 seconds. The public
+`@openclaw/core-runtime/required-ci` entrypoint supplies the unchanged native
+policy, including duplicate rejection. **AutoCode Release Readiness** is a distinct,
+supplementary postpublication check. Neither local CI nor that future check
+replaces prepublication approval.
+
+The reviewed `requireBranchProtection=false` disposition applies only while fresh
+repository, delivery-branch, explicit unprotected response, effective branch rules
+and parent-inclusive ruleset discovery all confirm the unprotected branch. Any new
+protection or human gate currently blocks this adapter as unsupported. API errors
+and inaccessible policy block too. The adapter never changes protection or invents
+human approval. The stable-latest baseline is release 416051123 / `v0.1.0.7`;
+every remote observation checks it.
+
+This executable offers only a read-only diagnostic:
+
+```bash
+node scripts/t3-port-release.mjs check-ci --repository Dikkekip/AutoCode --candidate FULL_SHA
+```
+
+Mutation requires the established coordinator owner to import
+`preparePortPublication`, `sendPortOperation`, and `reconcilePortPublication` and
+pass its existing engine and current project lease. There is no CLI switch, worker
+relay tool, journal acquisition, competing owner, schedule or credential delivery
+in this adapter. Build the workspace first. GitHub authentication stays in the
+trusted owner environment. Injected read transports are a testing/embedding boundary; only the trusted owner
+may supply them. Mutations always run the actual local `gh` subprocess; an injected
+read callback cannot supply sender termination evidence.
+
+The owner supplies a pinned Ed25519 verification key **in process**, outside the
+candidate, and an attestation signed over the UTF-8 lowercase canonical `digest(body)`.
+The `T3PublicationAttestation` type defines the exact packet: workflow, SHA/tree,
+policy/export/archive digests, issuance/expiry, approved release title and exact
+UTF-8 notes SHA-256, explicit tag authorization/deadline,
+complete clean `ci:agent` receipt plus actual execution/terminal identity,
+immutable changed-feature harness qualification and negative controls, and an
+independent immutable archive check with terminal/cleanup custody. This is an
+owner evidence integration contract, not a bundled attestation issuer. The owner
+must independently obtain real execution observations before signing; it must not
+sign worker receipt claims. Arbitrary receipt paths and preparation summaries are
+insufficient. Publication also independently reads retained workflow assignments,
+bound completion envelopes and observed terminal events, confirmed protected
+effects, verification policy/receipt digests, criterion-complete independent review
+and release-manager readiness from the existing journal. Missing custody blocks.
+
+Keep attestation packets, trust roots, raw CI receipts, qualification records,
+archive checker observations and journal records in operator-owned private storage
+outside Git. The existing new-admission journal remains the sole runtime; the
+original frozen run, its failed receipts and repair/deadline limits remain unchanged.
+This source does not establish a qualified publication harness or actual custody.
+
+Exports require a separately reviewed literal committed-file allowlist bound to
+candidate/tree; its digest is signed with the archive check. `buildPortAssets`
+requires the committed workspace/build inputs, reads regular blobs only, and emits
+an uncompressed source tar, `manifest.json` and `SHA256SUMS`. Notes contain the full
+SHA and fixed build instructions (`pnpm install --frozen-lockfile`, `pnpm build`).
+This is source requiring supported Node/pnpm, not an installed binary. The explicit
+allowlist remains an operator review requirement; filename exclusions cannot prove
+that arbitrary source content is public or sanitize old Git history.
+
+The archive reader is separate from the writer and inspects every block, payload,
+mode, checksum, padding and all trailing bytes. It rejects links, extensions,
+unsafe/private paths, duplicate/missing files and a second tar stream after EOF.
+Bounds are fixed in `T3_PUBLICATION_LIMITS`: 2000 files, 4 MiB per source blob,
+32 MiB aggregate source, 40 MiB archive/download per asset, 8 assets, 2 MiB API or
+command output, ten API pages, and 30 seconds per subprocess. The independent
+qualified checker must inspect the completed exact archive, including adversarial
+trailing streams; a candidate-local test is not that qualification.
+
+Preparation checks clean exact HEAD/tree, delivery branch, evidence, policy, CI,
+and fresh tag/release/asset collisions before committing a reservation and the
+complete immutable operation inventory in one fenced transaction. Operations are
+separate: exact tag creation, release creation using `--verify-tag --target SHA
+--prerelease --latest=false`, then one upload per asset. No force, overwrite,
+clobber, delete or default-branch mutation is available. Assets must be canonical
+regular files matching the retained name, size and SHA-256.
+
+Before each send, the owner rechecks control, lease lifetime, source, evidence
+freshness/deadline, remote policy, required CI and collisions. Each payload-bound
+effect is prepared separately, then becomes uncertain **before** transmission.
+A normal process exit only establishes local termination when the original
+runner also observes the process group absent. The same custody is retained for a
+known nonzero exit; that exit never means remote rejection. Remote observation must
+still verify peeled tag SHA, release identity/target/prerelease status/title/body, unchanged
+stable latest and downloaded asset size/hash. No command response alone settles a
+publication. Reconciliation is a separate read-only remote operation and never
+retries an absent object. Pause/expiry permits observation under a valid owner
+lease, but never a new send.
+
+Ordinary admission counts the union of active workflows and unresolved publication
+reservations once for capacity, scope and remaining estimated budget, including
+stale terminal workflow records. Malformed/orphan/conflicting reservations block
+admission. Cancellation, closure and head invalidation cannot release an open
+publication reservation. Settlement atomically disables all future sends and
+requires observations for every attempted operation; genuinely unsent operations
+get explicit disabled dispositions. A crash before effect preparation still leaves
+the complete reservation. Timeout or lost ownership cannot establish original sender
+termination: such plans conservatively stay reserved even if a remote read reports
+absence or presence. There is no unsafe timeout-based release or takeover path.
+
+Tests in `t3-publication.test.ts` and `t3-workflow.test.ts` exercise these contracts
+with disposable Git/journal, signed fixture packets and scripted GitHub responses,
+including the built public entrypoint and actual read-only executable. They are not
+live GitHub publication, human approval, protected changed-feature qualification,
+or independent exact-candidate acceptance. Publication never calls `recordClosure`
+or assigns Done. All remaining feature-matrix gaps and automatic-rebase deferral
+still apply; four actual distinct release cycles remain required.
+
+### Prior failed CI and fresh export guard
+
+Retained unapproved candidate `e56121496f993cfe5d5ac76e74e2c0824976b10c`
+failed full `pnpm ci:agent`: licenses/audit passed, but the string-only
+workspace-resolution guard rejected the core-runtime export map. That receipt
+remains failed. The independently admitted fifteen-path revision now repairs the
+guard; it needs its own clean committed-SHA full CI receipt, protected acceptance,
+independent exact-candidate review and release-manager readiness.
+
+The guard accepts only a string root export or literal subpath map including `.`;
+each value is a local string or ordered `{types, default}` pair. Other conditions
+(including import/require), nested conditions, patterns, arrays, null and mixed
+shapes fail closed. Every runtime/declaration target and applicable top-level
+`types` file must be an existing regular file in the exact canonical workspace,
+without symlink redirection. Package and root consumers resolve every public
+runtime subpath through the expected dependency identity. Intended pnpm package
+links remain supported; borrowed graphs, symlinked directories/manifests/targets,
+missing declarations and foreign packages remain rejected. The public core root
+and `required-ci` exports remain available, with a matching root development
+workspace dependency/lockfile; T3 runtime gains no core-runtime dependency.
+
+### Original sender custody and exact release metadata
+
+Each attempted operation records a unique invocation ID, original owner/fence,
+plan/effect/index, payload and argv digests, and an ephemeral runner public key
+before transmission. The private key remains inside the original runner closure.
+Only an actual normal exit with bounded output and observed process-group absence
+produces signed termination evidence (PID, exit code and times). The adapter
+retains it before remote reads, including when `gh` exits nonzero. A successor can
+validate retained evidence against that original key; it cannot replace the key,
+relabel a fence or set a terminal boolean to discharge uncertainty. A crash before
+proof retention remains blocking. Timeout, signal, output overflow, spawn failure,
+lost ownership or a surviving process group produces no accepted proof. The
+trusted cooperative `gh` process and descendants must stay in their assigned
+process group; this is not containment of malicious same-UID processes escaping
+that group. Such a transport requires separate process containment qualification.
+The default subprocess deadline is 30 seconds; an owner may lower it, never raise
+it. No runner invocation is retried.
+
+`publicationMetadata` provides the fixed sanitized default. An owner may supply
+separately approved metadata to preparation; its exact title and notes hash must
+match the signed custody packet. The complete title/body enters the immutable
+identity and release payload before plan/effect hashing. Arguments use the planned
+values. Malformed UTF-8 strings, NULs and missing/empty approved values are rejected.
+Remote `name`/`body` must exactly match during confirmation, subsequent asset sends
+and fresh final settlement. Missing, empty, altered, newline-different and
+Unicode-different values block settlement even after an earlier valid observation;
+no trimming or normalization occurs. `expectedPublicationCycle` and preparation's
+`expectedCycle` expose `{commit, title, notesSha256, assets}` with full accepted SHA
+and a filename-to-SHA-256 map. This expected record is not remote or sender proof.
+
+Local fixtures cover real original subprocess exits at tag/release/every asset,
+nonzero exit after synthetic remote acceptance, signal, timeout, surviving
+process-group descendants, forged/mismatched proofs, successor recovery, missing
+sender custody and exact metadata differences. The remote is scripted; no live
+GitHub release, changed-feature harness qualification or protected acceptance is
+established. The archive parser also verifies Git blob identities from actual
+contents. All twelve acceptance criteria still require downstream independent
+exact-candidate review and the qualified protected adapter/archive checks.

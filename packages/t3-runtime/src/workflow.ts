@@ -1,5 +1,6 @@
 import type { T3Journal, T3Lease, T3Record } from "./journal.js"
 import { digest, type T3Persona, type T3Role } from "./personas.js"
+import { publicationReservations } from "./publication.js"
 import { assertT3Source, sourcePath, type T3Source } from "./source.js"
 
 export type T3Board =
@@ -527,7 +528,9 @@ export class T3WorkflowEngine {
       for (const dependency of proposal.dependencies)
         if (!others.some((other) => other.id === dependency && other.phase === "done"))
           throw new Error("Unclosed dependency")
-      const active = others.filter((other) => other.admitted && !terminal(other.phase))
+      const reservations = publicationReservations(this.journal, lease.projectId)
+      const reservedIds = new Set(reservations.map((r) => r.identity.workflowId))
+      const active = others.filter((other) => (other.admitted && !terminal(other.phase)) || reservedIds.has(other.id))
       if (active.length >= this.policy.maxAdmitted) throw new Error("Project admission capacity reached")
       if (active.some((other) => other.proposal!.scope.some((a) => proposal.scope.some((b) => overlap(a, b)))))
         throw new Error("Scope is reserved by another workflow")
@@ -766,7 +769,14 @@ export class T3WorkflowEngine {
     return this.journal.transaction(lease, () => {
       const row = this.get(lease.projectId, id)
       this.assertPolicy(row.value)
+      const reserved = publicationReservations(this.journal, lease.projectId).some((r) => r.identity.workflowId === id)
+      const before = digest({ phase: row.value.phase, candidate: row.value.candidate, admitted: row.value.admitted })
       action(row.value)
+      if (
+        reserved &&
+        before !== digest({ phase: row.value.phase, candidate: row.value.candidate, admitted: row.value.admitted })
+      )
+        throw new Error("Unsettled publication retains workflow reservation; reconcile and disable sends first")
       this.journal.write("workflow", id, row.value, row.version)
       return row.value
     })

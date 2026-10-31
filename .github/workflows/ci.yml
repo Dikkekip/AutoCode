@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - port/t3-personas-20261031
   pull_request:
 
 permissions:
@@ -12,6 +13,7 @@ permissions:
 
 jobs:
   verify:
+    name: AutoCode CI
     runs-on: ubuntu-latest
 
     steps:
@@ -46,4 +48,4 @@ jobs:
         run: pnpm lint && pnpm typecheck
 
       - name: Verify autonomy and merge gates
-        run: pnpm exec vitest run tests/native-lifecycle.test.ts tests/native-required-ci.test.ts tests/native-repair.test.ts tests/native-promotion-mode.test.ts --fileParallelism=false
+        run: pnpm exec vitest run tests/native-lifecycle.test.ts tests/native-required-ci.test.ts tests/native-repair.test.ts tests/native-promotion-mode.test.ts tests/t3-publication.test.ts tests/t3-workflow.test.ts --fileParallelism=false

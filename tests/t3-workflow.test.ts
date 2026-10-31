@@ -6,11 +6,15 @@ import {
   assertT3CurrentSource,
   captureT3Source,
   digest,
+  publicationMetadata,
+  publicationOperations,
   readT3SourceFile,
   resolveT3Personas,
+  T3_PORT_POLICY,
   T3Journal,
   type T3Policy,
   type T3Proposal,
+  T3Publication,
   type T3Role,
   T3WorkflowEngine
 } from "@autocode/t3-runtime"
@@ -436,5 +440,126 @@ describe("T3 persona policy workflow", () => {
     })
     f.engine.cancel(f.lease, "one", "Stop")
     expect(f.engine.get("fixture", "one").value.phase).toBe("cancelled")
+  })
+})
+
+describe("publication reservations in ordinary lifecycle", () => {
+  function ready(f: ReturnType<typeof fixture>) {
+    f.admit("one")
+    f.candidate("one")
+    f.verify("one")
+    f.engine.recordReview(f.lease, "one", f.completed("one", "review"), {
+      revision: "b".repeat(40),
+      accepted: true,
+      findings: [],
+      criteria: [{ criterion: "Expected behavior is verified", passed: true, evidence: "fixture" }]
+    })
+    f.engine.releaseReady(f.lease, "one", f.completed("one", "release"), "b".repeat(40))
+    const w = f.engine.get("fixture", "one").value
+    const base = {
+      projectId: "fixture",
+      workflowId: "one",
+      revision: w.candidate!.revision,
+      treeDigest: w.candidate!.treeDigest,
+      scope: w.proposal!.scope,
+      estimatedTokens: w.proposal!.estimatedTokens,
+      workflowPolicyDigest: w.policyDigest,
+      publicationPolicyDigest: digest(T3_PORT_POLICY),
+      exportPolicyDigest: digest("exports"),
+      evidenceDigest: digest("custody"),
+      repository: T3_PORT_POLICY.repository,
+      branch: T3_PORT_POLICY.branch,
+      tag: "v0.2.0-t3.1",
+      ...publicationMetadata(w.candidate!.revision, "v0.2.0-t3.1"),
+      assets: ["source.tar", "manifest.json", "SHA256SUMS"].map((name) => ({ name, size: 1, sha256: digest(name) }))
+    }
+    const publication = new T3Publication(f.engine)
+    const plan = publication.prepare(f.lease, { ...base, operations: publicationOperations(base) })
+    return { publication, plan }
+  }
+  it("blocks cancellation, closure and invalidation until sends are disabled and all operations settled", () => {
+    const f = fixture(),
+      { publication, plan } = ready(f)
+    expect(() => f.engine.cancel(f.lease, "one", "cancel")).toThrow("Unsettled publication")
+    expect(() => f.engine.invalidateHead(f.lease, "one", "f".repeat(40))).toThrow("Unsettled publication")
+    expect(() =>
+      f.engine.recordClosure(f.lease, "one", {
+        candidateRevision: "b".repeat(40),
+        mergedRevision: "f".repeat(40),
+        closed: true,
+        evidence: "fixture"
+      })
+    ).toThrow("Unsettled publication")
+    publication.settle(f.lease, plan)
+    expect(publication.get("fixture", plan).state).toBe("settled")
+    expect(() =>
+      publication.begin(f.lease, plan, 0, {
+        id: "a".repeat(36),
+        planDigest: plan,
+        effectId: `publication:${plan}:0`,
+        index: 0,
+        payloadDigest: digest(publication.get("fixture", plan).identity.operations[0]!.payload),
+        argvDigest: digest("fixture"),
+        owner: f.lease.owner,
+        fence: f.lease.fence,
+        publicKey: "PUBLIC KEY fixture"
+      })
+    ).toThrow("disabled")
+    f.engine.cancel(f.lease, "one", "disabled before sending")
+  })
+  it("survives restart and stale terminal workflow flags, preserving scope, capacity and estimated budget", () => {
+    const f = fixture({ maxAdmitted: 1 }),
+      { plan } = ready(f)
+    f.journal.transaction(f.lease, () => {
+      const row = f.engine.get("fixture", "one")
+      row.value.phase = "cancelled"
+      row.value.admitted = false
+      f.journal.write("workflow", "one", row.value, row.version)
+    })
+    f.journal.release(f.lease)
+    const j = new T3Journal(f.path)
+    cleanups.push(() => j.close())
+    const lease = j.acquire("fixture")!,
+      engine = new T3WorkflowEngine(j, f.policy, f.personas)
+    expect(new T3Publication(engine).get("fixture", plan).state).toBe("open")
+    // Use fixture helpers after releasing restarted owner; admission must count terminal reservation.
+    j.release(lease)
+    const own = f.journal.acquire("fixture")!
+    Object.assign(f.lease, own)
+    const planner = f.proposal("two", { scope: ["other.ts"] })
+    expect(() => f.engine.plan(f.lease, "two", planner, "admit", "fixture", f.source.digest)).toThrow("capacity")
+  })
+  it("does not double count active workflows and rejects orphan/conflicting reservations", () => {
+    const f = fixture(),
+      { plan } = ready(f)
+    f.admit("two", { scope: ["other.ts"] })
+    const third = f.proposal("three", { scope: ["third.ts"] })
+    expect(() => f.engine.plan(f.lease, "three", third, "admit", "fixture", f.source.digest)).toThrow("capacity")
+    f.journal.transaction(f.lease, () => {
+      const row = f.journal.read<any>("fixture", "publication", plan)!
+      row.value.identity.workflowId = "missing"
+      row.value.planDigest = digest(row.value.identity)
+      f.journal.write("publication", row.value.planDigest, row.value, 0)
+    })
+    expect(() => f.engine.cancel(f.lease, "two", "cancel")).toThrow("Orphan")
+  })
+  it("retains scope and remaining estimate even for a terminal workflow", () => {
+    const f = fixture(),
+      { plan } = ready(f)
+    f.journal.transaction(f.lease, () => {
+      const row = f.engine.get("fixture", "one")
+      row.value.phase = "cancelled"
+      row.value.admitted = false
+      f.journal.write("workflow", "one", row.value, row.version)
+    })
+    const overlap = f.proposal("scope")
+    expect(() => f.engine.plan(f.lease, "scope", overlap, "admit", "fixture", f.source.digest)).toThrow(
+      "Scope is reserved"
+    )
+    const estimate = f.proposal("budget", { scope: ["other.ts"], estimatedTokens: 99_000 })
+    expect(() => f.engine.plan(f.lease, "budget", estimate, "admit", "fixture", f.source.digest)).toThrow(
+      "estimated token"
+    )
+    expect(f.journal.read<any>("fixture", "publication", plan)!.value.state).toBe("open")
   })
 })

@@ -12,6 +12,7 @@ on:
 
 jobs:
   verify:
+    name: AutoCode Release Readiness
     runs-on: ubuntu-latest
     permissions:
       contents: read

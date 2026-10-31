@@ -19,14 +19,14 @@ T3 paths below are under `packages/t3-runtime/src/`; native reference paths unde
 | 05 | Actual-diff risk and digest-bound design approval; native risk tests Material candidate, scope, design or policy changes invalidate approval. | workflow design/high risk; GAP actual-diff risk reassessment | t3-workflow high-risk design | PARTIAL cycle2; source-bound design invalidation required |
 | 06 | Protected verification authority, acceptance bindings and artifacts Candidate test success cannot replace protected acceptance authority. | artifacts.ts verifyT3Candidate | t3-artifacts; immutable candidate exports/cleanup | LIVE protected journal; contract harness qualification pending |
 | 07 | Renewable SQLite leases and fencing tokens; two-connection/process tests Single-host SQLite; no distributed exactly-once claim. | journal.ts acquire/renew/fence | t3-foundations cross-process concurrency/fencing | LIVE independent connections; single-host only |
-| 08 | `native/required-ci.ts`, exact head/app/context/freshness checks Unsupported ruleset-only requirements fail closed; no admin bypass. | GAP T3 publication required-CI adapter; reuse native required-ci policy | ci:agent; native required-ci acceptance | PENDING cycle1/2; never admin bypass |
+| 08 | `native/required-ci.ts`, exact head/app/context/freshness checks Unsupported ruleset-only requirements fail closed; no admin bypass. | publication.ts + owner t3-port-release.mjs reuse public native required-ci policy | t3-publication executable/public-entrypoint fixtures; native required-ci acceptance | IMPLEMENTED fixture cycle1; exact-candidate hosted CI pending; never admin bypass |
 | 09 | Domain native lifecycle and immutable attempts Legacy records remain recovery input, not current release authority. | workflow.ts assignments/candidate/repairFrom | t3-workflow role lifecycle | LIVE roles and retained old candidates |
 | 10 | Store CAS transactions containing state, audit and external intent Unknown outcomes require observation; failed responses do not prove rejection. | journal.ts transaction/reserveEffect/markEffect | t3-foundations uncertainty; t3-coordinator lost reply | LIVE durable dispatch receipts |
 | 11 | `native/recovery.ts`, reviewed digest-bound recovery plans Recovery requires pause and an independent operator; retry creates a fresh attempt. | GAP reviewed recovery-plan command; existing uncertain-send blocker | t3-coordinator; native recovery policy reuse | PARTIAL cycle3; no blind replay |
 | 12 | Short board decision lease, rotating per-workflow leases and bounded slots Workboard remains the queue; verification/release concurrency is bounded. | journal project lease + workflow admission/reservations | t3-workflow dependencies/scope/capacity | LIVE maxAdmitted1; board replaced by journal |
 | 13 | Shared process runner cancellation, deadlines, idle/output limits and descendant cleanup Remote session abort acceptance is not proof of termination. | os-adapters runner + T3 task_cancel descendants | t3-artifacts cleanup; t3-coordinator cancel pending | LIVE verifier limits; remote cancel remains observation-dependent |
 | 14 | **Deferred:** automatic bounded rebase/reverification was not added to this checkpoint Existing release gate blocks a stale base; operator recovery and fresh verification/review remain required. | Pre-existing deferred automatic rebase remains deferred | stale-head rejection; fresh implementation/review alternative | INTENTIONAL original deferral, no automatic parity claim |
-| 15 | Terminal lifecycle, scoped reservations and operator recovery Uncertain release effects retain their scope until resolved. | workflow terminal checks/reservations; GAP publication uncertainty path | t3-workflow terminal; release reconciliation needed | PARTIAL cycle1/3 |
+| 15 | Terminal lifecycle, scoped reservations and operator recovery Uncertain release effects retain their scope until resolved. | workflow admission union + publication immutable reservations/settlement | t3-workflow publication lifecycle + t3-publication crash/reconciliation fixtures | PARTIAL cycle1/3; actual owner custody pending |
 | 16 | `os-adapters/execution-owner.ts`, native/legacy entry guards and cutover Trusted ownership database is outside candidate repositories; cooperative service boundary. | Dedicated T3 project binding + private journal lease; cooperative ownership | t3-coordinator binding + frozen snapshot receipt | LIVE sole owner; no production cutover |
 | 17 | Versioned Gateway validators and doctor checks Reviewed OpenClaw 2026.9.1 contract; no installed live SDK/Gateway certification in this workspace. | OpenClaw Gateway validators replaced by advertised T3 contracts | transport.ts; mcp-http/stdio tests | HOST REPLACEMENT; no installed T3 binary/DB modification |
 | 18 | `native/provenance.ts`, protected attempt/code/policy/toolchain/artifact receipts Legacy or mismatched receipts do not authorize release. | source.ts + artifacts.ts + prompt/persona/result digests | t3-workflow tampering; t3-artifacts exact source | LIVE original bindings; current review pending |
@@ -41,7 +41,7 @@ T3 paths below are under `packages/t3-runtime/src/`; native reference paths unde
 | 27 | Adversarial repository content, cross-role broker and protected-check tests These fixtures do not establish hostile multi-tenant isolation. | Hashed private role briefs + protected source export + independent roles | t3-launch; t3-artifacts; role isolation tests | LIVE prompt-only boundary disclosed; no hostile same-UID guarantee |
 | 28 | Seeded pause/lost-response replay, separate-process leases and crash recovery tests Reconciliation preserves uncertainty instead of asserting exactly-once delivery. | journal uncertain effects + native wake receipt dedupe | t3-foundations; t3-coordinator lost responses | LIVE completed wakes; publication crash controls pending cycle3 |
 | 29 | CI Node matrix, explicit Node test family and compiled native smoke Linux kernel isolation and supported runtime lanes must pass in CI. | Existing Node CI and compiled runtime smoke retained | pnpm ci:agent; scripts/runtime-smoke.mjs | HOST full CI passed7f365310; new candidate must rerun |
-| 30 | Pinned actions, least-privilege CI, frozen lockfile, license/audit checks and exact-source witness Release requires a clean exact revision and successful verification; outages fail visibly. | Existing licenses/audit/clean CI retained; port release witness missing | scripts/agent-ci.mjs; release-witness.mjs audit | PENDING cycle1 port-aware prereleases/assets and exact source |
+| 30 | Pinned actions, least-privilege CI, frozen lockfile, license/audit checks and exact-source witness Release requires a clean exact revision and successful verification; outages fail visibly. | Existing licenses/audit/clean CI + separate fenced port adapter | agent-ci.mjs; t3-port-release.mjs; t3-publication fixtures | IMPLEMENTED source cycle1; clean candidate CI and actual prerelease custody pending |
 | 31 | Native memory bridge with protected provenance, retention, human promotion and invalidation Derived lessons cannot grant authority; absent retained evidence yields no promoted lesson. | GAP T3 memory bridge; reuse protected lesson/promotion contracts | native memory.ts; memory-runtime | PENDING cycle2; memory never grants authority |
 | 32 | Existing evidence-based selector plus reviewed exploration capacity Scores express reviewed preferences; they are not fabricated performance measurements. | Weighted persona selection present; exploration/outcomes bridge gap | workflow selectPersona; native selector/evaluation | PARTIAL cycle2; no fake measured scores |
 | 33 | Bounded problem/workflow/scope/evidence and resolution-aware dedupe New evidence/reversals can reopen; exact operator overrides expire. | workflow dedupe by source/persona/goal/skill and scoped admission | t3-workflow duplicate/no-op; coordinator changed policy | PARTIAL resolution/reopening semantics cycle2 |
@@ -65,7 +65,7 @@ T3 paths below are under `packages/t3-runtime/src/`; native reference paths unde
 | Native goals | coordinator goalCommand; harness goal tools | New four-release persistent goal active | Provider-specific limitations explicit; no fabricated generic goal RPC |
 | Schedules/webhooks/intake | saveDisabledSchedule + native schedule tools; native goal-loop/telegram-ideas | Disabled interval fixture; no recurring production schedule | Fixed-time/webhook supported mappings, dedupe/age/signature rules cycle2/3; optional Telegram transport not activated |
 | PR linkage/watches | Native link_pull_request/watch_pull_request | Not yet exercised for this port | Immediate link every pushed/created PR; event-driven wakes |
-| Port publication | release-witness audited stable defaults unsuitable | No port release yet; stable latest v0.1.0.7; v0.2.0-t3.* collision check clear initially | Port-aware exact-SHA verifier-gated adapter; assets/checksums; recheck collisions before every publication |
+| Port publication | release-witness audited stable defaults unsuitable | No port release yet; stable latest v0.1.0.7; v0.2.0-t3.* collision check clear initially | Owner adapter and assets/checksums implemented; t3-publication fixtures; actual reviewed export/qualification/custody and fresh collisions required before every publication |
 | Four real cycles + feedback | Research→planner→managed implementation→protected verify→independent review→trusted publication | Original run is qualification history, not one of four cycles | Four distinct substantive SHAs/tags/URLs; no simulated releases |
 | Reusable shared integrations | memory-runtime, telemetry, evaluation, project-profiles, ui-components, os-adapters | Existing library tests retained | T3 bridges/dispositions above; optional external connectors require configured host, not default activation |
 | Reusable host-specific integrations | T3 replaces OpenClaw gateway/plugin/broker/session transport | Advertised authenticated tools with parent/project binding | Keep original backend available; no provider installation/quota reset |
@@ -76,3 +76,51 @@ platform exclusion needs a specific unsupported mechanism and practical alternat
 Production deployment, retirement, default-branch integration and recurring
 production activation remain outside authority. A GitHub release is publication;
 `Done` still requires actual merge and closure evidence.
+
+
+## Cycle 1 publication implementation candidate
+
+The admitted publication slice adds `publication.ts`, the separate trusted-owner
+`t3-port-release.mjs` adapter, shared workflow reservations, the public core-runtime
+required-CI export, and distinct hosted job names. Source/fixture evidence is in
+`tests/t3-publication.test.ts` and the publication section of
+`tests/t3-workflow.test.ts`; the operator contract is in `t3-autonomy.md`.
+
+| Existing rows | Added source and fixture evidence | Remaining authority / evidence |
+| --- | --- | --- |
+| 08, 29, 30 | Public required-CI entrypoint; repository-bound executable; exact SHA/app/freshness/duplicates; dedicated delivery-branch CI trigger | Exact-candidate hosted CI and clean committed ci:agent still required per release |
+| 10, 12, 15, 28 | Immutable plan/effects; uncertain before send; shared admission union; cancellation/closure/invalidation guards; restart and delayed-sender fixtures | Actual owner execution, external observations, uncertainty recovery remain owner custody |
+| 18, 27 | Signed owner custody plus retained assignments/completions/protected receipts and complete independent criteria | Real CI execution attestation, changed-publication harness qualification, protected acceptance, independent review and release readiness |
+| 30, 39; Port publication | Separate port prerelease adapter; explicit source allowlist; bounded archive parser including hidden second streams; manifest/checksums and downloaded assets | Reviewed actual export inventory and independently qualified archive check; no release has been demonstrated by these fixtures |
+
+All 40 rows and additional requirements above remain the acceptance inventory.
+This addendum supplies implementation/fixture evidence only. Existing pending and
+partial parity work, frozen-run failures and the original automatic-rebase deferral
+remain unwaived. An owner must retain real qualified verification, exact-candidate
+independent review, release readiness and remote observations before counting a
+release. No publication, merge, deployment, recurring activation or Done is claimed.
+
+The retained prior candidate `e56121496f993cfe5d5ac76e74e2c0824976b10c`
+failed full CI at the string-only workspace export guard; its failed receipt is
+preserved. This fresh fifteen-path implementation adds finite explicit root/subpath
+export validation, root-consumer checks, real ESM/require boundary fixtures and
+runtime/declaration/symlink negative controls in
+`scripts/assert-workspace-resolution.test.mjs`. A new clean committed-SHA full
+`ci:agent` is required; prior public-entrypoint tests never waived that failed gate.
+
+For rows 10, 12, 15, 28 and Port publication, the original runner now binds an
+invocation key to plan/effect/payload/argv/owner/fence before sending and retains
+signed normal-exit custody before observation, including nonzero exit. Actual
+subprocess fixture controls distinguish timeout, signal, surviving descendants and
+missing custody at tag, release and every asset. No remote observation alone
+releases these uncertain reservations. Recovery verifies the original key.
+
+For rows 18, 30, 39 and Port publication, approved exact title/body enter the
+immutable plan; actual remote name/body must match during confirmation, asset
+sends and fresh settlement. Fixtures cover absent/empty/altered/newline/Unicode
+metadata and exact positive controls. The expected cycle is full commit, approved
+title, exact UTF-8 notes SHA-256 and filename-to-SHA-256 assets. It is an expected
+record, not authoritative remote proof. Protected qualification of the complete
+adapter/archive checker, exact-candidate review of all twelve criteria and release
+readiness remain required. The entire matrix and four distinct real cycles remain
+pending where marked above.

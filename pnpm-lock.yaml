@@ -15,6 +15,9 @@ importers:
       '@biomejs/biome':
         specifier: ^2.4.11
         version: 2.4.11
+      '@openclaw/core-runtime':
+        specifier: workspace:*
+        version: link:packages/core-runtime
       '@types/node':
         specifier: ^24.10.1
         version: 24.12.0

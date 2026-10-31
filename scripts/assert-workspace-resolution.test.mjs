@@ -1,5 +1,7 @@
 import assert from "node:assert/strict"
+import { execFileSync } from "node:child_process"
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import { createRequire } from "node:module"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { afterEach, test } from "node:test"
@@ -146,4 +148,116 @@ test("still rejects borrowed source dependencies when a captured runtime path is
     () => assertPluginWorkspaceResolution({ source, runtimeSource: join(f.root, "captured.mjs") }),
     /Foreign workspace dependency/
   )
+})
+
+function exportMap(f, change = {}) {
+  for (const file of ["index.d.ts", "required-ci.mjs", "required-ci.d.ts"])
+    writeFileSync(
+      join(f.dependency, "dist", file),
+      file.endsWith(".mjs") ? "export const ci = true" : "export declare const ci: boolean"
+    )
+  const value = {
+    name: "@test/domain",
+    type: "module",
+    types: "./dist/index.d.ts",
+    exports: {
+      ".": { types: "./dist/index.d.ts", default: "./dist/index.mjs" },
+      "./required-ci": { types: "./dist/required-ci.d.ts", default: "./dist/required-ci.mjs" }
+    },
+    ...change
+  }
+  writeFileSync(join(f.dependency, "package.json"), JSON.stringify(value))
+  return value
+}
+test("validates explicit public root/subpath targets and actual ESM and require resolution for root consumers", () => {
+  const f = fixture()
+  exportMap(f)
+  writeFileSync(
+    join(f.root, "package.json"),
+    JSON.stringify({ type: "module", devDependencies: { "@test/domain": "workspace:*" } })
+  )
+  const link = join(f.root, "node_modules/@test/domain")
+  mkdirSync(dirname(link), { recursive: true })
+  symlinkSync(f.dependency, link)
+  assert.deepEqual(assertWorkspaceResolution(f.root), { workspaces: 2, bindings: 2 })
+  for (const cwd of [f.root, f.consumer]) {
+    const require = createRequire(join(cwd, "package.json"))
+    assert.equal(require.resolve("@test/domain/required-ci"), join(f.dependency, "dist/required-ci.mjs"))
+    const result = execFileSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        "import { value } from '@test/domain'; import { ci } from '@test/domain/required-ci'; console.log(value && ci)"
+      ],
+      { cwd, encoding: "utf8" }
+    )
+    assert.equal(result.trim(), "true")
+  }
+})
+for (const [label, exports] of Object.entries({
+  conditional: { import: "./dist/index.mjs", require: "./dist/required-ci.mjs" },
+  divergent: { ".": { import: "./foreign.mjs", require: "./dist/index.mjs" } },
+  pattern: { ".": "./dist/index.mjs", "./*": "./dist/*.mjs" },
+  nested: { ".": { types: "./dist/index.d.ts", default: { node: "./dist/index.mjs" } } },
+  array: ["./dist/index.mjs"],
+  null: null,
+  mixed: { ".": "./dist/index.mjs", default: "./dist/index.mjs" },
+  missingRoot: { "./required-ci": "./dist/index.mjs" },
+  missingRuntime: { ".": { types: "./dist/index.d.ts" } },
+  reversed: { ".": { default: "./dist/index.mjs", types: "./dist/index.d.ts" } },
+  nullTarget: { ".": null },
+  arrayTarget: { ".": ["./dist/index.mjs"] }
+}))
+  test(`rejects unsupported export grammar: ${label}`, () => {
+    const f = fixture()
+    exportMap(f, { exports })
+    assert.throws(() => assertWorkspaceResolution(f.root), /Unsupported conditional/)
+  })
+for (const target of [
+  "../escape.mjs",
+  "node:fs",
+  "/tmp/foreign.mjs",
+  "./dist/../index.mjs",
+  "./dist/*.mjs",
+  "./dist/index.mjs?x",
+  "./dist/%2e%2e/x",
+  "./node_modules/foreign/index.mjs"
+])
+  test(`rejects unsafe public target ${target}`, () => {
+    const f = fixture()
+    exportMap(f, { exports: { ".": target } })
+    assert.throws(() => assertWorkspaceResolution(f.root), /Unsafe|Escaping/)
+  })
+for (const target of ["dist/index.mjs", "dist/index.d.ts", "dist/required-ci.mjs", "dist/required-ci.d.ts"]) {
+  test(`validates presence of every runtime/declaration target: ${target}`, () => {
+    const f = fixture()
+    exportMap(f)
+    unlinkSync(join(f.dependency, target))
+    assert.throws(() => assertWorkspaceResolution(f.root), /Cannot find module or declaration/)
+  })
+  test(`rejects within-workspace symlink redirection: ${target}`, () => {
+    const f = fixture()
+    exportMap(f)
+    writeFileSync(join(f.dependency, "other"), "export const value = true")
+    unlinkSync(join(f.dependency, target))
+    symlinkSync(join(f.dependency, "other"), join(f.dependency, target))
+    assert.throws(() => assertWorkspaceResolution(f.root), /Symlinked workspace target/)
+  })
+}
+test("validates applicable top-level types independently of export-map declarations", () => {
+  const f = fixture()
+  exportMap(f, { types: "./dist/missing.d.ts" })
+  assert.throws(() => assertWorkspaceResolution(f.root), /Cannot find module or declaration/)
+})
+test("rejects a root consumer's borrowed dependency graph even when package consumers are healthy", () => {
+  const f = fixture(),
+    foreign = directory()
+  exportMap(f)
+  manifest(foreign, "@test/domain")
+  writeFileSync(join(f.root, "package.json"), JSON.stringify({ dependencies: { "@test/domain": "workspace:*" } }))
+  const link = join(f.root, "node_modules/@test/domain")
+  mkdirSync(dirname(link), { recursive: true })
+  symlinkSync(foreign, link)
+  assert.throws(() => assertWorkspaceResolution(f.root), /Foreign workspace dependency/)
 })
