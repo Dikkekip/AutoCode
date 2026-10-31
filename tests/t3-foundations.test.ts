@@ -66,7 +66,10 @@ describe("T3 journal filesystem admission", () => {
     chmodSync(path, 0o600)
     cleanups.push(() => db.close())
     db.exec("CREATE TABLE unrelated(id INTEGER); BEGIN IMMEDIATE; INSERT INTO unrelated VALUES(1)")
-    if (rejection === "unsafe sidecar") writeFileSync(`${path}-shm`, "unsafe", { mode: 0o640 })
+    if (rejection === "unsafe sidecar") {
+      writeFileSync(`${path}-shm`, "unsafe", { mode: 0o640 })
+      chmodSync(`${path}-shm`, 0o640)
+    }
     const probe = () => {
       const result = spawnSync(
         process.execPath,
