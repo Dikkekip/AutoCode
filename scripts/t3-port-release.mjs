@@ -167,7 +167,7 @@ export async function requiredPortCi(repository, cwd, revision, run = gh, now = 
 
 async function api(cwd, repository, path, run = gh, max = L.outputBytes) {
   assertRepository(repository)
-  return json(await run(cwd, ["api", `repos/${repository}/${path}`], max))
+  return json(await run(cwd, ["api", `repos/${repository}${path === "" ? "" : `/${path}`}`], max))
 }
 async function pages(cwd, repository, path, run) {
   const all = []

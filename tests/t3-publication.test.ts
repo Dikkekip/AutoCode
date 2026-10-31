@@ -364,6 +364,28 @@ function terminal(f: ReturnType<typeof fixture>, lease: any, plan: string, index
   f.publication.terminalSender(lease, plan, index, termination(f, plan, index))
 }
 
+// Literal expected argv is independent of the adapter's endpoint constructor.
+function preflightRequests(revision: string, page = 1) {
+  return {
+    repository: ["api", "repos/Dikkekip/AutoCode"],
+    branch: ["api", "repos/Dikkekip/AutoCode/branches/port%2Ft3-personas-20261031"],
+    rules: ["api", "repos/Dikkekip/AutoCode/rules/branches/port%2Ft3-personas-20261031"],
+    rulesets: ["api", `repos/Dikkekip/AutoCode/rulesets?includes_parents=true&per_page=100&page=${page}`],
+    protection: ["api", "--include", "repos/Dikkekip/AutoCode/branches/port%2Ft3-personas-20261031/protection"],
+    ci: ["api", `repos/Dikkekip/AutoCode/commits/${revision}/check-runs?per_page=100&filter=latest&page=${page}`]
+  }
+}
+const sameArgs = (actual: string[], expected: string[]) => JSON.stringify(actual) === JSON.stringify(expected)
+
+function retainedPublicationState(f: ReturnType<typeof fixture>) {
+  return {
+    records: f.j.db.prepare("SELECT * FROM records ORDER BY project,kind,id").all(),
+    events: f.j.db.prepare("SELECT * FROM events ORDER BY sequence").all(),
+    effects: f.j.effects("fixture"),
+    reservations: publicationReservations(f.j, "fixture")
+  }
+}
+
 function remoteFixture(f: ReturnType<typeof fixture>) {
   const calls: string[][] = []
   const statePath = join(f.dir, "remote.json"),
@@ -403,12 +425,14 @@ if(s.failAt===current){
         ...f.built.assets.find((a: any) => a.name === name),
         id: n + 1
       }))
-    if (args.includes("--include"))
+    const expected = preflightRequests(f.identity.revision)
+    const root = "repos/Dikkekip/AutoCode"
+    if (sameArgs(args, expected.protection))
       return Buffer.from('HTTP/2.0 404 Not Found\r\n\r\n{"message":"Branch not protected"}')
     const p = args.at(-1)!
     let value: any
-    if (p.endsWith("/")) value = { full_name: T3_PORT_POLICY.repository, default_branch: "master" }
-    else if (p.includes("/check-runs?"))
+    if (sameArgs(args, expected.repository)) value = { full_name: T3_PORT_POLICY.repository, default_branch: "master" }
+    else if (sameArgs(args, expected.ci))
       value = {
         check_runs: [
           {
@@ -422,22 +446,27 @@ if(s.failAt===current){
           }
         ]
       }
-    else if (p.includes("/rules/branches/") || p.includes("/rulesets?")) value = []
-    else if (p.includes("/branches/"))
+    else if (sameArgs(args, expected.rules) || sameArgs(args, expected.rulesets)) value = []
+    else if (sameArgs(args, expected.branch))
       value = { name: T3_PORT_POLICY.branch, commit: { sha: f.identity.revision }, protected: false }
-    else if (p.endsWith("/releases/latest"))
+    else if (sameArgs(args, ["api", `${root}/releases/latest`]))
       value = {
         id: T3_PORT_POLICY.stableLatest.id,
         tag_name: T3_PORT_POLICY.stableLatest.tag,
         prerelease: false,
         draft: false
       }
-    else if (p.includes("/matching-refs/"))
+    else if (sameArgs(args, ["api", `${root}/git/matching-refs/tags/${f.identity.tag}?per_page=100&page=1`]))
       value = tag ? [{ ref: `refs/tags/${f.identity.tag}`, object: { type: "commit", sha: f.identity.revision } }] : []
-    else if (p.includes("/releases/123/assets"))
+    else if (sameArgs(args, ["api", `${root}/releases/123/assets?per_page=100&page=1`]))
       value = uploaded.map((a) => ({ id: a.id, name: a.name, size: a.bytes.length }))
-    else if (p.includes("/releases/assets/")) return uploaded.find((a) => a.id === Number(p.split("/").at(-1))).bytes
-    else if (p.includes("/releases?"))
+    else if (
+      uploaded.some((a) =>
+        sameArgs(args, ["api", "-H", "Accept: application/octet-stream", `${root}/releases/assets/${a.id}`])
+      )
+    )
+      return uploaded.find((a) => p === `${root}/releases/assets/${a.id}`).bytes
+    else if (sameArgs(args, ["api", `${root}/releases?per_page=100&page=1`]))
       value = release
         ? [
             {
@@ -451,7 +480,7 @@ if(s.failAt===current){
             }
           ]
         : []
-    else throw new Error(`Unexpected read ${p}`)
+    else throw new Error(`Unexpected read argv ${JSON.stringify(args)}`)
     return Buffer.from(JSON.stringify(value))
   }
   return {
@@ -467,6 +496,150 @@ if(s.failAt===current){
     }
   }
 }
+
+describe("canonical publication preflight", () => {
+  it("requests the canonical root and exact repository-bound policy and candidate CI argv", async () => {
+    const f = fixture(),
+      host = remoteFixture(f)
+    await adapter.discoverPortPolicy(f.identity.repository, f.candidateSource.repository, f.identity.revision, host.run)
+    await adapter.requiredPortCi(f.identity.repository, f.candidateSource.repository, f.identity.revision, host.run)
+    expect(host.calls).toEqual(Object.values(preflightRequests(f.identity.revision)))
+    expect(host.mutations()).toBe(0)
+  })
+
+  it("rejects malformed roots, unknown routes, wrong repositories, flags and unexpected pages", async () => {
+    const f = fixture(),
+      host = remoteFixture(f)
+    const requests = preflightRequests(f.identity.revision)
+    for (const args of [
+      ["api", "repos/Dikkekip/AutoCode/"],
+      ["api", "repos/Dikkekip/AutoCode/unknown"],
+      ["api", "repos/other/repo"],
+      ["api", "--include", requests.repository[1]!],
+      ["api", requests.protection[2]!],
+      ["api", "--include", requests.branch[1]!],
+      [...requests.ci, "--paginate"],
+      preflightRequests(f.identity.revision, 2).rulesets,
+      preflightRequests(f.identity.revision, 2).ci
+    ])
+      await expect(host.run(f.candidateSource.repository, args)).rejects.toThrow("Unexpected read argv")
+    expect(host.mutations()).toBe(0)
+  })
+
+  it("preserves exact parent-ruleset and candidate-CI queries on subsequent pages", async () => {
+    const f = fixture(),
+      host = remoteFixture(f)
+    const first = preflightRequests(f.identity.revision),
+      second = preflightRequests(f.identity.revision, 2)
+    const calls: string[][] = []
+    const run = async (cwd: string, args: string[]) => {
+      calls.push(args)
+      if (sameArgs(args, first.rulesets))
+        return Buffer.from(JSON.stringify(Array.from({ length: 100 }, (_, id) => ({ id }))))
+      if (sameArgs(args, second.rulesets)) return Buffer.from("[]")
+      if (sameArgs(args, first.ci))
+        return Buffer.from(JSON.stringify({ check_runs: Array.from({ length: 100 }, () => ({ name: "unrelated" })) }))
+      if (sameArgs(args, second.ci)) return host.run(cwd, first.ci)
+      return host.run(cwd, args)
+    }
+    // Discovered rulesets remain blocking even after all pages have been read.
+    await expect(
+      adapter.discoverPortPolicy(f.identity.repository, f.candidateSource.repository, f.identity.revision, run)
+    ).rejects.toThrow("protection")
+    expect(calls).toEqual([first.repository, first.branch, first.rules, first.rulesets, second.rulesets])
+    calls.length = 0
+    await adapter.requiredPortCi(f.identity.repository, f.candidateSource.repository, f.identity.revision, run)
+    expect(calls).toEqual([first.ci, second.ci])
+  })
+
+  for (const kind of ["rulesets", "ci"] as const) {
+    it(`retains the ${kind} pagination bound with exact page argv`, async () => {
+      const f = fixture(),
+        host = remoteFixture(f)
+      const calls: string[][] = []
+      const run = async (cwd: string, args: string[]) => {
+        const expected = preflightRequests(f.identity.revision, calls.length + 1)[kind]
+        if (sameArgs(args, expected)) {
+          calls.push(args)
+          const batch = Array.from({ length: 100 }, () => ({ name: "unrelated" }))
+          return Buffer.from(JSON.stringify(kind === "ci" ? { check_runs: batch } : batch))
+        }
+        return host.run(cwd, args)
+      }
+      const check = kind === "ci" ? adapter.requiredPortCi : adapter.discoverPortPolicy
+      await expect(
+        check(f.identity.repository, f.candidateSource.repository, f.identity.revision, run)
+      ).rejects.toThrow("pagination bound")
+      expect(calls).toEqual(
+        Array.from({ length: L.pages }, (_, n) => preflightRequests(f.identity.revision, n + 1)[kind])
+      )
+      expect(host.mutations()).toBe(0)
+    })
+  }
+
+  for (const kind of ["repository", "rulesets", "protection", "ci"] as const) {
+    it(`retains the ${kind} response byte bound`, async () => {
+      const f = fixture(),
+        host = remoteFixture(f)
+      const expected = preflightRequests(f.identity.revision)[kind]
+      const run = async (cwd: string, args: string[]) =>
+        sameArgs(args, expected) ? Buffer.alloc(L.outputBytes + 1, 32) : host.run(cwd, args)
+      const check = kind === "ci" ? adapter.requiredPortCi : adapter.discoverPortPolicy
+      await expect(
+        check(f.identity.repository, f.candidateSource.repository, f.identity.revision, run)
+      ).rejects.toThrow("bound exceeded")
+      expect(host.mutations()).toBe(0)
+    })
+  }
+
+  for (const boundary of ["repository", "branch", "rules", "rulesets", "protection", "ci", "protection-404"] as const) {
+    for (const phase of ["prepare", "send", "uncertain-send"] as const) {
+      it(`preserves all retained state and prevents mutation on ${phase} ${boundary} failure`, async () => {
+        const f = fixture(),
+          host = remoteFixture(f)
+        let plan: string | undefined
+        if (phase !== "prepare") {
+          plan = (await adapter.preparePortPublication(f.owner, "workflow", f.identity.tag, f.exportPolicy, host.run))
+            .plan
+          if (phase === "uncertain-send") {
+            host.fail(0, "nonzero")
+            await expect(adapter.sendPortOperation(f.owner, plan, 0, undefined, host.run)).rejects.toThrow(
+              "known local termination"
+            )
+            expect(f.j.effect(publicationEffectId(plan!, 0))?.status).toBe("uncertain")
+          }
+          expect(publicationReservations(f.j, "fixture")).toHaveLength(1)
+        } else {
+          expect(f.j.list("fixture", "publication")).toEqual([])
+          expect(publicationReservations(f.j, "fixture")).toEqual([])
+        }
+        const before = retainedPublicationState(f),
+          mutations = host.mutations()
+        const target = preflightRequests(f.identity.revision)[boundary === "protection-404" ? "protection" : boundary]
+        let reached = false
+        const run = async (cwd: string, args: string[]) => {
+          if (sameArgs(args, target)) {
+            reached = true
+            if (boundary === "protection-404")
+              return Buffer.from('HTTP/2.0 404 Not Found\r\n\r\n{"message":"Not Found"}')
+            throw new Error(`inaccessible ${boundary}`)
+          }
+          return host.run(cwd, args)
+        }
+        const attempt =
+          phase === "prepare"
+            ? adapter.preparePortPublication(f.owner, "workflow", f.identity.tag, f.exportPolicy, run)
+            : adapter.sendPortOperation(f.owner, plan, phase === "uncertain-send" ? 1 : 0, undefined, run)
+        await expect(attempt).rejects.toThrow(
+          boundary === "protection-404" ? "Explicit unprotected" : `inaccessible ${boundary}`
+        )
+        expect(reached).toBe(true)
+        expect(retainedPublicationState(f)).toEqual(before)
+        expect(host.mutations()).toBe(mutations)
+      })
+    }
+  }
+})
 
 describe("fenced publication domain", () => {
   it("persists complete intent inventory before effects and never settles from a command response", () => {
@@ -727,7 +900,7 @@ describe("public required-CI package boundary and executable", () => {
     const script = join(dir, "gh")
     writeFileSync(
       script,
-      `#!${process.execPath}\nconst p=process.argv.at(-1);if(!p.startsWith('repos/Dikkekip/AutoCode/commits/${"a".repeat(40)}/check-runs?'))process.exit(9);console.log(JSON.stringify({check_runs:[{name:'AutoCode CI',app:{id:15368},head_sha:'${"a".repeat(40)}',status:'completed',conclusion:'success',started_at:new Date(Date.now()-2000).toISOString(),completed_at:new Date(Date.now()-1000).toISOString()}]}));\n`
+      `#!${process.execPath}\nconst a=process.argv.slice(2);if(JSON.stringify(a)!==JSON.stringify(['api','repos/Dikkekip/AutoCode/commits/${"a".repeat(40)}/check-runs?per_page=100&filter=latest&page=1']))process.exit(9);console.log(JSON.stringify({check_runs:[{name:'AutoCode CI',app:{id:15368},head_sha:'${"a".repeat(40)}',status:'completed',conclusion:'success',started_at:new Date(Date.now()-2000).toISOString(),completed_at:new Date(Date.now()-1000).toISOString()}]}));\n`
     )
     chmodSync(script, 0o700)
     const result = spawnSync(
@@ -756,8 +929,9 @@ describe("public required-CI package boundary and executable", () => {
   it("rejects duplicate, stale, failed, skipped, wrong-SHA and missing checks and bounds API pages/bytes", async () => {
     const f = fixture(),
       host = remoteFixture(f)
-    const good = JSON.parse((await host.run("", ["api", "repos/Dikkekip/AutoCode/commits/sha/check-runs?"])).toString())
-      .check_runs[0]
+    const good = JSON.parse(
+      (await host.run(f.candidateSource.repository, preflightRequests(f.identity.revision).ci)).toString()
+    ).check_runs[0]
     for (const runs of [
       [],
       [good, good],
