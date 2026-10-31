@@ -45,3 +45,29 @@ A separate protected journal acceptance image was built from the cached Node dig
 Native goals use provider-thread commands; the CLI prints them and does not claim an invented goal MCP endpoint. Interval schedules can be saved disabled, with durable uncertain-send handling. Activation, fixed-time/webhook setup, provider goal controls and PR linking/watching remain native operator surfaces. Pause/freeze gates queued work and requests known-task cancellation; it cannot revoke an already dispatched external operation. Token budgets are estimates because authoritative provider usage is not advertised.
 
 No production schedule, live record, ownership pause, OpenClaw service or existing worktree was changed. Publication, merge, deployment and migration remain outside this development evidence. The [cutover checklist](t3-autonomy.md#cutover-checklist) describes the separately authorized qualification and ownership transfer.
+
+## Live journal lock-loss follow-up
+
+Live persona research, independent admission, managed-worktree implementation and
+QA reached protected exact-candidate verification and independent review. Although
+the scoped protected harness and full host CI passed, review reproduced a blocking
+POSIX lock-loss defect: closing a separately opened journal descriptor released
+another same-process SQLite connection's transaction locks. The original candidate
+remains unaccepted. The run was frozen at its repair limit; its native review was
+retained but could not be applied because object findings violated the string-only
+result contract. No release approval is inferred from passing tests.
+
+The local follow-up removes raw descriptor opens for existing journal files. New
+files are created privately at an unpublished staging path, closed, then published
+with an exclusive hard link. A concurrent existing path is never overwritten or
+independently opened. Admission still requires trusted directory custody and private,
+owned regular files/sidecars; it does not claim protection against root or malicious
+same-UID actors. Hard-link support on the state filesystem is required for new files.
+The brief two-link publication transition has a bounded metadata wait; persistent
+hardlinks remain rejected. Only SQLite manages descriptors for published databases.
+
+Cross-process regressions hold a foreign database's write transaction open, prove a
+second process is blocked before and after application-ID or sidecar rejection, and
+prove that it can acquire the lock after rollback. Both failed against the reviewed
+implementation. Local follow-up evidence does not resume the frozen coordinator,
+replace its retained results or grant independent review/release approval.

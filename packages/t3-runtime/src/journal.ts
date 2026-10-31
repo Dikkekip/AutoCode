@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto"
-import { chmodSync, mkdirSync } from "node:fs"
-import { dirname, isAbsolute } from "node:path"
+import {
+  closeSync,
+  constants,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  type Stats
+} from "node:fs"
+import { dirname, isAbsolute, join, parse, resolve, sep } from "node:path"
 import { DatabaseSync } from "node:sqlite"
 import { digest } from "./personas.js"
 
@@ -27,6 +37,117 @@ export interface T3Effect {
 export class T3OwnershipLost extends Error {}
 export class T3RevisionConflict extends Error {}
 
+function existingPath(path: string): Stats | undefined {
+  try {
+    return lstatSync(path)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    return undefined
+  }
+}
+
+function privateFile(stat: Stats, uid: number): void {
+  if (!stat.isFile() || stat.uid !== uid || (stat.mode & 0o077) !== 0 || stat.nlink !== 1)
+    throw new Error("T3 journal requires a private, owned regular file with one link")
+}
+
+/**
+ * Filesystem threat model: other UIDs must not be able to replace any admitted
+ * path component. Root and malicious same-UID processes are outside this boundary:
+ * node:sqlite opens by pathname and creates sidecars, so descriptor checks alone
+ * cannot isolate it from them. Reject symlink ancestors rather than canonicalizing
+ * through them. Root/owned sticky ancestors (e.g. /tmp) protect owned child entries;
+ * every other ancestor must be root/owned and not group/other writable. The final
+ * directory must be owned and private, protecting SQLite's later sidecar creation
+ * and legitimate create/reopen races. Existing sidecars receive the same admission.
+ */
+function admitJournal(path: string): void {
+  if (!isAbsolute(path) || resolve(path) !== path || path === parse(path).root)
+    throw new Error("T3 journal requires an absolute canonical private state path")
+  const uid = process.getuid?.()
+  if (uid === undefined) throw new Error("T3 journal requires POSIX filesystem ownership checks")
+  const directory = dirname(path)
+  let current = parse(directory).root
+  const components = directory.slice(current.length).split(sep).filter(Boolean)
+  for (const component of ["", ...components]) {
+    if (component) current = join(current, component)
+    let stat = existingPath(current)
+    if (!stat) {
+      try {
+        mkdirSync(current, { mode: 0o700 })
+      } catch (error) {
+        // Another legitimate opener may have created this directory first.
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      }
+      stat = lstatSync(current)
+    }
+    if (
+      !stat.isDirectory() ||
+      (stat.uid !== uid && stat.uid !== 0) ||
+      ((stat.mode & 0o022) !== 0 && (stat.mode & 0o1000) === 0)
+    )
+      throw new Error("T3 journal requires trusted directory ancestors without symlink redirection")
+    if (current === directory && (stat.uid !== uid || (stat.mode & 0o077) !== 0))
+      throw new Error("T3 journal requires a private state directory owned by the current user")
+  }
+  // Never independently open/close a published SQLite inode: POSIX close()
+  // releases this process's locks, including locks held by another connection.
+  // For a missing file, close the private staging descriptor BEFORE publishing
+  // with an exclusive hard link. A concurrent winner is never opened/overwritten.
+  if (!existingPath(path)) {
+    const staging = mkdtempSync(join(directory, ".autocode-journal-"))
+    try {
+      const temporary = join(staging, "new")
+      const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600)
+      closeSync(fd)
+      try {
+        linkSync(temporary, path)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+      }
+    } finally {
+      rmSync(staging, { recursive: true, force: true })
+    }
+  }
+  let named = lstatSync(path)
+  // A legitimate concurrent publisher briefly has both staging and final links.
+  // Wait only for that metadata transition; persistent hardlinks still fail.
+  const deadline = performance.now() + 100
+  const wait = new Int32Array(new SharedArrayBuffer(4))
+  while (named.isFile() && named.nlink === 2 && performance.now() < deadline) {
+    Atomics.wait(wait, 0, 0, 1)
+    named = lstatSync(path)
+  }
+  privateFile(named, uid)
+  for (const suffix of ["-wal", "-shm", "-journal"]) {
+    const sidecar = existingPath(`${path}${suffix}`)
+    if (sidecar) privateFile(sidecar, uid)
+  }
+}
+
+/** journal_mode can return SQLITE_BUSY without waiting during a concurrent mode
+ * transition. Retry this idempotent pragma only, within a bounded startup window.
+ * No journal transaction or external effect is replayed.
+ */
+function enableWal(db: DatabaseSync): void {
+  const deadline = performance.now() + 5_000
+  const wait = new Int32Array(new SharedArrayBuffer(4))
+  db.exec("PRAGMA busy_timeout=100")
+  try {
+    for (;;) {
+      try {
+        db.exec("PRAGMA journal_mode=WAL")
+        return
+      } catch (error) {
+        if ((error as { errcode?: number }).errcode !== 5 || performance.now() >= deadline) throw error
+        Atomics.wait(wait, 0, 0, 10)
+      }
+    }
+  } finally {
+    db.exec("PRAGMA busy_timeout=5000")
+  }
+}
+
 /** AutoCode policy/evidence journal; never open or modify T3's own state database. */
 export class T3Journal {
   readonly db: DatabaseSync
@@ -37,18 +158,30 @@ export class T3Journal {
     readonly path: string,
     private readonly clock: () => number = Date.now
   ) {
-    if (!isAbsolute(path)) throw new Error("T3 journal requires an absolute private state path")
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
+    admitJournal(path)
     this.db = new DatabaseSync(path)
-    const applicationId = Number(this.db.prepare("PRAGMA application_id").get()?.application_id)
-    const version = Number(this.db.prepare("PRAGMA user_version").get()?.user_version)
-    const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
-    if ((applicationId !== 0x41543331 && (applicationId !== 0 || tables.length > 0)) || version > 1) {
+    try {
+      // Admission must tolerate another legitimate opener initializing the file.
+      // Read identity/schema in one snapshot so concurrent initialization cannot
+      // mix an old application_id with the newly committed journal tables.
+      this.db.exec("PRAGMA busy_timeout=5000; BEGIN")
+      const applicationId = Number(this.db.prepare("PRAGMA application_id").get()?.application_id)
+      const version = Number(this.db.prepare("PRAGMA user_version").get()?.user_version)
+      const tables = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all()
+      if ((applicationId !== 0x41543331 && (applicationId !== 0 || tables.length > 0)) || version > 1)
+        throw new Error("Not a supported AutoCode T3 journal; refusing another application's database")
+      this.db.exec("COMMIT")
+    } catch (error) {
       this.db.close()
-      throw new Error("Not a supported AutoCode T3 journal; refusing another application's database")
+      throw error
     }
-    chmodSync(path, 0o600)
-    this.db.exec("PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
+    try {
+      enableWal(this.db)
+      this.db.exec("BEGIN IMMEDIATE")
+    } catch (error) {
+      this.db.close()
+      throw error
+    }
     try {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS leases(project TEXT PRIMARY KEY, owner TEXT NOT NULL,
