@@ -90,6 +90,14 @@ This role's prose cannot mark tests passed. The trusted verifier host supplies s
 
 Include every acceptance criterion exactly once. Blocking findings belong in `findings`; they require `accepted=false`. Missing evidence or a failed criterion cannot be approved. Report source/head drift; do not approve an earlier candidate for a moved head.
 
+Each finding is a nonempty string or a structured object with `severity` (`P0`–`P3`),
+repository-relative `path`, inclusive positive `lines: [start,end]`, nonempty `title`
+and `description`, and optional nonempty `requestedChange`. Structured findings are
+retained unchanged; a readable summary supplies the repair reason. Any finding
+prevents approval. Malformed findings fail closed without applying the result.
+Contract support does not authorize replaying a frozen workflow's retained result
+or changing its exhausted repair count, policy, deadline or source binding.
+
 **Release review**
 
 ```json

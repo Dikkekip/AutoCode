@@ -51,10 +51,43 @@ export interface T3Verification {
   passed: boolean
   isolation: "protected"
 }
+export interface T3ReviewFinding {
+  severity: "P0" | "P1" | "P2" | "P3"
+  path: string
+  lines: [number, number]
+  title: string
+  description: string
+  requestedChange?: string
+}
+
+function validReviewFinding(value: unknown): value is string | T3ReviewFinding {
+  if (typeof value === "string") return !!value.trim()
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const finding = value as T3ReviewFinding
+  return (
+    ["P0", "P1", "P2", "P3"].includes(finding.severity) &&
+    typeof finding.path === "string" &&
+    !!finding.path.trim() &&
+    !finding.path.includes("\\") &&
+    !finding.path.includes(":") &&
+    finding.path.split("/").every((part) => !!part && part !== "." && part !== "..") &&
+    Array.isArray(finding.lines) &&
+    finding.lines.length === 2 &&
+    finding.lines.every((line) => Number.isSafeInteger(line) && line > 0) &&
+    finding.lines[0] <= finding.lines[1] &&
+    typeof finding.title === "string" &&
+    !!finding.title.trim() &&
+    typeof finding.description === "string" &&
+    !!finding.description.trim() &&
+    (finding.requestedChange === undefined ||
+      (typeof finding.requestedChange === "string" && !!finding.requestedChange.trim()))
+  )
+}
+
 export interface T3Review {
   revision: string
   accepted: boolean
-  findings: string[]
+  findings: Array<string | T3ReviewFinding>
   criteria: Array<{ criterion: string; passed: boolean; evidence: string }>
 }
 export interface T3Workflow {
@@ -573,7 +606,7 @@ export class T3WorkflowEngine {
       if (
         typeof result.accepted !== "boolean" ||
         !Array.isArray(result.findings) ||
-        result.findings.some((s) => typeof s !== "string") ||
+        result.findings.some((finding) => !validReviewFinding(finding)) ||
         (result.accepted && result.findings.length)
       )
         throw new Error("Blocking findings cannot be approved")
@@ -593,7 +626,17 @@ export class T3WorkflowEngine {
         throw new Error("Independent evidence for every acceptance criterion required")
       item.review = { ...structuredClone(result), taskId: assignment.taskId! }
       if (result.accepted) this.move(item, "release")
-      else this.repair(item, result.findings.join("\n") || "Independent review rejected candidate")
+      else
+        this.repair(
+          item,
+          result.findings
+            .map((finding) =>
+              typeof finding === "string"
+                ? finding
+                : `${finding.severity} ${finding.path}:${finding.lines.join("-")} ${finding.title}: ${finding.description}${finding.requestedChange ? ` Requested change: ${finding.requestedChange}` : ""}`
+            )
+            .join("\n") || "Independent review rejected candidate"
+        )
     })
   }
 

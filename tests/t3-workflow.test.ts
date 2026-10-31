@@ -277,6 +277,51 @@ describe("T3 persona policy workflow", () => {
     }
   })
 
+  it("retains structured blocking findings without approving them or changing their shape", () => {
+    const f = fixture()
+    f.admit("one")
+    f.candidate("one")
+    f.verify("one")
+    const reviewer = f.completed("one", "review")
+    const finding = {
+      severity: "P1" as const,
+      path: "src/journal.ts",
+      lines: [104, 146] as [number, number],
+      title: "Rejected admission releases another connection's lock",
+      description: "A separate writer enters while the original transaction remains active.",
+      requestedChange: "Preserve locks and add a cross-process regression."
+    }
+    const result = {
+      revision: "b".repeat(40),
+      accepted: false,
+      findings: [finding],
+      criteria: [{ criterion: "Expected behavior is verified", passed: false, evidence: "Cross-process lock probe" }]
+    }
+    for (const invalid of [
+      null,
+      {},
+      "",
+      { ...finding, path: "../escape" },
+      { ...finding, lines: [146, 104] },
+      { ...finding, severity: "unknown" }
+    ]) {
+      expect(() =>
+        f.engine.recordReview(f.lease, "one", reviewer, { ...result, findings: [invalid] } as never)
+      ).toThrow("cannot be approved")
+      expect(f.engine.get("fixture", "one").value.phase).toBe("review")
+    }
+    expect(() => f.engine.recordReview(f.lease, "one", reviewer, { ...result, accepted: true })).toThrow(
+      "cannot be approved"
+    )
+    f.engine.recordReview(f.lease, "one", reviewer, result)
+    const item = f.engine.get("fixture", "one").value
+    expect(item.phase).toBe("implementation")
+    expect(item.repairs).toBe(1)
+    expect(item.repairFrom?.review?.findings).toEqual([finding])
+    expect(item.reason).toContain("P1 src/journal.ts:104-146")
+    expect(item.reason).not.toContain("[object Object]")
+  })
+
   it("bounds repairs and revokes verification and review on head movement", () => {
     const f = fixture()
     f.admit("one")
