@@ -219,6 +219,18 @@ importers:
 
   packages/source-citations: {}
 
+  packages/t3-runtime:
+    dependencies:
+      '@openclaw/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@openclaw/os-adapters':
+        specifier: workspace:*
+        version: link:../os-adapters
+      '@openclaw/project-profiles':
+        specifier: workspace:*
+        version: link:../project-profiles
+
   packages/team-router:
     dependencies:
       '@openclaw/domain':

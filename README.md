@@ -20,6 +20,8 @@ Workboard remains the execution owner. AutoCode’s `native-evidence.db` records
 
 The optional [Git stage workflow](docs/git-stage-workflow.md) commits skill-backed implementation prompts, static HTML plans, and stage handoffs on a separate local coordination branch. The assigned coder and independent reviewer retrieve the exact packet through authenticated context. Workboard retains execution ownership; failed publication holds progression until reconciliation. Transport is disabled by default and never pushes a remote branch.
 
+An experimental [T3 backend](docs/t3-autonomy.md) preserves the same built-in/custom personas and adds an authenticated MCP coordinator, fenced workflow journal, protected verification and an executable local demonstration. It is additive and does not activate or migrate an existing runtime.
+
 ## Get started
 
 You need Git, pnpm 10.30.3, and Node.js 22.20+ on the 22.x line, or 24.12+. Native operation also requires a compatible OpenClaw installation with Workboard, Automations, and configured agent roles. The documented contract baseline is OpenClaw 2026.9.1; check compatibility with your installed version. Candidate execution requires the supported Linux isolation setup described in the [native reference](docs/native-autonomy.md).

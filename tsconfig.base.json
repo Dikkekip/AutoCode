@@ -16,6 +16,7 @@
     "sourceMap": true,
     "verbatimModuleSyntax": true,
     "paths": {
+      "@autocode/t3-runtime": ["./packages/t3-runtime/src/index.ts"],
       "@openclaw/domain": ["./packages/domain/src/index.ts"],
       "@openclaw/evaluation": ["./packages/evaluation/src/index.ts"],
       "@openclaw/os-adapters": ["./packages/os-adapters/src/index.ts"],

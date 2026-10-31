@@ -1,0 +1,49 @@
+{
+  "projectKey": "example-autocode-project",
+  "repository": "/absolute/path/to/t3-parent-worktree",
+  "profilePath": "/absolute/private/autocode/profile.json",
+  "journalPath": "/absolute/private/autocode/evidence.sqlite",
+  "privateVerifierRoot": "/absolute/private/autocode/verifier",
+  "skillFile": "/absolute/private/autocode/SKILL.md",
+  "endpoint": "http://127.0.0.1:7777/mcp",
+  "tokenFile": "/absolute/private/autocode/t3-parent-scope-token",
+  "scheduleEveryMs": 60000,
+  "dispatchEstimatedTokens": 2000,
+  "coordinator": {
+    "parentThreadId": "replace-with-bound-parent-thread-id",
+    "projectId": "replace-with-t3-project-id",
+    "researchBoundary": "require-tool-allowlist",
+    "routes": {
+      "codex_local": {
+        "providerInstanceId": "replace-with-authorized-provider-instance",
+        "model": "replace-with-advertised-model",
+        "options": {}
+      }
+    }
+  },
+  "policy": {
+    "goal": "Improve the agreed backend outcome with source-backed persona proposals",
+    "lanes": ["app-core"],
+    "maxAdmitted": 1,
+    "maxDispatches": 12,
+    "estimatedTokenBudget": 24000,
+    "maxRepairs": 1,
+    "deadline": 1893456000000,
+    "rolePersonas": {
+      "research": ["t3-security-researcher", "t3-performance-researcher"],
+      "planner": ["planner"],
+      "design": ["cto-system-architect"],
+      "implementation": ["backend-engineer"],
+      "verification": ["qa-engineer"],
+      "review": ["code-reviewer"],
+      "release": ["release-manager"]
+    }
+  },
+  "verifier": {
+    "image": "sha256:replace-with-local-immutable-image-id",
+    "argv": ["/opt/autocode/verifier/check"],
+    "timeoutMs": 15000,
+    "maxSourceBytes": 67108864,
+    "maxFileBytes": 8388608
+  }
+}

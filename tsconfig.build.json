@@ -20,6 +20,7 @@
     { "path": "./packages/adapters/azure-foundry" },
     { "path": "./packages/executor" },
     { "path": "./packages/core-runtime" },
+    { "path": "./packages/t3-runtime" },
     { "path": "./apps/dispatcher-cli" }
   ]
 }
